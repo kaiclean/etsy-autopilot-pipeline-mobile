@@ -1,0 +1,99 @@
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { keywords } from "@/db/schema";
+import { config, isDemoMode } from "@/lib/config";
+import { emit } from "@/lib/events";
+import { scoreKeyword, seasonality } from "@/lib/niches";
+import { getSetting } from "@/lib/settings";
+import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
+import type { StageFn } from "./types";
+
+const TRENDS_LOOKUPS_PER_RUN = 5;
+
+export const runResearch: StageFn = async (ctx) => {
+  const { db, log } = ctx;
+  const candidates: KeywordCandidate[] = [];
+  for (const source of KEYWORD_SOURCES) {
+    try {
+      const found = await source.collect();
+      log(`Source ${source.name}: ${found.length} candidates`);
+      candidates.push(...found);
+    } catch (e) {
+      log(`Source ${source.name} failed: ${(e as Error).message}`, "warn");
+    }
+  }
+
+  const trends = new Map<string, number>();
+  if (config.googleTrendsEnabled) {
+    // Rotate through candidates so each run refreshes a different slice.
+    const offset = Math.floor(ctx.now.getTime() / 864e5) % Math.max(1, candidates.length);
+    const slice = [...candidates.slice(offset), ...candidates.slice(0, offset)].slice(0, TRENDS_LOOKUPS_PER_RUN);
+    for (const c of slice) {
+      const t = await googleTrendScore(c.phrase);
+      if (t == null) {
+        log(`Google Trends unavailable for “${c.phrase}” (rate-limited or blocked); using seed demand`, "warn");
+        break;
+      }
+      trends.set(c.phrase, t);
+      log(`Google Trends “${c.phrase}”: ${t}`);
+    }
+  } else {
+    log("Google Trends disabled (RESEARCH_GOOGLE_TRENDS=false)");
+  }
+
+  let upserted = 0;
+  for (const c of candidates) {
+    const season = seasonality(c.niche, ctx.now);
+    const trend = trends.get(c.phrase) ?? null;
+    const score = scoreKeyword({ demand: c.demand, competition: c.competition, seasonality: season, trend });
+    await db
+      .insert(keywords)
+      .values({
+        phrase: c.phrase,
+        niche: c.niche,
+        source: trend != null ? `${c.source}+google-trends` : c.source,
+        demandScore: c.demand,
+        competitionScore: c.competition,
+        seasonalityScore: season,
+        trendScore: trend,
+        score,
+        isDemo: isDemoMode(),
+      })
+      .onConflictDoUpdate({
+        target: keywords.phrase,
+        set: {
+          seasonalityScore: season,
+          score,
+          updatedAt: ctx.now,
+          ...(trend != null ? { trendScore: trend } : {}),
+        },
+      });
+    upserted++;
+  }
+
+  const { designsPerRun } = await getSetting(db, "automation");
+  const top = await db
+    .select({ id: keywords.id, phrase: keywords.phrase, score: keywords.score })
+    .from(keywords)
+    .where(eq(keywords.status, "new"))
+    .orderBy(desc(keywords.score))
+    .limit(designsPerRun);
+  if (top.length) {
+    await db
+      .update(keywords)
+      .set({ status: "selected", updatedAt: ctx.now })
+      .where(and(inArray(keywords.id, top.map((t) => t.id)), eq(keywords.status, "new")));
+  }
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(keywords).where(eq(keywords.status, "new"));
+  log(`Selected for design: ${top.map((t) => `${t.phrase} (${t.score})`).join(", ") || "none"}`);
+
+  if (top.length) {
+    await emit(db, {
+      type: "research.selected",
+      title: `${top.length} niche keyword${top.length > 1 ? "s" : ""} selected`,
+      body: top.map((t) => t.phrase).join(" · "),
+      severity: "info",
+      href: "/pipeline",
+    });
+  }
+  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog`;
+};
