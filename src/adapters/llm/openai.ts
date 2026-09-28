@@ -20,7 +20,8 @@ export class OpenAILLMProvider implements LLMProvider {
     ].join("\n");
     const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}`;
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const base = config.openaiBaseUrl;
+    const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({

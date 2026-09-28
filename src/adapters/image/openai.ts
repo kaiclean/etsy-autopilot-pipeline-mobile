@@ -1,25 +1,68 @@
 import { config } from "@/lib/config";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
-/** OpenAI Images API. Returns a data URL; move to Blob/S3 storage before scaling up. */
+/** OpenAI-compatible Images API (OpenAI or OpenRouter). Returns a data URL; move to Blob/S3 before scaling. */
 export class OpenAIImageProvider implements ImageProvider {
   readonly name = "openai";
+  /** Soft pre-call estimate (CHF); OpenRouter gemini flash image is ~USD 0.04. */
   readonly estimatedCostChf = 0.05;
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
     const key = config.openaiKey;
     if (!key) throw new Error("OPENAI_API_KEY missing");
-    const size = req.aspectRatio === "1:1" ? "1024x1024" : req.aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
-    const res = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1", prompt: req.prompt, size, n: 1 }),
-    });
-    if (!res.ok) throw new Error(`OpenAI images ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const json = await res.json();
-    const item = json.data?.[0];
-    const url = item?.url ?? (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : undefined);
-    if (!url) throw new Error("OpenAI returned no image");
-    return { url, costChf: this.estimatedCostChf, provider: this.name };
+    const aspectRatio = req.aspectRatio ?? "2:3";
+    const size =
+      aspectRatio === "1:1" ? "1024x1024" : aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
+    const base = config.openaiBaseUrl;
+    const model = config.openaiImageModel;
+    const isOpenRouter = /openrouter\.ai/i.test(base);
+    const body: Record<string, unknown> = {
+      model,
+      prompt: req.prompt,
+      n: 1,
+      size,
+      aspect_ratio: aspectRatio,
+    };
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    };
+    if (isOpenRouter) {
+      headers["HTTP-Referer"] = process.env.APP_URL || "http://localhost:4317";
+      headers["X-Title"] = "DesignedByKaiArt";
+    }
+
+    // Prefer OpenRouter dedicated /images when on OpenRouter; fall back to /images/generations.
+    const paths = isOpenRouter ? ["/images", "/images/generations"] : ["/images/generations"];
+    let lastErr = "";
+    for (const path of paths) {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        lastErr = `${path} ${res.status}: ${(await res.text()).slice(0, 300)}`;
+        continue;
+      }
+      const json = (await res.json()) as {
+        data?: Array<{ url?: string; b64_json?: string; media_type?: string }>;
+        usage?: { cost?: number };
+      };
+      const item = json.data?.[0];
+      const mime = item?.media_type ?? "image/png";
+      const url =
+        item?.url ?? (item?.b64_json ? `data:${mime};base64,${item.b64_json}` : undefined);
+      if (!url) {
+        lastErr = `${path}: no image in response`;
+        continue;
+      }
+      const costUsd = typeof json.usage?.cost === "number" ? json.usage.cost : undefined;
+      // Treat USD≈CHF for cap accounting when provider reports usage.cost.
+      const costChf = costUsd != null ? Math.max(costUsd, 0.01) : this.estimatedCostChf;
+      return { url, costChf, provider: this.name };
+    }
+    throw new Error(`OpenAI images failed: ${lastErr || "unknown"}`);
   }
 }
