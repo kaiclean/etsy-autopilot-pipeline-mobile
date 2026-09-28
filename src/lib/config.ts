@@ -39,8 +39,15 @@ export const config = {
   get openaiKey() {
     return env("OPENAI_API_KEY");
   },
+  /** OpenAI-compatible base. OpenRouter: https://openrouter.ai/api/v1 */
+  get openaiBaseUrl() {
+    return (env("OPENAI_BASE_URL") ?? "https://api.openai.com/v1").replace(/\/$/, "");
+  },
   get openaiModel() {
     return env("OPENAI_MODEL") ?? "gpt-4.1-mini";
+  },
+  get openaiImageModel() {
+    return env("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
   },
   get replicateToken() {
     return env("REPLICATE_API_TOKEN");
@@ -138,15 +145,28 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
       detail:
         config.imageProvider === "mock"
           ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate."
-          : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
-      envVars: ["IMAGE_PROVIDER", "HIGGSFIELD_API_KEY", "HIGGSFIELD_API_SECRET", "REPLICATE_API_TOKEN"],
+          : config.imageProvider === "openai"
+            ? `OpenAI-compatible · ${config.openaiImageModel} · ${config.openaiBaseUrl}`
+            : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
+      envVars: [
+        "IMAGE_PROVIDER",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_IMAGE_MODEL",
+        "HIGGSFIELD_API_KEY",
+        "HIGGSFIELD_API_SECRET",
+        "REPLICATE_API_TOKEN",
+      ],
     },
     {
       id: "llm",
       name: "Listing writer (LLM)",
       status: config.llmProvider === "openai" ? "configured" : "mock",
-      detail: config.llmProvider === "openai" ? `OpenAI · ${config.openaiModel}` : "Deterministic template writer.",
-      envVars: ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"],
+      detail:
+        config.llmProvider === "openai"
+          ? `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`
+          : "Deterministic template writer.",
+      envVars: ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"],
     },
     {
       id: "auth",

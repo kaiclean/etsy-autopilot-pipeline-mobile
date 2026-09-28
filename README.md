@@ -115,8 +115,8 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `PUBLISH_MODE` | — | `dry-run` (default) or `live` |
 | `ETSY_API_KEY`, `ETSY_SHARED_SECRET`, `ETSY_SHOP_ID`, `ETSY_REDIRECT_URI` | live Etsy | Etsy Open API v3 app |
 | `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`, `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID`, `PRINTIFY_VARIANT_IDS` | live POD | Printify API |
-| `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET` (or `OPENAI_API_KEY` / `REPLICATE_API_TOKEN`) | real art | Image generation |
-| `LLM_PROVIDER=openai` + `OPENAI_API_KEY` | real copy | Listing writer |
+| `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
+| `LLM_PROVIDER=openai` + `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_MODEL`) | real copy | Listing writer (OpenAI or OpenRouter) |
 
 ---
 
@@ -161,7 +161,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 ### Higgsfield / OpenAI / Replicate
 
 - **Higgsfield:** create API credentials on your Higgsfield account, then set `IMAGE_PROVIDER=higgsfield`, `HIGGSFIELD_API_KEY` and `HIGGSFIELD_API_SECRET`. The adapter uses submit-then-poll. Its endpoint paths are configurable (`HIGGSFIELD_API_BASE`, `HIGGSFIELD_TEXT2IMAGE_PATH`) because the public API surface changes, so **verify them against your account's API docs**. Free-plan images are watermarked; you need a paid plan for sellable files.
-- **OpenAI:** set `OPENAI_API_KEY`, then `LLM_PROVIDER=openai` for listing copy and/or `IMAGE_PROVIDER=openai` for art.
+- **OpenAI / OpenRouter:** set `OPENAI_API_KEY`, then `LLM_PROVIDER=openai` for listing copy and/or `IMAGE_PROVIDER=openai` for art. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. Point it at `https://openrouter.ai/api/v1` and use an OpenRouter key to call OpenRouter the same way. Chat model is `OPENAI_MODEL`; image model is `OPENAI_IMAGE_MODEL` (OpenRouter example: `google/gemini-2.5-flash-image`).
 - **Replicate:** set `IMAGE_PROVIDER=replicate` and `REPLICATE_API_TOKEN`. The default model is flux-schnell.
 
 ---
