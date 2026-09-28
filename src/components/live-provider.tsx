@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { AppEvent } from "@/db/schema";
+import { SSE_FAILURES_BEFORE_POLL, sseFailuresAfterError } from "@/lib/realtime";
 
 type LiveState = {
   status: "connecting" | "live" | "polling" | "offline";
@@ -55,6 +56,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
     let es: EventSource | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let failures = 0;
+    let openedAt = 0;
     let stopped = false;
 
     const startPolling = () => {
@@ -81,7 +83,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       if (typeof EventSource === "undefined") return startPolling();
       es = new EventSource(`/api/events${cursor.current ? `?after=${cursor.current}` : ""}`);
       es.onopen = () => {
-        failures = 0;
+        openedAt = Date.now();
         setState((s) => ({ ...s, status: "live" }));
       };
       es.addEventListener("activity", (msg) => {
@@ -90,8 +92,9 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         } catch {}
       });
       es.onerror = () => {
-        failures++;
-        if (failures >= 3) {
+        failures = sseFailuresAfterError(openedAt, Date.now(), failures);
+        openedAt = 0;
+        if (failures >= SSE_FAILURES_BEFORE_POLL) {
           es?.close();
           es = null;
           startPolling();

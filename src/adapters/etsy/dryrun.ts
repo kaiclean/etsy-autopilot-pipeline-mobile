@@ -22,6 +22,10 @@ export class EtsyDryRunAdapter implements EtsyAdapter {
     this.calls.push({ op: "uploadListingFile", payload: { listingId, ...file } });
   }
 
+  async activateListing(listingId: string) {
+    this.calls.push({ op: "activateListing", payload: { listingId } });
+  }
+
   /** Simulates 1–2 new paid receipts spread across published listings. */
   async getReceipts({
     candidates,

@@ -23,6 +23,8 @@ export interface EtsyAdapter {
   createDraftListing(input: EtsyDraftInput): Promise<{ listingId: string }>;
   uploadListingImage(listingId: string, imageUrl: string): Promise<void>;
   uploadListingFile(listingId: string, file: { name: string; url: string }): Promise<void>;
+  /** Moves a draft to state=active. Dry-run records the call and does not touch Etsy. */
+  activateListing(listingId: string): Promise<void>;
   /** `candidates` and `simulateAtLeastOne` only drive the dry-run simulation. */
   getReceipts(opts: { since: Date; candidates: ReceiptCandidate[]; simulateAtLeastOne?: boolean }): Promise<EtsyReceipt[]>;
   /** Cumulative lifetime stats per Etsy listing id. `current` lets the dry-run adapter grow from known totals. */

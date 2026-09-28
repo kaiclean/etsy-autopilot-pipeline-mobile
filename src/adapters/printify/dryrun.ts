@@ -19,6 +19,7 @@ export class PrintifyDryRunAdapter implements PrintifyAdapter {
   async createAndPublish(input: PrintifyProductInput) {
     this.calls.push({ op: "createProduct", payload: input });
     this.calls.push({ op: "publishProduct", payload: { title: true, description: true, images: true, variants: true, tags: true } });
+    if (input.existingProductId) return { productId: input.existingProductId };
     return { productId: `dry-pfy-${Date.now().toString(36)}${Math.floor(this.random() * 1e4)}` };
   }
 

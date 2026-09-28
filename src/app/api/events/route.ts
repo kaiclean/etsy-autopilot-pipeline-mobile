@@ -27,7 +27,8 @@ export async function GET(req: Request) {
       const send = (s: string) => {
         if (!closed) controller.enqueue(encoder.encode(s));
       };
-      send(`retry: 3000\n: connected\n\n`);
+      // Padding pushes the first chunk through proxies that buffer small SSE responses.
+      send(`retry: 3000\n: ${" ".repeat(2048)}\n\n`);
       const started = Date.now();
       while (!closed && Date.now() - started < 50_000) {
         try {

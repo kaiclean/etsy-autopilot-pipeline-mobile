@@ -1,12 +1,25 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
+import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, listings } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { FEES, round2 } from "@/lib/fees";
+import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
 import type { StageFn } from "./types";
+
+function podPreset(provider: string | null): PodPreset | undefined {
+  const name = provider?.startsWith("printify:") ? provider.slice("printify:".length) : undefined;
+  if (name === "posterA3" || name === "mug" || name === "tshirt" || name === "sweatshirt") return name;
+  return undefined;
+}
+
+function reusableId(id: string | null, mode: "dry-run" | "live", prefix: string) {
+  if (!id) return undefined;
+  if (mode === "live" && id.startsWith(prefix)) return undefined;
+  return id;
+}
 
 export function absoluteUrl(url: string) {
   if (/^(https?:|data:)/.test(url)) return url;
@@ -16,7 +29,11 @@ export function absoluteUrl(url: string) {
 
 export const runPublish: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const approved = await db.select().from(listings).where(eq(listings.status, "approved")).limit(10);
+  const approved = await db
+    .select()
+    .from(listings)
+    .where(inArray(listings.status, ["approved", "failed"]))
+    .limit(10);
   if (approved.length === 0) return "Nothing approved to publish.";
 
   const etsy = await getEtsyAdapter(db, ctx.random);
@@ -40,29 +57,38 @@ export const runPublish: StageFn = async (ctx) => {
       let etsyListingId: string | null = null;
       let printifyProductId: string | null = null;
       if (l.productType === "digital") {
-        const { listingId } = await etsy.createDraftListing({
-          title: l.title,
-          description: l.description,
-          priceChf: l.priceChf,
-          tags: l.tags,
-          type: "download",
-        });
-        await etsy.uploadListingImage(listingId, absoluteUrl(l.imageUrl));
-        await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: absoluteUrl(l.imageUrl) });
+        let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
+        if (!listingId) {
+          const created = await etsy.createDraftListing({
+            title: l.title,
+            description: l.description,
+            priceChf: l.priceChf,
+            tags: l.tags,
+            type: "download",
+          });
+          listingId = created.listingId;
+          await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+        }
+        const image = absoluteUrl(l.imageUrl);
+        await etsy.uploadListingImage(listingId, image);
+        await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: image });
+        await etsy.activateListing(listingId);
         etsyListingId = listingId;
-        log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode})`);
+        log(`#${l.id} → Etsy ${etsy.mode === "live" ? "active" : "draft"} ${listingId} (${etsy.mode})`);
       } else {
-        const { productId, externalEtsyId } = await printify.createAndPublish({
+        const result = await printify.createAndPublish({
           title: l.title,
           description: l.description,
           tags: l.tags,
           priceChf: l.priceChf,
           imageUrl: absoluteUrl(l.imageUrl),
+          preset: podPreset(l.podProvider),
+          existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
         });
-        printifyProductId = productId;
+        printifyProductId = result.productId;
         // Printify creates the Etsy listing asynchronously; in dry-run we mint a synthetic id so orders can link.
-        etsyListingId = externalEtsyId ?? (printify.mode === "dry-run" ? `dry-etsy-${productId}` : null);
-        log(`#${l.id} → Printify product ${productId}, published to Etsy (${printify.mode})`);
+        etsyListingId = result.externalEtsyId ?? (printify.mode === "dry-run" ? `dry-etsy-${result.productId}` : l.etsyListingId);
+        log(`#${l.id} → Printify product ${result.productId}, published to Etsy (${printify.mode})`);
       }
       const mode = l.productType === "digital" ? etsy.mode : printify.mode;
       await db
@@ -85,8 +111,16 @@ export const runPublish: StageFn = async (ctx) => {
       });
       ok++;
     } catch (e) {
-      const msg = (e as Error).message;
-      await db.update(listings).set({ status: "failed", publishError: msg, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+      const msg = e instanceof Error ? e.message : String(e);
+      await db
+        .update(listings)
+        .set({
+          status: "failed",
+          publishError: msg,
+          ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
+          updatedAt: ctx.now,
+        })
+        .where(eq(listings.id, l.id));
       log(`#${l.id} publish failed: ${msg}`, "error");
       failed++;
     }
@@ -95,7 +129,7 @@ export const runPublish: StageFn = async (ctx) => {
     await emit(db, {
       type: "listing.published",
       title: `${ok} listing${ok > 1 ? "s" : ""} published`,
-      body: etsy.mode === "dry-run" ? "Dry-run: nothing was sent to Etsy/Printify" : "Live on Etsy as drafts: set the AI field and activate",
+      body: etsy.mode === "dry-run" ? "Dry-run: nothing was sent to Etsy or Printify" : "Sent to Etsy",
       severity: "success",
       href: "/products",
     });
@@ -103,5 +137,7 @@ export const runPublish: StageFn = async (ctx) => {
   if (failed) {
     await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" });
   }
-  return `Published ${ok}, failed ${failed} (${etsy.mode})`;
+  const summary = `Published ${ok}, failed ${failed} (${etsy.mode})`;
+  if (failed > 0) throw new Error(summary);
+  return summary;
 };

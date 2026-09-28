@@ -1,4 +1,6 @@
 import { config } from "@/lib/config";
+import { describeFetchError } from "@/lib/http-error";
+import { placeholderPng } from "@/lib/png";
 import type { EtsyTokens } from "@/lib/settings";
 import { refreshTokens } from "./oauth";
 import type { EtsyAdapter, EtsyDraftInput, EtsyReceipt } from "./types";
@@ -38,11 +40,17 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(`${API}${path}`, {
-      ...init,
-      headers: { ...(await this.authHeaders()), ...(init.headers ?? {}) },
-    });
-    if (!res.ok) throw new Error(`Etsy ${init.method ?? "GET"} ${path} → ${res.status}: ${(await res.text()).slice(0, 400)}`);
+    const method = init.method ?? "GET";
+    let res: Response;
+    try {
+      res = await fetch(`${API}${path}`, {
+        ...init,
+        headers: { ...(await this.authHeaders()), ...(init.headers ?? {}) },
+      });
+    } catch (error) {
+      throw describeFetchError(error, `Etsy ${method} ${path}`);
+    }
+    if (!res.ok) throw new Error(`Etsy ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 400)}`);
     return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
   }
 
@@ -67,8 +75,16 @@ export class EtsyLiveClient implements EtsyAdapter {
     return { listingId: String(json.listing_id) };
   }
 
+  /** Own placeholder art is rendered here. Fetching it through the public tunnel throws "fetch failed". */
   private async fetchBlob(url: string) {
-    const res = await fetch(url);
+    const png = placeholderPng(url);
+    if (png) return new Blob([new Uint8Array(png)], { type: "image/png" });
+    let res: Response;
+    try {
+      res = await fetch(sameHostLoopback(url));
+    } catch (error) {
+      throw describeFetchError(error, `Could not download asset ${url}`);
+    }
     if (!res.ok) throw new Error(`Could not download asset ${url}: ${res.status}`);
     return res.blob();
   }
@@ -84,6 +100,15 @@ export class EtsyLiveClient implements EtsyAdapter {
     form.append("file", await this.fetchBlob(file.url), file.name);
     form.append("name", file.name);
     await this.request(`/shops/${this.shopId}/listings/${listingId}/files`, { method: "POST", body: form });
+  }
+
+  async activateListing(listingId: string) {
+    const body = new URLSearchParams({ state: "active" });
+    await this.request(`/shops/${this.shopId}/listings/${listingId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
   }
 
   async getReceipts({ since }: { since: Date }): Promise<EtsyReceipt[]> {
@@ -120,4 +145,26 @@ export class EtsyLiveClient implements EtsyAdapter {
     }
     return out;
   }
+}
+
+/** Fetch this app's own files on loopback so the server does not call its public tunnel. */
+function sameHostLoopback(url: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const hosts = new Set(["localhost", "127.0.0.1"]);
+  if (process.env.APP_URL) {
+    try {
+      hosts.add(new URL(process.env.APP_URL).host);
+    } catch {
+      /* ignore a bad APP_URL */
+    }
+  }
+  if (process.env.VERCEL_URL) hosts.add(process.env.VERCEL_URL);
+  if (!hosts.has(parsed.host)) return url;
+  const port = process.env.PORT || "4317";
+  return `http://127.0.0.1:${port}${parsed.pathname}${parsed.search}`;
 }

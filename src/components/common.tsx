@@ -60,8 +60,7 @@ export function ListingStatusPill({ status, dryRun }: { status: ListingStatus; d
   const s = LISTING_STYLE[status];
   return (
     <span className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] font-semibold whitespace-nowrap", s.cls)}>
-      {s.label}
-      {status === "published" && dryRun ? " · dry-run" : ""}
+      {status === "published" && dryRun ? "Dry-run" : s.label}
     </span>
   );
 }

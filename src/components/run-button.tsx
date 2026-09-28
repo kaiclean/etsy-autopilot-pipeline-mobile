@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, Play, Zap } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { triggerFullPipeline, triggerStage } from "@/app/actions";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 export function RunStageButton({ stage, label, disabled, className }: { stage: string; label?: string; disabled?: boolean; className?: string }) {
   const [pending, start] = useTransition();
+  const router = useRouter();
   return (
     <Button
       size="lg"
@@ -18,8 +20,10 @@ export function RunStageButton({ stage, label, disabled, className }: { stage: s
       onClick={() =>
         start(async () => {
           const r = await triggerStage(stage);
+          router.refresh();
           if (r.status === "skipped") toast.warning(`Skipped: ${r.summary}`);
           else if (!r.ok) toast.error(r.summary ?? r.error ?? "Run failed");
+          else if (r.summary) toast.success(r.summary);
         })
       }
     >
@@ -31,6 +35,7 @@ export function RunStageButton({ stage, label, disabled, className }: { stage: s
 
 export function RunPipelineButton({ disabled, className, compact }: { disabled?: boolean; className?: string; compact?: boolean }) {
   const [pending, start] = useTransition();
+  const router = useRouter();
   return (
     <Button
       size="lg"
@@ -40,6 +45,7 @@ export function RunPipelineButton({ disabled, className, compact }: { disabled?:
         start(async () => {
           const id = toast.loading("Running research → design → listing → publish → orders → analytics…");
           const runs = await triggerFullPipeline();
+          router.refresh();
           const failed = runs.filter((r) => r.status === "failed");
           const skipped = runs.find((r) => r.status === "skipped");
           toast.dismiss(id);

@@ -112,7 +112,7 @@ function Detail({ l }: { l: Listing }) {
         {l.status === "published" && l.publishMode === "live" && (
           <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
             <TriangleAlert className="size-4 shrink-0" />
-            Manual step: in Etsy Shop Manager, open this draft, set “How it&apos;s made” → AI tools, then activate. The API can&apos;t set that field.
+            The description already discloses AI tools. Etsy’s “How it’s made” tools dropdown has no API, so set that in Shop Manager if the listing still asks.
           </div>
         )}
         {l.publishError && <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{l.publishError}</div>}

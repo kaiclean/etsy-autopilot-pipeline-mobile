@@ -127,7 +127,7 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
       name: "Printify",
       status: hasPrintifyCredentials() ? "configured" : "mock",
       detail: hasPrintifyCredentials()
-        ? `Shop ${p.shopId}${p.blueprintId ? ` · blueprint ${p.blueprintId}` : " · set PRINTIFY_BLUEPRINT_ID"}`
+        ? `Shop ${p.shopId}${p.blueprintId ? ` · blueprint ${p.blueprintId}` : " · blueprint chosen from the Printify catalog when a listing publishes"}`
         : "Dry-run adapter.",
       envVars: ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID"],
     },

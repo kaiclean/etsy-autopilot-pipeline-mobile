@@ -104,6 +104,37 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     await setSetting(db, "stages", stages);
   });
 
+  it("a publish run that publishes nothing is failed, not success", async () => {
+    const [src] = await db.select().from(listings).limit(1);
+    const [row] = await db
+      .insert(listings)
+      .values({
+        designId: src.designId,
+        keywordId: src.keywordId,
+        niche: src.niche,
+        productType: src.productType,
+        podProvider: src.podProvider,
+        title: "",
+        tags: src.tags,
+        description: src.description,
+        imageUrl: src.imageUrl,
+        priceChf: src.priceChf,
+        podCostChf: src.podCostChf,
+        netChf: src.netChf,
+        marginPct: src.marginPct,
+        validation: [],
+        status: "approved",
+        isDemo: true,
+      })
+      .returning();
+
+    const p = await runStage("publish", "manual", { db, random });
+    expect(p.status).toBe("failed");
+    expect(p.summary).toMatch(/Published 0, failed/);
+    const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
+    expect(after.status).toBe("pending_approval");
+  });
+
   it("daily AI cap stops paid image generation", async () => {
     const prev = process.env.IMAGE_PROVIDER;
     const prevKey = process.env.OPENAI_API_KEY;
