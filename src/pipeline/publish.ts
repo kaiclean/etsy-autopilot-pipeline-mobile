@@ -72,9 +72,13 @@ export const runPublish: StageFn = async (ctx) => {
         const image = absoluteUrl(l.imageUrl);
         await etsy.uploadListingImage(listingId, image);
         await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: image });
-        await etsy.activateListing(listingId);
+        // Live listings stay drafts unless ETSY_ACTIVATE=true. Etsy has no API for the
+        // “How it’s made” / AI-tools field, and Kai’s clearance was drafts only.
+        const activateLive = process.env.ETSY_ACTIVATE === "true";
+        if (etsy.mode === "dry-run" || activateLive) await etsy.activateListing(listingId);
         etsyListingId = listingId;
-        log(`#${l.id} → Etsy ${etsy.mode === "live" ? "active" : "draft"} ${listingId} (${etsy.mode})`);
+        const state = etsy.mode === "live" && activateLive ? "active" : "draft";
+        log(`#${l.id} → Etsy ${state} ${listingId} (${etsy.mode})`);
       } else {
         const result = await printify.createAndPublish({
           title: l.title,
