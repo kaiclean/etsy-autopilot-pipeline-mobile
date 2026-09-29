@@ -2,7 +2,8 @@ import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type JobRun, type StageName } from "@/db/schema";
 import { STAGES } from "@/pipeline/types";
-import { config, integrationStatus, isDemoMode } from "./config";
+import { config, isDemoMode } from "./config";
+import { connectionHealth } from "./health";
 import { visible } from "./events";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
@@ -20,7 +21,7 @@ export async function getShellData() {
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
     getSetting(db, "automation"),
   ]);
-  return { pendingCount: pending.length, demo: isDemoMode(), killSwitch: automation.killSwitch };
+  return { pendingCount: pending.length, demo: isDemoMode(), killSwitch: automation.killSwitch, publishMode: config.publishMode };
 }
 
 type RangeKey = "today" | "7d" | "30d";
@@ -241,20 +242,21 @@ export async function getAnalytics() {
   };
 }
 
+export async function getConnectionsData() {
+  const db = await getDb();
+  const tokens = await getSetting(db, "etsyTokens");
+  const etsyConnected = Boolean(tokens?.accessToken);
+  return {
+    checks: connectionHealth({ etsyConnected }),
+    etsyConnected,
+    canConnectEtsy: Boolean(config.etsy.apiKey),
+    publishMode: config.publishMode,
+    demo: isDemoMode(),
+  };
+}
+
 export async function getSettingsData() {
   const db = await getDb();
-  const [automation, stages, tokens] = await Promise.all([
-    getSetting(db, "automation"),
-    getSetting(db, "stages"),
-    getSetting(db, "etsyTokens"),
-  ]);
-  return {
-    automation,
-    stages,
-    integrations: integrationStatus(Boolean(tokens)),
-    demo: isDemoMode(),
-    publishMode: config.publishMode,
-    etsyConnected: Boolean(tokens),
-    canConnectEtsy: Boolean(config.etsy.apiKey),
-  };
+  const [automation, stages, connections] = await Promise.all([getSetting(db, "automation"), getSetting(db, "stages"), getConnectionsData()]);
+  return { automation, stages, ...connections };
 }

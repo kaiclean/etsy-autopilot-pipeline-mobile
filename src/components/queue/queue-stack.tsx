@@ -6,9 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { setListingStatus } from "@/app/actions";
 import { EmptyState, NicheTag, Panel, Thumb } from "@/components/common";
+import { ProvenanceBadge } from "@/components/provenance-badge";
 import { Button } from "@/components/ui/button";
 import type { Listing } from "@/db/schema";
 import { productLabel } from "@/lib/fees";
+import { listingProvenance } from "@/lib/provenance";
 import { chf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ListingEditor } from "./listing-editor";
@@ -172,6 +174,7 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
                 REJECT
               </span>
               <div className="absolute top-3 left-3 flex gap-1.5" style={{ opacity: 1 - Math.max(approveOpacity, rejectOpacity) }}>
+                <ProvenanceBadge kind={listingProvenance(top)} solid />
                 <NicheTag niche={top.niche} />
                 <span className="inline-flex h-5 items-center rounded-full bg-black/50 px-2 text-[11px] font-medium text-white backdrop-blur">
                   {productLabel(top.productType, top.podProvider)}

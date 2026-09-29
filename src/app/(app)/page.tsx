@@ -1,11 +1,12 @@
 import { ChevronRight, Inbox } from "lucide-react";
 import Link from "next/link";
 import { ActivityFeed } from "@/components/activity-feed";
+import { ConnectionsStrip, EtsyConnectCta } from "@/components/connections-panel";
 import { Panel, SectionTitle, STAGE_ICONS, Thumb } from "@/components/common";
 import { HeroKpis } from "@/components/home/hero-kpis";
 import { RunPipelineButton } from "@/components/run-button";
 import { chf, relTime, TZ } from "@/lib/format";
-import { getHomeData } from "@/lib/queries";
+import { getConnectionsData, getHomeData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 function greeting() {
@@ -14,7 +15,7 @@ function greeting() {
 }
 
 export default async function HomePage() {
-  const data = await getHomeData();
+  const [data, connections] = await Promise.all([getHomeData(), getConnectionsData()]);
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
 
@@ -30,6 +31,8 @@ export default async function HomePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
+          <ConnectionsStrip checks={connections.checks} />
+          {!connections.etsyConnected && <EtsyConnectCta canConnect={connections.canConnectEtsy} />}
           <HeroKpis kpis={data.kpis} series={data.series} />
 
           {data.pending.length > 0 && (
@@ -95,7 +98,7 @@ export default async function HomePage() {
         </div>
 
         <div>
-          <SectionTitle action={<span className="text-[11px] text-muted-foreground">{data.liveListings} live listings · {chf(data.kpis["30d"].cur.profit, { compact: true })} 30d</span>}>
+          <SectionTitle action={<span className="text-[11px] text-muted-foreground">{data.liveListings} published · {chf(data.kpis["30d"].cur.profit, { compact: true })} 30d</span>}>
             Live activity
           </SectionTitle>
           <Panel className="overflow-hidden">

@@ -4,17 +4,19 @@ import { Eye, Heart, Package, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { EmptyState, ListingStatusPill, NicheTag, Thumb } from "@/components/common";
+import { ProvenanceBadge } from "@/components/provenance-badge";
 import { FeeBreakdown } from "@/components/fee-breakdown";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import type { Listing } from "@/db/schema";
 import { calculateFees, productLabel } from "@/lib/fees";
+import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const FILTERS = [
   { id: "all", label: "All" },
-  { id: "published", label: "Live" },
+  { id: "published", label: "Published" },
   { id: "pending_approval", label: "In review" },
   { id: "approved", label: "Approved" },
   { id: "rejected", label: "Rejected" },
@@ -59,6 +61,7 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13px] leading-snug font-medium">{l.title}</div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <ProvenanceBadge kind={listingProvenance(l)} />
                   <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
                   <NicheTag niche={l.niche} />
                 </div>
@@ -98,7 +101,10 @@ function Detail({ l }: { l: Listing }) {
         <div className="flex gap-3">
           <Thumb src={l.imageUrl} alt="" className="h-32 w-28 shrink-0" />
           <div className="space-y-1.5 text-xs text-muted-foreground">
-            <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
+            <div className="flex flex-wrap gap-1.5">
+              <ProvenanceBadge kind={listingProvenance(l)} />
+              <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
+            </div>
             <div>{l.productType === "digital" ? "Digital download · Etsy delivers automatically" : `${productLabel(l.productType, l.podProvider)} · Printify`}</div>
             {l.etsyListingId && <div className="font-mono">Etsy: {l.etsyListingId}</div>}
             {l.printifyProductId && <div className="font-mono">Printify: {l.printifyProductId}</div>}

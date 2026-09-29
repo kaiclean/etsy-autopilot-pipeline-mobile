@@ -1,19 +1,19 @@
 "use client";
 
-import { ChartColumnBig, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
+import { ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { LiveProvider, useLive } from "./live-provider";
 
-type Shell = { pendingCount: number; demo: boolean; killSwitch: boolean };
+type Shell = { pendingCount: number; demo: boolean; killSwitch: boolean; publishMode: "dry-run" | "live" };
 
 const MOBILE_TABS = [
   { href: "/", label: "Home", icon: House },
   { href: "/pipeline", label: "Pipeline", icon: Workflow },
   { href: "/queue", label: "Queue", icon: Inbox, badge: true },
   { href: "/orders", label: "Orders", icon: Receipt },
-  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings"] },
+  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections"] },
 ];
 
 const SIDEBAR = [
@@ -23,6 +23,7 @@ const SIDEBAR = [
   { href: "/products", label: "Products", icon: Package },
   { href: "/orders", label: "Orders", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartColumnBig },
+  { href: "/connections", label: "Connections", icon: HeartPulse },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -50,9 +51,20 @@ function LiveDot() {
   );
 }
 
-function Badges({ demo, killSwitch }: { demo: boolean; killSwitch: boolean }) {
+function Badges({ demo, killSwitch, publishMode }: { demo: boolean; killSwitch: boolean; publishMode: "dry-run" | "live" }) {
   return (
     <div className="flex items-center gap-1.5">
+      <Link
+        href="/connections"
+        className={
+          publishMode === "live"
+            ? "rounded-md border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-destructive"
+            : "rounded-md border border-chart-4/40 bg-chart-4/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-chart-4"
+        }
+        title={publishMode === "live" ? "PUBLISH_MODE=live. Write APIs can run." : "PUBLISH_MODE is locked to dry-run. Live writes are off."}
+      >
+        {publishMode === "live" ? "LIVE" : "DRY-RUN"}
+      </Link>
       {demo && (
         <Link
           href="/settings"
@@ -118,7 +130,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
           </nav>
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <LiveDot />
-            <Badges demo={shell.demo} killSwitch={shell.killSwitch} />
+            <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
           </div>
         </aside>
 
@@ -132,7 +144,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
               </Link>
               <div className="flex items-center gap-3">
                 <LiveDot />
-                <Badges demo={shell.demo} killSwitch={shell.killSwitch} />
+                <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
               </div>
             </div>
           </header>

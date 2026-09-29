@@ -1,7 +1,9 @@
 import { Receipt } from "lucide-react";
 import { EmptyState, FulfillmentPill, PageHeader, Panel, Thumb } from "@/components/common";
+import { ProvenanceBadge } from "@/components/provenance-badge";
 import { RunStageButton } from "@/components/run-button";
 import { chf, countryName, flag, num, relTime } from "@/lib/format";
+import { orderProvenance } from "@/lib/provenance";
 import { getOrders } from "@/lib/queries";
 
 export const metadata = { title: "Orders" };
@@ -11,7 +13,7 @@ export default async function OrdersPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Orders" subtitle="Etsy receipts + POD fulfillment status" action={<RunStageButton stage="orders" label="Sync" />} />
+      <PageHeader title="Orders" subtitle="Each row is badged Demo, Dry-run draft, or Live Etsy" action={<RunStageButton stage="orders" label="Sync" />} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Mini label="Orders · 30d" value={num(summary.count30d)} />
@@ -34,6 +36,7 @@ export default async function OrdersPage() {
                   <span>·</span>
                   <span suppressHydrationWarning>{relTime(o.createdAt)}</span>
                   {o.quantity > 1 && <span>· ×{o.quantity}</span>}
+                  <ProvenanceBadge kind={orderProvenance(o)} />
                   <FulfillmentPill status={o.fulfillmentStatus} />
                   {productType === "pod" && o.podOrderId && <span className="hidden font-mono md:inline">{o.podOrderId}</span>}
                 </div>
