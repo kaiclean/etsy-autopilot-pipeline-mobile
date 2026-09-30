@@ -92,7 +92,7 @@ describe("connection health", () => {
     expect(etsy?.detail).not.toContain("shared-secret-value");
   });
 
-  it("flags live publish mode and a provider missing its key", () => {
+  it("keeps the health row on dry-run until the dashboard choice is live", () => {
     clearModeEnv();
     process.env.PUBLISH_MODE = "live";
     process.env.DEMO_MODE = "false";
@@ -101,13 +101,18 @@ describe("connection health", () => {
     process.env.ETSY_SHOP_ID = "99";
     process.env.LLM_PROVIDER = "openai";
     process.env.IMAGE_PROVIDER = "replicate";
-    const checks = connectionHealth({ etsyConnected: false });
-    const byId = Object.fromEntries(checks.map((check) => [check.id, check]));
-    expect(byId.publish.level).toBe("red");
-    expect(byId.publish.label).toBe("Live");
-    expect(byId.demo.level).toBe("green");
-    expect(byId.llm.level).toBe("red");
-    expect(byId.images.level).toBe("red");
+    const locked = connectionHealth({ etsyConnected: false });
+    const armed = connectionHealth({ etsyConnected: false, publishMode: "live" });
+    const lockedById = Object.fromEntries(locked.map((check) => [check.id, check]));
+    const armedById = Object.fromEntries(armed.map((check) => [check.id, check]));
+    expect(lockedById.publish.level).toBe("yellow");
+    expect(lockedById.publish.label).toBe("Dry-run");
+    expect(lockedById.publish.detail).toContain("Host PUBLISH_MODE is live");
+    expect(armedById.publish.level).toBe("red");
+    expect(armedById.publish.label).toBe("Live");
+    expect(lockedById.demo.level).toBe("green");
+    expect(lockedById.llm.level).toBe("red");
+    expect(lockedById.images.level).toBe("red");
   });
 
   it("describes a configured OpenAI-compatible provider without the key", () => {

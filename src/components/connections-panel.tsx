@@ -10,8 +10,8 @@ export function EtsyConnectCta({ canConnect }: { canConnect: boolean }) {
       <div className="text-sm font-semibold">Etsy shop is not authorized</div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         {canConnect
-          ? "OAuth tokens are missing. Connect the shop so Autopilot can authorize it. Publishing stays dry-run until PUBLISH_MODE=live."
-          : "OAuth tokens are missing. Set ETSY_API_KEY, ETSY_SHARED_SECRET, ETSY_SHOP_ID, and ETSY_REDIRECT_URI, then connect. Publishing stays dry-run."}
+          ? "OAuth tokens are missing. Connect the shop so Autopilot can authorize it. Publishing stays dry-run until you confirm Go live."
+          : "OAuth tokens are missing. Set ETSY_API_KEY, ETSY_SHARED_SECRET, ETSY_SHOP_ID, and ETSY_REDIRECT_URI, then connect. Publishing stays dry-run until you confirm Go live."}
       </p>
       <a
         href="/api/etsy/oauth/start"
@@ -91,8 +91,8 @@ export function ConnectionsPanel({
         })}
       </Panel>
       <p className="text-[11px] text-muted-foreground">
-        Status uses env var names only. Secret values are never shown or stored in the dashboard. Live Etsy and Printify writes stay off while{" "}
-        <code>PUBLISH_MODE</code> is <code>dry-run</code>.
+        Status uses env var names only. Secret values are never shown. Live Etsy and Printify writes stay off until you confirm Go live. The host{" "}
+        <code>PUBLISH_MODE</code> variable does not turn them on by itself.
       </p>
     </section>
   );

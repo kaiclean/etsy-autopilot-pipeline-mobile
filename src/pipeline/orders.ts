@@ -75,7 +75,7 @@ export const runOrders: StageFn = async (ctx) => {
   let advanced = 0;
   if (open.length) {
     const known = Object.fromEntries(open.map((o) => [o.podOrderId!, o.status as PrintifyOrderStatus]));
-    const printify = getPrintifyAdapter({ random: ctx.random, known });
+    const printify = await getPrintifyAdapter({ db, random: ctx.random, known });
     const statuses = await printify.getOrderStatuses(open.map((o) => o.podOrderId!));
     for (const o of open) {
       const next = statuses[o.podOrderId!];

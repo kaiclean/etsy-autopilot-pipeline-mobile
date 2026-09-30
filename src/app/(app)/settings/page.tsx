@@ -2,6 +2,7 @@ import { LogOut } from "lucide-react";
 import { logout } from "@/app/actions";
 import { PageHeader, SectionTitle } from "@/components/common";
 import { ConnectionsPanel } from "@/components/connections-panel";
+import { GoLiveControl } from "@/components/go-live-control";
 import {
   BudgetsForm,
   EtsyStatusToast,
@@ -22,12 +23,17 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
       <EtsyStatusToast status={typeof sp.etsy === "string" ? sp.etsy : undefined} />
       <PageHeader
         title="Settings"
-        subtitle={d.publishMode === "dry-run" ? "Publishing is locked to dry-run" : `Publishing: ${d.publishMode}`}
+        subtitle={d.publishMode === "dry-run" ? "Publishing stays dry-run until you confirm Go live" : "Live writes are armed"}
       />
 
       <KillSwitchCard on={d.automation.killSwitch} />
 
+      <GoLiveControl mode={d.publishMode} envMode={d.envPublishMode} />
+
       <ConnectionsPanel checks={d.checks} etsyConnected={d.etsyConnected} canConnectEtsy={d.canConnectEtsy} />
+      <p className="text-[11px] text-muted-foreground">
+        Key setup steps and the Railway checklist are on <a className="font-medium text-primary" href="/connections#setup">Connections</a>.
+      </p>
 
       <section>
         <SectionTitle>Budgets &amp; caps</SectionTitle>

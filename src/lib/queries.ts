@@ -4,6 +4,8 @@ import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type Jo
 import { STAGES } from "@/pipeline/types";
 import { config, isDemoMode } from "./config";
 import { connectionHealth } from "./health";
+import { effectivePublishMode } from "./publish-mode";
+import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
@@ -21,7 +23,12 @@ export async function getShellData() {
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
     getSetting(db, "automation"),
   ]);
-  return { pendingCount: pending.length, demo: isDemoMode(), killSwitch: automation.killSwitch, publishMode: config.publishMode };
+  return {
+    pendingCount: pending.length,
+    demo: isDemoMode(),
+    killSwitch: automation.killSwitch,
+    publishMode: effectivePublishMode(automation.publishMode),
+  };
 }
 
 type RangeKey = "today" | "7d" | "30d";
@@ -244,14 +251,17 @@ export async function getAnalytics() {
 
 export async function getConnectionsData() {
   const db = await getDb();
-  const tokens = await getSetting(db, "etsyTokens");
+  const [tokens, automation] = await Promise.all([getSetting(db, "etsyTokens"), getSetting(db, "automation")]);
   const etsyConnected = Boolean(tokens?.accessToken);
+  const publishMode = effectivePublishMode(automation.publishMode);
   return {
-    checks: connectionHealth({ etsyConnected }),
+    checks: connectionHealth({ etsyConnected, publishMode }),
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
-    publishMode: config.publishMode,
+    publishMode,
+    envPublishMode: config.publishMode,
     demo: isDemoMode(),
+    presence: setupPresence(),
   };
 }
 

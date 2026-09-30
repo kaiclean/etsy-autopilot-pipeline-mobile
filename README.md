@@ -112,7 +112,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `DATABASE_URL` | prod | Neon Postgres connection string. Embedded PGlite is used when empty. |
 | `APP_URL` | live publish | Public base URL, used for absolute image URLs sent to Etsy and Printify |
 | `DEMO_MODE` | — | `true`/`false` to force. Default: on until Etsy keys exist. |
-| `PUBLISH_MODE` | — | `dry-run` (default) or `live` |
+| `PUBLISH_MODE` | — | Host hint. Leave `dry-run`. The dashboard Go live control is the switch. |
 | `ETSY_API_KEY`, `ETSY_SHARED_SECRET`, `ETSY_SHOP_ID`, `ETSY_REDIRECT_URI` | live Etsy | Etsy Open API v3 app |
 | `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`, `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID`, `PRINTIFY_VARIANT_IDS` | live POD | Printify API |
 | `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
@@ -145,7 +145,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 6. Deploy, then go to **Settings → Connect Etsy shop**. That runs OAuth 2 with PKCE (scopes `listings_r listings_w transactions_r shops_r`) and stores the refreshable token in the `settings` table.
 7. Set `ETSY_SHOP_ID`. After connecting, the numeric user id is the prefix of the access token, and `GET /v3/application/users/{user_id}/shops` returns the shop id.
 8. Optionally pick seller taxonomy ids (`GET /v3/application/seller-taxonomy/nodes`) for `ETSY_TAXONOMY_ID_DIGITAL` / `_POSTER`.
-9. Keep `PUBLISH_MODE=dry-run` until you've checked a few runs, then switch to `live`. Live publishing creates **drafts**, never active listings.
+9. Leave `PUBLISH_MODE=dry-run`. When a dry-run looks right, open **Connections → Go live**, check the box, and type `CONFIRM`. That arms writes. Live publishing still creates **drafts**, never active listings, unless `ETSY_ACTIVATE=true`.
 
 ### Printify
 
