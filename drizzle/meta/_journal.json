@@ -8,6 +8,13 @@
       "when": 1790385288224,
       "tag": "0000_green_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790727700731,
+      "tag": "0001_push_storage_printify",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,13 @@ const PUBLIC_PATHS = ["/login", "/manifest.webmanifest", "/sw.js", "/offline"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/icons/") || pathname.startsWith("/api/cron/")) {
+  if (
+    PUBLIC_PATHS.includes(pathname) ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/api/cron/") ||
+    pathname.startsWith("/api/media/") ||
+    pathname === "/api/webhooks/printify"
+  ) {
     return NextResponse.next();
   }
   const ok = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value, appConfig.authSecret);
