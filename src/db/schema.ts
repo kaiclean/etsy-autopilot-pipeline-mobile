@@ -164,6 +164,36 @@ export const settings = pgTable("settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Browser Push API subscriptions. One row per device endpoint. */
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: serial("id").primaryKey(),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Idempotent Printify webhook log. Buyer contact fields are stripped before insert.
+ * Maps Printify product/order ids onto Etsy listing and receipt ids when the payload has them.
+ */
+export const printifyEvents = pgTable("printify_events", {
+  id: serial("id").primaryKey(),
+  eventId: text("event_id").notNull().unique(),
+  topic: text("topic").notNull(),
+  printifyProductId: text("printify_product_id"),
+  printifyOrderId: text("printify_order_id"),
+  etsyListingId: text("etsy_listing_id"),
+  etsyOrderId: text("etsy_order_id"),
+  listingId: integer("listing_id").references(() => listings.id),
+  orderId: integer("order_id").references(() => orders.id),
+  verified: boolean("verified").notNull().default(false),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Keyword = typeof keywords.$inferSelect;
 export type Design = typeof designs.$inferSelect;
 export type Listing = typeof listings.$inferSelect;
@@ -171,3 +201,5 @@ export type Order = typeof orders.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type AppEvent = typeof events.$inferSelect;
 export type Cost = typeof costs.$inferSelect;
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+export type PrintifyEvent = typeof printifyEvents.$inferSelect;

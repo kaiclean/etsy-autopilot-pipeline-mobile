@@ -1,4 +1,4 @@
-import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
+import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -87,7 +87,7 @@ function etsyCheck(etsyConnected: boolean, publishMode: PublishMode): HealthChec
 }
 
 function printifyCheck(): HealthCheck {
-  const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS"];
+  const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS", "PRINTIFY_WEBHOOK_SECRET"];
   const p = config.printify;
   if (hasPrintifyCredentials()) {
     const blueprint = p.blueprintId ? `Blueprint ${p.blueprintId} is set.` : "Blueprint is chosen from the Printify catalog when a listing publishes.";
@@ -96,7 +96,7 @@ function printifyCheck(): HealthCheck {
       name: "Printify API",
       level: "green",
       label: "Ready",
-      detail: `API token and shop id are set. ${blueprint} The token is hidden.`,
+      detail: `API token and shop id are set. ${blueprint} The token is hidden. ${webhookNote(p.webhookSecret)}`,
       envVars,
     };
   }
@@ -106,7 +106,7 @@ function printifyCheck(): HealthCheck {
       name: "Printify API",
       level: "yellow",
       label: "Incomplete",
-      detail: "Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then.",
+      detail: `Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then. ${webhookNote(p.webhookSecret)}`,
       envVars,
     };
   }
@@ -115,7 +115,68 @@ function printifyCheck(): HealthCheck {
     name: "Printify API",
     level: "yellow",
     label: "Dry-run",
-    detail: "No Printify credentials. The dry-run adapter is active.",
+    detail: `No Printify credentials. The dry-run adapter is active. ${webhookNote(p.webhookSecret)}`,
+    envVars,
+  };
+}
+
+function webhookNote(secret: string | undefined) {
+  return secret
+    ? "PRINTIFY_WEBHOOK_SECRET is set. Callback is POST /api/webhooks/printify."
+    : "PRINTIFY_WEBHOOK_SECRET is missing. Production rejects unsigned webhook deliveries.";
+}
+
+function storageCheck(): HealthCheck {
+  const envVars = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL_S3", "AWS_REGION", "S3_BUCKET", "S3_PUBLIC_BASE_URL", "BLOB_READ_WRITE_TOKEN"];
+  const backend = storageBackend();
+  if (backend === "s3") {
+    return {
+      id: "storage",
+      name: "Image storage",
+      level: "green",
+      label: "S3",
+      detail: "S3 credentials and a bucket are set. Keys and the bucket name are hidden. Public objects use S3_PUBLIC_BASE_URL when that is set, otherwise /api/media.",
+      envVars,
+    };
+  }
+  if (backend === "blob") {
+    return {
+      id: "storage",
+      name: "Image storage",
+      level: "green",
+      label: "Blob",
+      detail: "BLOB_READ_WRITE_TOKEN is set. The token is hidden. S3 is used instead when AWS credentials and a bucket are set.",
+      envVars,
+    };
+  }
+  return {
+    id: "storage",
+    name: "Image storage",
+    level: "yellow",
+    label: "Data URL",
+    detail: "Generated images stay in the database until S3 or BLOB_READ_WRITE_TOKEN is set.",
+    envVars,
+  };
+}
+
+function pushCheck(): HealthCheck {
+  const envVars = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"];
+  if (vapidConfigured()) {
+    return {
+      id: "webpush",
+      name: "Web Push",
+      level: "green",
+      label: "Ready",
+      detail: "VAPID keys are set. Sales, approval, and failure events can be pushed. The keys are hidden.",
+      envVars,
+    };
+  }
+  return {
+    id: "webpush",
+    name: "Web Push",
+    level: "yellow",
+    label: "In-app",
+    detail: "In-app alerts still work. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT (mailto:) for push when the PWA is closed.",
     envVars,
   };
 }
@@ -307,6 +368,8 @@ export function connectionHealth(input: { etsyConnected: boolean; publishMode?: 
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode),
     printifyCheck(),
+    storageCheck(),
+    pushCheck(),
     llmCheck(),
     imageCheck(),
     publishCheck(publishMode),

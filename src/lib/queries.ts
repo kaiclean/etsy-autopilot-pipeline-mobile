@@ -4,6 +4,7 @@ import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type Jo
 import { STAGES } from "@/pipeline/types";
 import { config, isDemoMode } from "./config";
 import { connectionHealth } from "./health";
+import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
@@ -23,11 +24,14 @@ export async function getShellData() {
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
     getSetting(db, "automation"),
   ]);
+  const demo = isDemoMode();
+  const publishMode = effectivePublishMode(automation.publishMode);
   return {
     pendingCount: pending.length,
-    demo: isDemoMode(),
+    demo,
     killSwitch: automation.killSwitch,
-    publishMode: effectivePublishMode(automation.publishMode),
+    publishMode,
+    dryRunNotice: dryRunNotice({ publishMode, demo }),
   };
 }
 

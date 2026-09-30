@@ -3,7 +3,7 @@ import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, listings } from "@/db/schema";
-import { isDemoMode } from "@/lib/config";
+import { isDemoMode, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
@@ -23,8 +23,7 @@ function reusableId(id: string | null, mode: "dry-run" | "live", prefix: string)
 
 export function absoluteUrl(url: string) {
   if (/^(https?:|data:)/.test(url)) return url;
-  const base = process.env.APP_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:4317");
-  return new URL(url, base).toString();
+  return new URL(url, `${publicAppUrl()}/`).toString();
 }
 
 export const runPublish: StageFn = async (ctx) => {

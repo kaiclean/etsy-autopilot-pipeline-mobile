@@ -162,47 +162,146 @@ function ScheduleRow({ id, label, cron, paused }: { id: StageName; label: string
   );
 }
 
-export function NotificationsCard() {
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function subscribeToPush(publicKey: string) {
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  const existing = await reg.pushManager.getSubscription();
+  const sub =
+    existing ??
+    (await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    }));
+  const res = await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sub.toJSON()),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? "Could not save the push subscription");
+  }
+  return true;
+}
+
+export function NotificationsCard({ vapidPublicKey }: { vapidPublicKey: string | null }) {
   const browserPerm = useSyncExternalStore(
     noopSubscribe,
     () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission),
     () => "default" as const,
   );
   const [requested, setPerm] = useState<NotificationPermission | null>(null);
+  const [pushState, setPushState] = useState<"unknown" | "subscribed" | "unsubscribed">("unknown");
+  const [busy, setBusy] = useState(false);
   const perm = requested ?? browserPerm;
+
+  useEffect(() => {
+    if (!vapidPublicKey || perm !== "granted" || !("serviceWorker" in navigator)) return;
+    let cancel = false;
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => {
+        if (!cancel) setPushState(sub ? "subscribed" : "unsubscribed");
+      })
+      .catch(() => {
+        if (!cancel) setPushState("unsubscribed");
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [vapidPublicKey, perm]);
+
   const enable = async () => {
     if (typeof Notification === "undefined") return;
-    if ("serviceWorker" in navigator) await navigator.serviceWorker.register("/sw.js").catch(() => {});
-    const r = await Notification.requestPermission();
-    setPerm(r);
-    if (r === "granted") {
-      const reg = await navigator.serviceWorker?.getRegistration();
-      const opts = { body: "You'll be notified about new orders and items awaiting approval.", icon: "/icons/192" };
-      if (reg) reg.showNotification("Notifications on", opts);
-      else new Notification("Notifications on", opts);
+    setBusy(true);
+    try {
+      if ("serviceWorker" in navigator) await navigator.serviceWorker.register("/sw.js").catch(() => {});
+      const r = await Notification.requestPermission();
+      setPerm(r);
+      if (r !== "granted") return;
+      if (vapidPublicKey) {
+        await subscribeToPush(vapidPublicKey);
+        setPushState("subscribed");
+        toast.success("Push notifications on");
+      } else {
+        const reg = await navigator.serviceWorker?.getRegistration();
+        const opts = { body: "You'll be notified about new orders and items awaiting approval.", icon: "/icons/192" };
+        if (reg) reg.showNotification("Notifications on", opts);
+        else new Notification("Notifications on", opts);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not enable notifications");
+    } finally {
+      setBusy(false);
     }
   };
+
+  const sendTest = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/push/test", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) toast.error(data.error ?? "Test push failed");
+      else toast.success("Test push sent");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLine =
+    perm === "granted"
+      ? vapidPublicKey
+        ? pushState === "subscribed"
+          ? "On. This device receives sales and approval pushes, including when the app is closed."
+          : "Permission granted. Subscribe this device so pushes arrive when the app is closed."
+        : "On while this app is open. Background push needs VAPID keys on the server."
+      : perm === "denied"
+        ? "Blocked in browser settings."
+        : perm === "unsupported"
+          ? "Not supported here. On iPhone, add to Home Screen first."
+          : "Get a ping for new orders and listings awaiting approval.";
+
   return (
-    <Panel className="flex items-center gap-3 p-4">
-      <div className="flex size-10 items-center justify-center rounded-xl bg-muted">
-        {perm === "granted" ? <Bell className="size-5 text-success" /> : <BellOff className="size-5 text-muted-foreground" />}
-      </div>
-      <div className="flex-1">
-        <div className="text-sm font-medium">Order &amp; approval notifications</div>
-        <div className="text-[11px] text-muted-foreground">
-          {perm === "granted"
-            ? "On. Delivered while the app is open or installed in the background."
-            : perm === "denied"
-              ? "Blocked in browser settings."
-              : perm === "unsupported"
-                ? "Not supported here. On iPhone, add to Home Screen first."
-                : "Get a ping for new orders and listings awaiting approval."}
+    <Panel className="p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 items-center justify-center rounded-xl bg-muted">
+          {perm === "granted" ? <Bell className="size-5 text-success" /> : <BellOff className="size-5 text-muted-foreground" />}
         </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Order &amp; approval notifications</div>
+          <div className="text-[11px] text-muted-foreground">{statusLine}</div>
+        </div>
+        {perm === "default" && (
+          <Button className="h-10 rounded-xl" disabled={busy} onClick={() => void enable()}>
+            {busy ? <Loader2 className="animate-spin" /> : "Enable"}
+          </Button>
+        )}
+        {perm === "granted" && vapidPublicKey && pushState === "unsubscribed" && (
+          <Button className="h-10 rounded-xl" disabled={busy} onClick={() => void enable()}>
+            {busy ? <Loader2 className="animate-spin" /> : "Subscribe"}
+          </Button>
+        )}
+        {perm === "granted" && vapidPublicKey && pushState === "subscribed" && (
+          <Button variant="secondary" className="h-10 rounded-xl" disabled={busy} onClick={() => void sendTest()}>
+            {busy ? <Loader2 className="animate-spin" /> : "Send test"}
+          </Button>
+        )}
       </div>
-      {perm === "default" && (
-        <Button className="h-10 rounded-xl" onClick={enable}>
-          Enable
-        </Button>
+      {!vapidPublicKey && (
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+          Background Web Push is off until the server has <code>VAPID_PUBLIC_KEY</code>, <code>VAPID_PRIVATE_KEY</code>, and{" "}
+          <code>VAPID_SUBJECT</code> (a <code>mailto:</code> address). Generate a pair with <code>npm run vapid:generate</code> and add it to the
+          environment. Do not commit the keys.
+        </p>
       )}
     </Panel>
   );

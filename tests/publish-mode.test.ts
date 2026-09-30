@@ -51,7 +51,7 @@ describe("setup guide", () => {
     const blob = JSON.stringify({ steps: SETUP_STEPS, checklist, presence: setupPresence(), origin: publicAppOrigin() });
     expect(checklist).toContain("PUBLISH_MODE=dry-run");
     expect(checklist).not.toContain("PUBLISH_MODE=live");
-    expect(SETUP_STEPS.map((step) => step.id)).toEqual(["neon", "etsy", "printify", "llm", "auth", "app"]);
+    expect(SETUP_STEPS.map((step) => step.id)).toEqual(["neon", "etsy", "printify", "llm", "storage", "push", "auth", "app"]);
     expect(SETUP_STEPS.find((step) => step.id === "etsy")?.envVars).toEqual([
       "ETSY_API_KEY",
       "ETSY_SHARED_SECRET",

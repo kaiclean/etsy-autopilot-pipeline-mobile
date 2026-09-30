@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { withStoredUrl } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
 export class ReplicateImageProvider implements ImageProvider {
@@ -18,6 +19,6 @@ export class ReplicateImageProvider implements ImageProvider {
     const json = await res.json();
     const out = Array.isArray(json.output) ? json.output[0] : json.output;
     if (!out) throw new Error(`Replicate prediction not finished (status ${json.status})`);
-    return { url: String(out), costChf: this.estimatedCostChf, provider: this.name };
+    return withStoredUrl({ url: String(out), costChf: this.estimatedCostChf, provider: this.name });
   }
 }

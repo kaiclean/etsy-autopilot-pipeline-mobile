@@ -23,6 +23,10 @@ const ENV_KEYS = [
   "REPLICATE_API_TOKEN",
   "DASHBOARD_PASSWORD",
   "AUTH_SECRET",
+  "PRINTIFY_WEBHOOK_SECRET",
+  "VAPID_PRIVATE_KEY",
+  "AWS_SECRET_ACCESS_KEY",
+  "S3_BUCKET",
 ] as const;
 
 const original = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -48,6 +52,10 @@ describe("connection health", () => {
     clearModeEnv();
     process.env.DATABASE_URL = "postgres://autopilot:s3cret-db-password@ep-example.neon.tech/shop";
     process.env.OPENAI_API_KEY = "sk-live-should-not-leak";
+    process.env.PRINTIFY_WEBHOOK_SECRET = "whsec-should-not-leak";
+    process.env.VAPID_PRIVATE_KEY = "vapid-private-should-not-leak";
+    process.env.AWS_SECRET_ACCESS_KEY = "aws-secret-should-not-leak";
+    process.env.S3_BUCKET = "bucket-name-should-not-leak";
     const checks = connectionHealth({ etsyConnected: false });
     const byId = Object.fromEntries(checks.map((check) => [check.id, check]));
     const blob = JSON.stringify(checks);
@@ -65,8 +73,14 @@ describe("connection health", () => {
     expect(byId.database.envVars).toContain("DATABASE_URL");
     expect(byId.publish.envVars).toEqual(["PUBLISH_MODE"]);
     expect(byId.demo.envVars).toEqual(["DEMO_MODE"]);
+    expect(byId.storage).toBeDefined();
+    expect(byId.webpush).toBeDefined();
     expect(blob).not.toContain("s3cret-db-password");
     expect(blob).not.toContain("sk-live-should-not-leak");
+    expect(blob).not.toContain("whsec-should-not-leak");
+    expect(blob).not.toContain("vapid-private-should-not-leak");
+    expect(blob).not.toContain("aws-secret-should-not-leak");
+    expect(blob).not.toContain("bucket-name-should-not-leak");
     expect(blob).not.toContain("postgres://");
   });
 

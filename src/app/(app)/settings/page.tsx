@@ -11,6 +11,8 @@ import {
   SchedulesList,
   ThemeToggle,
 } from "@/components/settings/settings-client";
+import { config, vapidConfigured } from "@/lib/config";
+import { settingsModeSubtitle } from "@/lib/operator-mode";
 import { getSettingsData } from "@/lib/queries";
 
 export const metadata = { title: "Settings" };
@@ -21,10 +23,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   return (
     <div className="space-y-6">
       <EtsyStatusToast status={typeof sp.etsy === "string" ? sp.etsy : undefined} />
-      <PageHeader
-        title="Settings"
-        subtitle={d.publishMode === "dry-run" ? "Publishing stays dry-run until you confirm Go live" : "Live writes are armed"}
-      />
+      <PageHeader title="Settings" subtitle={settingsModeSubtitle({ publishMode: d.publishMode, demo: d.demo })} />
 
       <KillSwitchCard on={d.automation.killSwitch} />
 
@@ -48,7 +47,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
 
       <section className="space-y-3">
         <SectionTitle>App</SectionTitle>
-        <NotificationsCard />
+        <NotificationsCard vapidPublicKey={vapidConfigured() ? (config.vapid.publicKey ?? null) : null} />
         <ThemeToggle />
         <form action={logout}>
           <button className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-medium text-muted-foreground active:bg-muted/50">

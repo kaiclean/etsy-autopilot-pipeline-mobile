@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   devIndicators: false,
-  serverExternalPackages: ["@electric-sql/pglite", "google-trends-api"],
+  serverExternalPackages: ["@electric-sql/pglite", "google-trends-api", "web-push"],
   outputFileTracingIncludes: {
     "/**": ["./drizzle/**"],
   },

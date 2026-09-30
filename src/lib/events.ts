@@ -3,6 +3,7 @@ import type { PgColumn } from "drizzle-orm/pg-core";
 import type { DB } from "@/db";
 import { events } from "@/db/schema";
 import { isDemoMode } from "./config";
+import { dispatchEventPush } from "./push";
 
 export type EmitInput = {
   type: string;
@@ -14,6 +15,11 @@ export type EmitInput = {
 
 export async function emit(db: DB, e: EmitInput) {
   await db.insert(events).values({ ...e, severity: e.severity ?? "info", isDemo: isDemoMode() });
+  try {
+    await dispatchEventPush(db, e);
+  } catch (error) {
+    console.error("[web-push] dispatch failed", error instanceof Error ? error.message : error);
+  }
 }
 
 /** In live mode, seeded/mock rows (isDemo=true) are hidden everywhere. */

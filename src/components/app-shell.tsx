@@ -1,12 +1,20 @@
 "use client";
 
-import { ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
+import { AlertTriangle, ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { DryRunNotice } from "@/lib/operator-mode";
+import type { PublishMode } from "@/lib/publish-mode";
 import { cn } from "@/lib/utils";
 import { LiveProvider, useLive } from "./live-provider";
 
-type Shell = { pendingCount: number; demo: boolean; killSwitch: boolean; publishMode: "dry-run" | "live" };
+type Shell = {
+  pendingCount: number;
+  demo: boolean;
+  killSwitch: boolean;
+  publishMode: PublishMode;
+  dryRunNotice: DryRunNotice | null;
+};
 
 const MOBILE_TABS = [
   { href: "/", label: "Home", icon: House },
@@ -51,37 +59,57 @@ function LiveDot() {
   );
 }
 
-function Badges({ demo, killSwitch, publishMode }: { demo: boolean; killSwitch: boolean; publishMode: "dry-run" | "live" }) {
+function Badges({ demo, killSwitch, publishMode }: { demo: boolean; killSwitch: boolean; publishMode: PublishMode }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <Link
-        href="/connections"
-        className={
-          publishMode === "live"
-            ? "rounded-md border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-destructive"
-            : "rounded-md border border-chart-4/40 bg-chart-4/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-chart-4"
-        }
-        title={publishMode === "live" ? "PUBLISH_MODE=live. Write APIs can run." : "PUBLISH_MODE is locked to dry-run. Live writes are off."}
-      >
-        {publishMode === "live" ? "LIVE" : "DRY-RUN"}
-      </Link>
-      {demo && (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {publishMode === "live" ? (
         <Link
-          href="/settings"
-          className="rounded-md border border-warning/40 bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-warning"
-          title="Demo mode: seeded data and mock/dry-run adapters. Add Etsy keys to go live."
+          href="/connections"
+          className="rounded-md border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-destructive"
+          title="Dashboard go-live is armed. Writes can run on the next publish."
         >
-          DEMO
+          LIVE
+        </Link>
+      ) : (
+        <Link
+          href="/connections"
+          className="rounded-md border border-amber-900/30 bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-amber-950"
+          title="No live Etsy or Printify publishes"
+        >
+          DRY-RUN
         </Link>
       )}
-      {killSwitch && (
+      {demo ? (
+        <Link
+          href="/settings"
+          className="rounded-md border border-chart-4/40 bg-chart-4/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-chart-4"
+          title="DEMO_MODE is on. Rows on screen may be seeded demo data."
+        >
+          Demo data
+        </Link>
+      ) : null}
+      {killSwitch ? (
         <Link
           href="/settings"
           className="flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-destructive"
         >
           <Power className="size-3" /> PAUSED
         </Link>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+function DryRunBanner({ notice }: { notice: DryRunNotice }) {
+  return (
+    <div role="status" className="border-b border-amber-900/25 bg-amber-300 text-amber-950">
+      <Link href="/settings" className="mx-auto flex w-full max-w-6xl items-start gap-2.5 px-4 py-2.5 md:px-8">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <span className="min-w-0">
+          <span className="block text-[13px] leading-tight font-bold tracking-wide">{notice.title}</span>
+          <span className="mt-0.5 block text-xs leading-snug font-medium text-amber-950/80">{notice.detail}</span>
+        </span>
+      </Link>
     </div>
   );
 }
@@ -128,26 +156,29 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
               );
             })}
           </nav>
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5">
             <LiveDot />
             <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 pt-safe backdrop-blur-xl md:hidden">
-            <div className="flex h-12 items-center justify-between px-4">
-              <Link href="/" className="flex items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/icons/192" alt="" className="size-6 rounded-md" />
-                <span className="text-sm font-semibold">Autopilot</span>
-              </Link>
-              <div className="flex items-center gap-3">
-                <LiveDot />
-                <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
+          <div className="sticky top-0 z-30">
+            {shell.dryRunNotice ? <DryRunBanner notice={shell.dryRunNotice} /> : null}
+            <header className="border-b border-border/60 bg-background/80 pt-safe backdrop-blur-xl md:hidden">
+              <div className="flex min-h-12 items-center justify-between gap-2 px-4 py-1.5">
+                <Link href="/" className="flex shrink-0 items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/icons/192" alt="" className="size-6 rounded-md" />
+                  <span className="text-sm font-semibold">Autopilot</span>
+                </Link>
+                <div className="flex items-center gap-3">
+                  <LiveDot />
+                  <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
+                </div>
               </div>
-            </div>
-          </header>
+            </header>
+          </div>
 
           <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+88px)] md:px-8 md:pt-8 md:pb-12">
             {children}
