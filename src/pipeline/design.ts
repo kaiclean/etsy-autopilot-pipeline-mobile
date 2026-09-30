@@ -79,6 +79,7 @@ export const runDesign: StageFn = async (ctx) => {
       spentMonth += img.costChf;
       await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       made++;
+      if (img.url.startsWith("data:")) log(`“${kw.phrase}” kept as a data URL. Set S3 or BLOB_READ_WRITE_TOKEN to store the file.`, "warn");
       log(`Generated design for “${kw.phrase}”`);
     } catch (e) {
       log(`Generation failed for “${kw.phrase}”: ${(e as Error).message}`, "error");

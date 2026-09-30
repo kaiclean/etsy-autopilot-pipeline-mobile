@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { withStoredUrl } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
 /**
@@ -41,7 +42,7 @@ export class HiggsfieldImageProvider implements ImageProvider {
     const job = await submit.json();
     const jobId: string | undefined = job.id ?? job.job_set_id ?? job.request_id;
     const direct = extractUrl(job);
-    if (direct) return { url: direct, costChf: this.estimatedCostChf, provider: this.name };
+    if (direct) return withStoredUrl({ url: direct, costChf: this.estimatedCostChf, provider: this.name });
     if (!jobId) throw new Error("Higgsfield response had no job id");
 
     const deadline = Date.now() + 90_000;
@@ -51,7 +52,7 @@ export class HiggsfieldImageProvider implements ImageProvider {
       if (!poll.ok) continue;
       const body = await poll.json();
       const url = extractUrl(body);
-      if (url) return { url, costChf: this.estimatedCostChf, provider: this.name };
+      if (url) return withStoredUrl({ url, costChf: this.estimatedCostChf, provider: this.name });
       const status = String(body.status ?? body.jobs?.[0]?.status ?? "");
       if (/fail|error|nsfw/i.test(status)) throw new Error(`Higgsfield job ${status}`);
     }

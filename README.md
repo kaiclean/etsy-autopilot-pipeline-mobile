@@ -46,7 +46,7 @@ To reset local data completely, stop the server and `rm -rf .data`.
 
 ```
 src/
-  db/schema.ts            Drizzle tables: keywords, designs, listings, orders, job_runs, events, costs, daily_stats, settings
+  db/schema.ts            Drizzle tables: keywords, designs, listings, orders, job_runs, events, costs, daily_stats, settings, push_subscriptions, printify_events
   db/index.ts             Neon (DATABASE_URL) or PGlite; runs migrations from ./drizzle, seeds demo data when empty
   lib/fees.ts             Etsy fee engine for a Swiss seller (see "Fee math")
   lib/listing-validator.ts  Etsy title/tag limits, trademark blocklist, required disclosures
@@ -61,7 +61,7 @@ src/
     research.ts design.ts listing.ts publish.ts orders.ts analytics.ts
     runner.ts             runStage(): kill switch, pause, concurrency guard, logs, events
   app/(app)/              Dashboard: Home, Pipeline, Queue, Products, Orders, Analytics, Settings, More
-  app/api/                pipeline/[stage]/run, cron/[stage], listings/[id], settings, events (SSE), etsy/oauth/*
+  app/api/                pipeline/[stage]/run, cron/[stage], listings/[id], settings, events (SSE), etsy/oauth/*, push/*, webhooks/printify, media/*
   proxy.ts                Auth gate (Next 16's replacement for middleware.ts)
 ```
 
@@ -110,11 +110,15 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `AUTH_SECRET` | prod | Signs session cookies (`openssl rand -base64 32`) |
 | `CRON_SECRET` | prod | Protects `/api/cron/*` (Vercel sends it automatically) |
 | `DATABASE_URL` | prod | Neon Postgres connection string. Embedded PGlite is used when empty. |
-| `APP_URL` | live publish | Public base URL, used for absolute image URLs sent to Etsy and Printify |
+| `APP_URL` | live publish | Public base URL, used for absolute image URLs, `/api/media`, and the Printify callback |
 | `DEMO_MODE` | — | `true`/`false` to force. Default: on until Etsy keys exist. |
-| `PUBLISH_MODE` | — | `dry-run` (default) or `live` |
+| `PUBLISH_MODE` | — | `dry-run` (default) or `live`. Leave this on dry-run; the upgrades below do not turn it on. |
 | `ETSY_API_KEY`, `ETSY_SHARED_SECRET`, `ETSY_SHOP_ID`, `ETSY_REDIRECT_URI` | live Etsy | Etsy Open API v3 app |
 | `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`, `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID`, `PRINTIFY_VARIANT_IDS` | live POD | Printify API |
+| `PRINTIFY_WEBHOOK_SECRET` | production webhooks | HMAC secret you send as `secret` when creating Printify webhooks. Callback: `POST $APP_URL/api/webhooks/printify` |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | background push | Web Push keys. `npm run vapid:generate`. Subject is `mailto:you@example.com`. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `S3_BUCKET` | stored art | S3-compatible upload (Railway, AWS, R2). Optional `S3_PUBLIC_BASE_URL`, `S3_URL_MODE`, `S3_FORCE_PATH_STYLE`. |
+| `BLOB_READ_WRITE_TOKEN` | stored art | Vercel Blob, used only when the S3 variables are not all set. |
 | `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
 | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_MODEL`) | real copy | Listing writer (OpenAI or OpenRouter) |
 
@@ -157,6 +161,23 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
    - `GET /v1/catalog/blueprints/{id}/print_providers.json` → `PRINTIFY_PRINT_PROVIDER_ID`.
    - `GET /v1/catalog/blueprints/{id}/print_providers/{pid}/variants.json` → comma-separated `PRINTIFY_VARIANT_IDS`.
 5. In Etsy, set Printify as a **production partner** (Shop Manager → Settings → Production partners) with the correct ship-from location.
+6. Point webhooks at `POST https://<your-domain>/api/webhooks/printify`. Create one webhook per topic (`order:created`, `order:updated`, `order:sent-to-production`, `order:shipment:created`, `order:shipment:delivered`, `product:publish:started`) with the same URL and `"secret": "<PRINTIFY_WEBHOOK_SECRET>"`. Printify signs the raw body as `sha256=<hmac>` in `x-pfy-signature`. The handler stores the event once, strips buyer contact fields, and when the ids match a local row it records the Etsy listing id and Printify order id. It does not call Printify or Etsy, so it is safe while `PUBLISH_MODE=dry-run`. Production rejects unsigned deliveries.
+
+### Web Push
+
+The service worker already shows `{ title, body, url }` payloads. To deliver them while the PWA is closed:
+
+1. Run `npm run vapid:generate` and put `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (`mailto:…`) in the server environment. Do not commit them.
+2. Open **Settings** and enable notifications. The browser subscribes and `POST /api/push/subscribe` stores the endpoint. Use **Send test** to confirm.
+3. Sales (`order.new`), listings awaiting approval (`approval.pending`), and failed jobs or publishes send a push. If VAPID is missing, Settings says so and in-app toasts still work. Expired subscriptions (HTTP 404/410) are deleted.
+
+### Image storage
+
+OpenAI, Higgsfield, Replicate, and the mock adapter pass generated bytes through object storage before the URL is saved:
+
+- **S3 (preferred on Railway):** set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` (or `AWS_ENDPOINT_URL`), `AWS_REGION`, and `S3_BUCKET` (also accepts `AWS_S3_BUCKET_NAME`). With `S3_PUBLIC_BASE_URL`, that public URL is stored. Otherwise the database stores `$APP_URL/api/media/designs/…`, which streams the private object. `S3_URL_MODE=signed` stores a 7-day presigned URL instead.
+- **Vercel Blob:** set `BLOB_READ_WRITE_TOKEN` only when S3 is not configured. Blob's public URL is stored.
+- With neither, data URLs are kept and the design log warns. `PUBLISH_MODE` stays `dry-run` unless you set it to `live`.
 
 ### Higgsfield / OpenAI / Replicate
 
@@ -178,13 +199,12 @@ These can't be automated through Etsy's APIs today, per the business plan §7:
 
 ## Security notes
 
-- Every route except `/login`, `/offline`, the manifest, the icons, `sw.js` and `/api/cron/*` requires a signed, httpOnly session cookie (HMAC-SHA256, 30 days). Cron routes require `CRON_SECRET`.
+- Every route except `/login`, `/offline`, the manifest, the icons, `sw.js`, `/api/cron/*`, `/api/media/*`, and `POST /api/webhooks/printify` requires a signed, httpOnly session cookie (HMAC-SHA256, 30 days). Cron routes require `CRON_SECRET`. The Printify callback checks `x-pfy-signature` when `PRINTIFY_WEBHOOK_SECRET` is set, and production refuses the call when that secret is missing. Media keys are unguessable object ids, not a directory listing.
 - Server actions re-check the session.
 - Production refuses to start a session if `DASHBOARD_PASSWORD` or `AUTH_SECRET` is missing.
 - In live mode, rows flagged `is_demo` are hidden everywhere. `npm run db:seed` touches only those rows.
 
 ## Next steps
 
-- Real Web Push (VAPID + `web-push`) so notifications arrive when the PWA is fully closed. The service worker already handles `push` events.
-- Move generated images to Vercel Blob or S3 (the OpenAI adapter currently stores data URLs).
-- A Printify webhook to capture the Etsy listing id and order ids for POD products published in live mode.
+- Keep `PUBLISH_MODE=dry-run` until a few approved listings look right, then switch to `live`. Live Etsy publishes stay drafts unless `ETSY_ACTIVATE=true`.
+- After a live Printify publish, confirm a webhook row links `printify_product_id` to the Etsy listing id before relying on order sync.

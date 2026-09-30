@@ -1,7 +1,8 @@
 import { config } from "@/lib/config";
+import { withStoredUrl } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
-/** OpenAI-compatible Images API (OpenAI or OpenRouter). Returns a data URL; move to Blob/S3 before scaling. */
+/** OpenAI-compatible Images API (OpenAI or OpenRouter). Bytes are uploaded to object storage when S3 or Blob is configured. */
 export class OpenAIImageProvider implements ImageProvider {
   readonly name = "openai";
   /** Soft pre-call estimate (CHF); OpenRouter gemini flash image is ~USD 0.04. */
@@ -61,7 +62,7 @@ export class OpenAIImageProvider implements ImageProvider {
       const costUsd = typeof json.usage?.cost === "number" ? json.usage.cost : undefined;
       // Treat USD≈CHF for cap accounting when provider reports usage.cost.
       const costChf = costUsd != null ? Math.max(costUsd, 0.01) : this.estimatedCostChf;
-      return { url, costChf, provider: this.name };
+      return withStoredUrl({ url, costChf, provider: this.name });
     }
     throw new Error(`OpenAI images failed: ${lastErr || "unknown"}`);
   }

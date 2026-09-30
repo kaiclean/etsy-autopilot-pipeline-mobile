@@ -9,6 +9,7 @@ import {
   SchedulesList,
   ThemeToggle,
 } from "@/components/settings/settings-client";
+import { config, vapidConfigured } from "@/lib/config";
 import { settingsModeSubtitle } from "@/lib/operator-mode";
 import { getSettingsData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
@@ -73,7 +74,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
 
       <section className="space-y-3">
         <SectionTitle>App</SectionTitle>
-        <NotificationsCard />
+        <NotificationsCard vapidPublicKey={vapidConfigured() ? (config.vapid.publicKey ?? null) : null} />
         <ThemeToggle />
         <form action={logout}>
           <button className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-medium text-muted-foreground active:bg-muted/50">

@@ -27,6 +27,30 @@ export const config = {
         .split(",")
         .map((s) => Number(s.trim()))
         .filter(Boolean),
+      webhookSecret: env("PRINTIFY_WEBHOOK_SECRET"),
+    };
+  },
+  get vapid() {
+    return {
+      publicKey: env("VAPID_PUBLIC_KEY"),
+      privateKey: env("VAPID_PRIVATE_KEY"),
+      subject: env("VAPID_SUBJECT"),
+    };
+  },
+  /** S3-compatible object storage (Railway buckets, AWS, R2, MinIO). Blob is the fallback. */
+  get storage() {
+    const force = env("S3_FORCE_PATH_STYLE");
+    return {
+      accessKeyId: env("AWS_ACCESS_KEY_ID"),
+      secretAccessKey: env("AWS_SECRET_ACCESS_KEY"),
+      endpoint: env("AWS_ENDPOINT_URL_S3") ?? env("AWS_ENDPOINT_URL"),
+      region: env("AWS_REGION") ?? env("AWS_DEFAULT_REGION") ?? "auto",
+      bucket: env("S3_BUCKET") ?? env("AWS_S3_BUCKET_NAME") ?? env("AWS_BUCKET_NAME"),
+      publicBaseUrl: env("S3_PUBLIC_BASE_URL")?.replace(/\/$/, ""),
+      /** signed = store a 7-day presigned URL. Default is a stable /api/media URL or S3_PUBLIC_BASE_URL. */
+      urlMode: env("S3_URL_MODE") === "signed" ? ("signed" as const) : ("stable" as const),
+      forcePathStyle: force !== "false",
+      blobToken: env("BLOB_READ_WRITE_TOKEN"),
     };
   },
   get higgsfield() {
@@ -81,6 +105,30 @@ export const config = {
   },
 };
 
+/** Public origin used for media URLs and the Printify callback. */
+export function publicAppUrl() {
+  const raw = env("APP_URL") ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:4317");
+  return raw.replace(/\/$/, "");
+}
+
+export function printifyWebhookUrl() {
+  return `${publicAppUrl()}/api/webhooks/printify`;
+}
+
+/** All three VAPID values, and a mailto: or https: subject, are required before any push is sent. */
+export function vapidConfigured() {
+  const v = config.vapid;
+  if (!v.publicKey || !v.privateKey || !v.subject) return false;
+  return v.subject.startsWith("mailto:") || v.subject.startsWith("https://");
+}
+
+export function storageBackend(): "s3" | "blob" | "none" {
+  const s = config.storage;
+  if (s.accessKeyId && s.secretAccessKey && s.endpoint && s.bucket) return "s3";
+  if (s.blobToken) return "blob";
+  return "none";
+}
+
 export function hasEtsyCredentials() {
   const e = config.etsy;
   return Boolean(e.apiKey && e.sharedSecret && e.shopId);
@@ -110,6 +158,8 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
   const e = config.etsy;
   const p = config.printify;
   const h = config.higgsfield;
+  const storage = storageBackend();
+  const pushOn = vapidConfigured();
   return [
     {
       id: "database",
@@ -133,10 +183,41 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
       id: "printify",
       name: "Printify",
       status: hasPrintifyCredentials() ? "configured" : "mock",
-      detail: hasPrintifyCredentials()
-        ? `Shop ${p.shopId}${p.blueprintId ? ` · blueprint ${p.blueprintId}` : " · blueprint chosen from the Printify catalog when a listing publishes"}`
-        : "Dry-run adapter.",
-      envVars: ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID"],
+      detail: `${
+        hasPrintifyCredentials()
+          ? `Shop ${p.shopId}${p.blueprintId ? ` · blueprint ${p.blueprintId}` : " · blueprint chosen from the Printify catalog when a listing publishes"}`
+          : "Dry-run adapter."
+      } Webhook POST ${printifyWebhookUrl()}.${p.webhookSecret ? " Signatures are checked with PRINTIFY_WEBHOOK_SECRET." : " Set PRINTIFY_WEBHOOK_SECRET so production deliveries are verified."}`,
+      envVars: ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_WEBHOOK_SECRET"],
+    },
+    {
+      id: "storage",
+      name: "Image storage",
+      status: storage === "none" ? "mock" : "configured",
+      detail:
+        storage === "s3"
+          ? `S3-compatible bucket ${config.storage.bucket}${config.storage.publicBaseUrl ? ` · public ${config.storage.publicBaseUrl}` : config.storage.urlMode === "signed" ? " · 7-day signed URLs" : " · served at /api/media"}`
+          : storage === "blob"
+            ? "Vercel Blob. S3 is used instead when AWS credentials and a bucket are set."
+            : "Data URLs stay in the database until S3 (preferred) or BLOB_READ_WRITE_TOKEN is set.",
+      envVars: [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL_S3",
+        "AWS_REGION",
+        "S3_BUCKET",
+        "S3_PUBLIC_BASE_URL",
+        "BLOB_READ_WRITE_TOKEN",
+      ],
+    },
+    {
+      id: "webpush",
+      name: "Web Push",
+      status: pushOn ? "configured" : "mock",
+      detail: pushOn
+        ? "VAPID is set. Sales, approval, and failure events are pushed to subscribed browsers."
+        : "In-app alerts still work. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT (mailto:) for push when the PWA is closed. npm run vapid:generate",
+      envVars: ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"],
     },
     {
       id: "images",
