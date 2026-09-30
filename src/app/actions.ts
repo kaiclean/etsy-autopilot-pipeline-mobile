@@ -12,6 +12,7 @@ import { emit } from "@/lib/events";
 import { calculateFees } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
+import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import { getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
 import { runFullPipeline, runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
@@ -153,12 +154,31 @@ export async function setKillSwitch(on: boolean) {
   revalidateAll();
 }
 
+export async function setPublishMode(mode: PublishMode, confirmation = "", understood = false) {
+  await requireAuth();
+  const decision = goLiveDecision({ mode, confirmation, understood });
+  if (!decision.ok) return decision;
+  const db = await getDb();
+  const a = await getSetting(db, "automation");
+  await setSetting(db, "automation", { ...a, publishMode: decision.mode });
+  await emit(db, {
+    type: "publish.mode",
+    title: decision.mode === "live" ? "Go live confirmed" : "Returned to dry-run",
+    body: decision.mode === "live" ? "Etsy and Printify writes are armed." : "Live writes are off.",
+    severity: decision.mode === "live" ? "warning" : "success",
+    href: "/connections",
+  });
+  revalidateAll();
+  return { ok: true as const, publishMode: decision.mode };
+}
+
 export async function saveAutomation(patch: Partial<AutomationSettings>) {
   await requireAuth();
   const db = await getDb();
   const a = await getSetting(db, "automation");
   const clean: Partial<AutomationSettings> = {};
   for (const [k, v] of Object.entries(patch) as [keyof AutomationSettings, unknown][]) {
+    if (k === "publishMode") continue;
     if (typeof v === "number" && (!Number.isFinite(v) || v < 0)) continue;
     (clean as Record<string, unknown>)[k] = v;
   }

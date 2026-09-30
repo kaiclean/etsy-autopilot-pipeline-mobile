@@ -12,6 +12,8 @@ export type AutomationSettings = {
   targetMarginPct: number;
   designsPerRun: number;
   assumeOffsiteAds: boolean;
+  /** Runtime publish switch. Defaults to dry-run. Live is stored only after the confirm gate. */
+  publishMode: "dry-run" | "live";
 };
 
 export type StageSettings = Record<StageName, { paused: boolean; cron: string }>;
@@ -32,6 +34,7 @@ export const DEFAULT_AUTOMATION: AutomationSettings = {
   targetMarginPct: 55,
   designsPerRun: 3,
   assumeOffsiteAds: false,
+  publishMode: "dry-run",
 };
 
 /** Must match vercel.json cron entries (UTC). Daily cadence fits the Vercel Hobby plan. */

@@ -36,7 +36,7 @@ export const runPublish: StageFn = async (ctx) => {
   if (approved.length === 0) return "Nothing approved to publish.";
 
   const etsy = await getEtsyAdapter(db, ctx.random);
-  const printify = getPrintifyAdapter({ random: ctx.random });
+  const printify = await getPrintifyAdapter({ db, random: ctx.random });
   log(`Etsy adapter: ${etsy.mode} · Printify adapter: ${printify.mode}`);
 
   let ok = 0;

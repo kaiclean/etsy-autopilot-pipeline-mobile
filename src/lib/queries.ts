@@ -2,8 +2,11 @@ import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type JobRun, type StageName } from "@/db/schema";
 import { STAGES } from "@/pipeline/types";
-import { config, integrationStatus, isDemoMode } from "./config";
+import { config, isDemoMode } from "./config";
+import { connectionHealth } from "./health";
 import { dryRunNotice } from "./operator-mode";
+import { effectivePublishMode } from "./publish-mode";
+import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
@@ -22,11 +25,12 @@ export async function getShellData() {
     getSetting(db, "automation"),
   ]);
   const demo = isDemoMode();
-  const publishMode = config.publishMode;
+  const publishMode = effectivePublishMode(automation.publishMode);
   return {
     pendingCount: pending.length,
     demo,
     killSwitch: automation.killSwitch,
+    publishMode,
     dryRunNotice: dryRunNotice({ publishMode, demo }),
   };
 }
@@ -249,20 +253,24 @@ export async function getAnalytics() {
   };
 }
 
+export async function getConnectionsData() {
+  const db = await getDb();
+  const [tokens, automation] = await Promise.all([getSetting(db, "etsyTokens"), getSetting(db, "automation")]);
+  const etsyConnected = Boolean(tokens?.accessToken);
+  const publishMode = effectivePublishMode(automation.publishMode);
+  return {
+    checks: connectionHealth({ etsyConnected, publishMode }),
+    etsyConnected,
+    canConnectEtsy: Boolean(config.etsy.apiKey),
+    publishMode,
+    envPublishMode: config.publishMode,
+    demo: isDemoMode(),
+    presence: setupPresence(),
+  };
+}
+
 export async function getSettingsData() {
   const db = await getDb();
-  const [automation, stages, tokens] = await Promise.all([
-    getSetting(db, "automation"),
-    getSetting(db, "stages"),
-    getSetting(db, "etsyTokens"),
-  ]);
-  return {
-    automation,
-    stages,
-    integrations: integrationStatus(Boolean(tokens)),
-    demo: isDemoMode(),
-    publishMode: config.publishMode,
-    etsyConnected: Boolean(tokens),
-    canConnectEtsy: Boolean(config.etsy.apiKey),
-  };
+  const [automation, stages, connections] = await Promise.all([getSetting(db, "automation"), getSetting(db, "stages"), getConnectionsData()]);
+  return { automation, stages, ...connections };
 }

@@ -1,20 +1,27 @@
 "use client";
 
-import { AlertTriangle, ChartColumnBig, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
+import { AlertTriangle, ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { DryRunNotice } from "@/lib/operator-mode";
+import type { PublishMode } from "@/lib/publish-mode";
 import { cn } from "@/lib/utils";
 import { LiveProvider, useLive } from "./live-provider";
 
-type DryRunNotice = { title: string; detail: string };
-type Shell = { pendingCount: number; demo: boolean; killSwitch: boolean; dryRunNotice: DryRunNotice | null };
+type Shell = {
+  pendingCount: number;
+  demo: boolean;
+  killSwitch: boolean;
+  publishMode: PublishMode;
+  dryRunNotice: DryRunNotice | null;
+};
 
 const MOBILE_TABS = [
   { href: "/", label: "Home", icon: House },
   { href: "/pipeline", label: "Pipeline", icon: Workflow },
   { href: "/queue", label: "Queue", icon: Inbox, badge: true },
   { href: "/orders", label: "Orders", icon: Receipt },
-  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings"] },
+  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections"] },
 ];
 
 const SIDEBAR = [
@@ -24,6 +31,7 @@ const SIDEBAR = [
   { href: "/products", label: "Products", icon: Package },
   { href: "/orders", label: "Orders", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartColumnBig },
+  { href: "/connections", label: "Connections", icon: HeartPulse },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -51,18 +59,26 @@ function LiveDot() {
   );
 }
 
-function Badges({ demo, killSwitch, dryRun }: { demo: boolean; killSwitch: boolean; dryRun: boolean }) {
+function Badges({ demo, killSwitch, publishMode }: { demo: boolean; killSwitch: boolean; publishMode: PublishMode }) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
-      {dryRun ? (
+      {publishMode === "live" ? (
         <Link
-          href="/settings"
+          href="/connections"
+          className="rounded-md border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-destructive"
+          title="Dashboard go-live is armed. Writes can run on the next publish."
+        >
+          LIVE
+        </Link>
+      ) : (
+        <Link
+          href="/connections"
           className="rounded-md border border-amber-900/30 bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-amber-950"
           title="No live Etsy or Printify publishes"
         >
           DRY-RUN
         </Link>
-      ) : null}
+      )}
       {demo ? (
         <Link
           href="/settings"
@@ -142,7 +158,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
           </nav>
           <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5">
             <LiveDot />
-            <Badges demo={shell.demo} killSwitch={shell.killSwitch} dryRun={shell.dryRunNotice !== null} />
+            <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
           </div>
         </aside>
 
@@ -158,7 +174,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
                 </Link>
                 <div className="flex items-center gap-3">
                   <LiveDot />
-                  <Badges demo={shell.demo} killSwitch={shell.killSwitch} dryRun={shell.dryRunNotice !== null} />
+                  <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
                 </div>
               </div>
             </header>
