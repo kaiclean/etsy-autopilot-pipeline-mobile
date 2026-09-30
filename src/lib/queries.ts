@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type JobRun, type StageName } from "@/db/schema";
 import { STAGES } from "@/pipeline/types";
 import { config, integrationStatus, isDemoMode } from "./config";
+import { dryRunNotice } from "./operator-mode";
 import { visible } from "./events";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
@@ -20,7 +21,14 @@ export async function getShellData() {
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
     getSetting(db, "automation"),
   ]);
-  return { pendingCount: pending.length, demo: isDemoMode(), killSwitch: automation.killSwitch };
+  const demo = isDemoMode();
+  const publishMode = config.publishMode;
+  return {
+    pendingCount: pending.length,
+    demo,
+    killSwitch: automation.killSwitch,
+    dryRunNotice: dryRunNotice({ publishMode, demo }),
+  };
 }
 
 type RangeKey = "today" | "7d" | "30d";

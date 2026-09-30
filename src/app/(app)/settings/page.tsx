@@ -9,6 +9,7 @@ import {
   SchedulesList,
   ThemeToggle,
 } from "@/components/settings/settings-client";
+import { settingsModeSubtitle } from "@/lib/operator-mode";
 import { getSettingsData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +28,10 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   return (
     <div className="space-y-6">
       <EtsyStatusToast status={typeof sp.etsy === "string" ? sp.etsy : undefined} />
-      <PageHeader title="Settings" subtitle={d.demo ? "Demo mode: seeded data and dry-run adapters" : `Live mode · publishing: ${d.publishMode}`} />
+      <PageHeader
+        title="Settings"
+        subtitle={settingsModeSubtitle({ publishMode: d.publishMode, demo: d.demo })}
+      />
 
       <KillSwitchCard on={d.automation.killSwitch} />
 
