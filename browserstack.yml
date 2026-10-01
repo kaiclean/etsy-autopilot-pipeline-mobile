@@ -1,0 +1,38 @@
+# ======================
+# BrowserStack Reporting
+# ======================
+# Do not commit real credentials. Export BROWSERSTACK_USERNAME and
+# BROWSERSTACK_ACCESS_KEY before npm run test:browserstack. The SDK
+# reads those environment variables.
+
+userName: ${BROWSERSTACK_USERNAME}
+accessKey: ${BROWSERSTACK_ACCESS_KEY}
+
+framework: playwright
+projectName: etsy-autopilot
+buildName: etsy-autopilot-Build
+
+# =======================================
+# Platforms (Browsers / Devices to test)
+# =======================================
+platforms:
+  - os: Windows
+    osVersion: "11"
+    browserName: chrome
+    browserVersion: latest
+
+# =======================
+# Parallels per Platform
+# =======================
+parallelsPerPlatform: 1
+
+# =================
+# Local Testing
+# =================
+browserstackLocal: true
+
+# ===================
+# Debugging features
+# ===================
+debug: true
+testObservability: true
