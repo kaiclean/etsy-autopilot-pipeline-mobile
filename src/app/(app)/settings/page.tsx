@@ -8,6 +8,7 @@ import {
   EtsyStatusToast,
   KillSwitchCard,
   NotificationsCard,
+  PushEventPrefs,
   SchedulesList,
   ThemeToggle,
 } from "@/components/settings/settings-client";
@@ -41,13 +42,17 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
 
       <section>
         <SectionTitle>Schedules</SectionTitle>
-        <SchedulesList stages={d.stages} />
-        <p className="mt-2 text-[11px] text-muted-foreground">Times are defined in vercel.json (UTC). Toggles pause the scheduled run; manual runs still work.</p>
+        <SchedulesList stages={d.stages} lastRuns={d.lastRuns} />
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Times match <code>DEFAULT_STAGES</code> (UTC) and <code>.github/workflows/autopilot-cron.yml</code>. Railway does not run them. After merge, set GitHub secrets <code>CRON_SECRET</code> and optional <code>AUTOPILOT_URL</code>. The copy-ready example is on{" "}
+          <a className="font-medium text-primary" href="/connections#cron">Connections</a>. Toggles pause the scheduled run. Manual runs still work. Schedules do not turn on live publishing.
+        </p>
       </section>
 
       <section className="space-y-3">
         <SectionTitle>App</SectionTitle>
         <NotificationsCard vapidPublicKey={vapidConfigured() ? (config.vapid.publicKey ?? null) : null} />
+        <PushEventPrefs prefs={d.pushPrefs} />
         <ThemeToggle />
         <form action={logout}>
           <button className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-medium text-muted-foreground active:bg-muted/50">

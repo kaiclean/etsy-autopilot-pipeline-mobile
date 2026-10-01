@@ -4,8 +4,10 @@ import { ActivityFeed } from "@/components/activity-feed";
 import { ConnectionsStrip, EtsyConnectCta } from "@/components/connections-panel";
 import { Panel, SectionTitle, STAGE_ICONS, Thumb } from "@/components/common";
 import { HeroKpis } from "@/components/home/hero-kpis";
+import { NextActions } from "@/components/home/next-actions";
 import { RunPipelineButton } from "@/components/run-button";
 import { chf, relTime, TZ } from "@/lib/format";
+import { buildNextActions, toStageSnapshots } from "@/lib/next-actions";
 import { getConnectionsData, getHomeData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +20,17 @@ export default async function HomePage() {
   const [data, connections] = await Promise.all([getHomeData(), getConnectionsData()]);
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
+  const attention = buildNextActions({
+    etsyConnected: connections.etsyConnected,
+    etsyKeysReady: connections.etsyKeysReady,
+    printifyConfigured: connections.printifyConfigured,
+    webhookSecretSet: connections.webhookSecretSet,
+    printifyEventCount: connections.printifyEventCount,
+    killSwitch: data.killSwitch,
+    publishMode: connections.publishMode,
+    stages: toStageSnapshots(connections.lastRuns, connections.stages),
+    checks: connections.checks,
+  });
 
   return (
     <div className="space-y-6">
@@ -31,6 +44,7 @@ export default async function HomePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
+          <NextActions items={attention} />
           <ConnectionsStrip checks={connections.checks} />
           {!connections.etsyConnected && <EtsyConnectCta canConnect={connections.canConnectEtsy} />}
           <HeroKpis kpis={data.kpis} series={data.series} />

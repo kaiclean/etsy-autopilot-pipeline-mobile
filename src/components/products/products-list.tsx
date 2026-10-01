@@ -1,17 +1,20 @@
 "use client";
 
-import { Eye, Heart, Package, TriangleAlert } from "lucide-react";
+import { Eye, Heart, Package, Search, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { EmptyState, ListingStatusPill, NicheTag, Thumb } from "@/components/common";
+import { EmptyState, ListingStatusPill, NicheTag, Panel, Thumb } from "@/components/common";
 import { ProvenanceBadge } from "@/components/provenance-badge";
 import { FeeBreakdown } from "@/components/fee-breakdown";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import type { Listing } from "@/db/schema";
+import { Input } from "@/components/ui/input";
+import type { Listing, Niche } from "@/db/schema";
+import { filterProducts, listingHasErrors } from "@/lib/catalog-filters";
 import { calculateFees, productLabel } from "@/lib/fees";
 import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
+import { NICHE_LIST } from "@/lib/niches";
 import { cn } from "@/lib/utils";
 
 const FILTERS = [
@@ -25,16 +28,56 @@ const FILTERS = [
 
 export function ProductsList({ listings }: { listings: Listing[] }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
+  const [niche, setNiche] = useState<"all" | Niche>("all");
+  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Listing | null>(null);
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: listings.length };
     for (const l of listings) c[l.status] = (c[l.status] ?? 0) + 1;
     return c;
   }, [listings]);
-  const rows = filter === "all" ? listings : listings.filter((l) => l.status === filter);
+  const rows = filterProducts(listings, { query, niche, status: filter });
+  const liveDrafts = listings.filter((l) => l.status === "published" && l.publishMode === "live").length;
+  const invalid = listings.filter((l) => listingHasErrors(l.validation)).length;
 
   return (
     <>
+      {(liveDrafts > 0 || invalid > 0) && (
+        <div className="mb-4 space-y-2">
+          {liveDrafts > 0 && (
+            <Panel className="flex gap-2 border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+              <TriangleAlert className="size-4 shrink-0" />
+              <span>
+                {liveDrafts} live draft{liveDrafts === 1 ? "" : "s"} still need Shop Manager: set “How it’s made” to AI tools, then activate. The API cannot set that field.
+              </span>
+            </Panel>
+          )}
+          {invalid > 0 && (
+            <Panel className="flex gap-2 border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+              <TriangleAlert className="size-4 shrink-0" />
+              <span>
+                {invalid} listing{invalid === 1 ? "" : "s"} still fail validation, so they cannot be approved or published.
+              </span>
+            </Panel>
+          )}
+        </div>
+      )}
+      <div className="relative mb-3">
+        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title or tags"
+          aria-label="Search products"
+          className="h-10 rounded-xl pl-9"
+        />
+      </div>
+      <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <FilterChip active={niche === "all"} onClick={() => setNiche("all")} label="All niches" />
+        {NICHE_LIST.map((item) => (
+          <FilterChip key={item.id} active={niche === item.id} onClick={() => setNiche(item.id)} label={item.short} />
+        ))}
+      </div>
       <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
         {FILTERS.map((f) => (
           <button
@@ -52,7 +95,11 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
       </div>
 
       {rows.length === 0 ? (
-        <EmptyState icon={Package} title="Nothing here yet" body="Listings show up here once the Listing stage has drafted them." />
+        <EmptyState
+          icon={Package}
+          title={listings.length ? "No listings match" : "Nothing here yet"}
+          body={listings.length ? "Try another niche, status, or search." : "Listings show up here once the Listing stage has drafted them."}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((l) => (
@@ -65,6 +112,12 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
                   <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
                   <NicheTag niche={l.niche} />
                 </div>
+                {listingHasErrors(l.validation) && (
+                  <div className="mt-1 line-clamp-2 text-[11px] text-destructive">{l.validation.find((issue) => issue.severity === "error")?.message}</div>
+                )}
+                {l.status === "published" && l.publishMode === "live" && (
+                  <div className="mt-1 text-[11px] text-warning">Shop Manager: set How it’s made → AI tools, then activate.</div>
+                )}
                 <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="tabular font-semibold text-foreground">{chf(l.priceChf)}</span>
                   <span className="tabular">net {chf(l.netChf)}</span>
@@ -87,6 +140,21 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
         </DrawerContent>
       </Drawer>
     </>
+  );
+}
+
+function FilterChip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex h-9 shrink-0 items-center rounded-full border px-3.5 text-[13px] font-medium transition-colors",
+        active ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground",
+      )}
+    >
+      {label}
+    </button>
   );
 }
 

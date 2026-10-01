@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -10,9 +10,11 @@ import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECOND
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { calculateFees } from "@/lib/fees";
+import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
+import type { PushPrefs } from "@/lib/push-prefs";
 import { getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
 import { runFullPipeline, runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
@@ -112,6 +114,74 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   }
   revalidateAll();
   return { ok: true as const };
+}
+
+export async function bulkSetListingStatus(ids: number[], status: "approved" | "rejected" | "pending_approval") {
+  await requireAuth();
+  const unique = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 100);
+  if (unique.length === 0) return { ok: false as const, error: "Select at least one listing" };
+  const db = await getDb();
+  const rows = await db.select().from(listings).where(inArray(listings.id, unique));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const known = unique.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [row] : [];
+  });
+  const missing = unique.filter((id) => !byId.has(id)).map((id) => ({ id, title: `#${id}`, error: "Listing not found" }));
+  const plan = planBulkStatus(
+    known.map((row) => ({
+      id: row.id,
+      title: row.title,
+      hasErrors: status === "approved" && !validateListing(row).valid,
+    })),
+    status,
+  );
+  for (const skip of plan.skipped) {
+    const row = byId.get(skip.id);
+    if (!row) continue;
+    const { issues } = validateListing(row);
+    await db.update(listings).set({ validation: issues, updatedAt: new Date() }).where(eq(listings.id, row.id));
+  }
+  if (plan.changed.length > 0) {
+    await db
+      .update(listings)
+      .set({
+        status,
+        rejectedReason: status === "rejected" ? "Rejected in review" : null,
+        approvedAt: status === "approved" ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .where(inArray(listings.id, plan.changed));
+  }
+  if (status !== "pending_approval" && plan.changed.length > 0) {
+    const verb = status === "approved" ? "Approved" : "Rejected";
+    await emit(db, {
+      type: `listing.${status}`,
+      title: `${verb} ${plan.changed.length} listing${plan.changed.length === 1 ? "" : "s"}`,
+      body: plan.skipped.length > 0 ? `${plan.skipped.length} still need validation fixes` : undefined,
+      severity: status === "approved" ? "success" : "info",
+      href: status === "approved" ? "/products" : "/queue",
+    });
+  }
+  revalidateAll();
+  return {
+    ok: true as const,
+    changed: plan.changed,
+    skipped: [...plan.skipped, ...missing].map((row) => ({ ...row, title: row.title.slice(0, 80) })),
+  };
+}
+
+export async function savePushPrefs(patch: Partial<PushPrefs>) {
+  await requireAuth();
+  const db = await getDb();
+  const current = await getSetting(db, "pushPrefs");
+  const next = { ...current };
+  for (const key of ["order.new", "approval.pending", "job.failed"] as const) {
+    if (typeof patch[key] === "boolean") next[key] = patch[key];
+  }
+  await setSetting(db, "pushPrefs", next);
+  revalidateAll();
+  return { ok: true as const, pushPrefs: next };
 }
 
 export async function triggerStage(stage: string) {

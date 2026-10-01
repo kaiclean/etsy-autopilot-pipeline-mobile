@@ -132,7 +132,7 @@ export const SETUP_STEPS: SetupStep[] = [
     bullets: [
       "Generate AUTH_SECRET and CRON_SECRET with openssl rand -base64 32. Do not reuse the dashboard password.",
       "Set DASHBOARD_PASSWORD to the phrase you type on the sign-in screen.",
-      "Railway or any cron caller sends Authorization: Bearer <CRON_SECRET> to /api/cron/<stage>.",
+      "Railway does not schedule jobs. GitHub Actions workflow autopilot-cron.yml calls /api/cron/<stage> after you set repository secrets CRON_SECRET (same as Railway) and optional AUTOPILOT_URL.",
     ],
   },
   {

@@ -3,6 +3,8 @@ import type { DB } from "@/db";
 import { pushSubscriptions } from "@/db/schema";
 import type { EmitInput } from "@/lib/events";
 import { config, vapidConfigured } from "@/lib/config";
+import { pushEventEnabled } from "@/lib/push-prefs";
+import { getSetting } from "@/lib/settings";
 
 /** Events that should reach a closed PWA. In-app toasts still cover everything else. */
 export const PUSH_EVENT_TYPES = new Set(["order.new", "approval.pending", "job.failed", "listing.failed"]);
@@ -13,7 +15,7 @@ export type PushSubscriptionKeys = { endpoint: string; keys: { p256dh: string; a
 
 export type PushSender = (subscription: PushSubscriptionKeys, payload: string) => Promise<void>;
 
-export type PushDispatchResult = { sent: number; removed: number; skipped?: "type" | "unconfigured" | "empty" };
+export type PushDispatchResult = { sent: number; removed: number; skipped?: "type" | "unconfigured" | "empty" | "pref" };
 
 let vapidReady = false;
 
@@ -105,6 +107,8 @@ async function deliver(db: DB, payload: PushPayload, sender: PushSender): Promis
 export async function dispatchEventPush(db: DB, event: EmitInput, sender: PushSender = defaultSender): Promise<PushDispatchResult> {
   if (!PUSH_EVENT_TYPES.has(event.type)) return { sent: 0, removed: 0, skipped: "type" };
   if (!vapidConfigured()) return { sent: 0, removed: 0, skipped: "unconfigured" };
+  const prefs = await getSetting(db, "pushPrefs");
+  if (!pushEventEnabled(prefs, event.type)) return { sent: 0, removed: 0, skipped: "pref" };
   return deliver(db, pushPayload(event), sender);
 }
 

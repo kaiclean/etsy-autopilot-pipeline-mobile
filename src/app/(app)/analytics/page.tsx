@@ -1,3 +1,4 @@
+import { AnalyticsExport } from "@/components/analytics/export-csv";
 import { NicheChart, RevenueChart, TrafficChart } from "@/components/analytics/charts";
 import { NicheTag, PageHeader, Panel, SectionTitle, Thumb } from "@/components/common";
 import { chf, num, pct } from "@/lib/format";
@@ -18,7 +19,22 @@ export default async function AnalyticsPage() {
   ];
   return (
     <div className="space-y-5">
-      <PageHeader title="Analytics" subtitle="Last 30 days · all amounts in CHF" />
+      <PageHeader
+        title="Analytics"
+        subtitle="Last 30 days · all amounts in CHF"
+        action={
+          <AnalyticsExport
+            rows={a.series.map((row) => ({
+              date: row.date,
+              views: row.views,
+              favorites: row.favorites,
+              orders: row.orders,
+              revenueChf: row.revenue,
+              profitChf: row.profit,
+            }))}
+          />
+        }
+      />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Net profit" value={chf(t.netProfit)} accent />
