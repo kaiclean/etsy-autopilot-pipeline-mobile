@@ -51,9 +51,21 @@ function databaseCheck(): HealthCheck {
   };
 }
 
-function etsyCheck(etsyConnected: boolean, publishMode: PublishMode): HealthCheck {
+function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpired: boolean): HealthCheck {
   const envVars = ["ETSY_API_KEY", "ETSY_SHARED_SECRET", "ETSY_SHOP_ID", "ETSY_REDIRECT_URI"];
   const shop = config.etsy.shopId;
+  if (etsyConnected && accessExpired) {
+    return {
+      id: "etsy",
+      name: "Etsy OAuth",
+      level: "yellow",
+      label: "Refresh due",
+      detail: shop
+        ? `OAuth tokens are stored for shop ${shop}. The access token is past its expiry. The refresh token is used on the next shop read. Token values are hidden.`
+        : "OAuth tokens are stored. The access token is past its expiry. The refresh token is used on the next shop read. Token values are hidden.",
+      envVars,
+    };
+  }
   if (etsyConnected) {
     return {
       id: "etsy",
@@ -296,17 +308,36 @@ function imageCheck(): HealthCheck {
 }
 
 function publishCheck(mode: PublishMode): HealthCheck {
-  const live = mode === "live";
   const host = config.publishMode;
+  const envVars = ["PUBLISH_MODE"];
+  if (mode === "live" && host === "live") {
+    return {
+      id: "publish",
+      name: "PUBLISH_MODE",
+      level: "red",
+      label: "Live",
+      detail:
+        "Dashboard choice and host PUBLISH_MODE are both live, so Etsy and Printify write APIs can run. Return to dry-run from Connections or Settings. New Etsy listings stay drafts unless ETSY_ACTIVATE=true.",
+      envVars,
+    };
+  }
+  if (mode === "live") {
+    return {
+      id: "publish",
+      name: "PUBLISH_MODE",
+      level: "yellow",
+      label: "Blocked",
+      detail: `Dashboard choice is live, but host PUBLISH_MODE is ${host}, so write APIs stay off. Set PUBLISH_MODE=live on the host to honor that choice, or return to dry-run from Connections or Settings. Shop reads stay connected.`,
+      envVars,
+    };
+  }
   return {
     id: "publish",
     name: "PUBLISH_MODE",
-    level: live ? "red" : "yellow",
-    label: live ? "Live" : "Dry-run",
-    detail: live
-      ? `Dashboard choice is live, so Etsy and Printify write APIs can run. Host PUBLISH_MODE is ${host}. Return to dry-run from Connections or Settings.`
-      : `Dashboard choice is dry-run, so live writes stay off. Host PUBLISH_MODE is ${host}. That variable does not publish by itself.`,
-    envVars: ["PUBLISH_MODE"],
+    level: "yellow",
+    label: "Dry-run",
+    detail: `Dashboard choice is dry-run, so live writes stay off. Host PUBLISH_MODE is ${host}. That variable does not publish by itself.`,
+    envVars,
   };
 }
 
@@ -362,11 +393,11 @@ function authCheck(): HealthCheck {
 }
 
 /** Status for the command center. Reports env var names and modes only, never secret values. */
-export function connectionHealth(input: { etsyConnected: boolean; publishMode?: PublishMode }): HealthCheck[] {
+export function connectionHealth(input: { etsyConnected: boolean; publishMode?: PublishMode; accessExpired?: boolean }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
   return [
     databaseCheck(),
-    etsyCheck(input.etsyConnected, publishMode),
+    etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true),
     printifyCheck(),
     storageCheck(),
     pushCheck(),

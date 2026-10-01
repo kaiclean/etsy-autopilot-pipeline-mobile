@@ -38,6 +38,7 @@ export type NextActionInput = {
   printifyEventCount: number;
   killSwitch: boolean;
   publishMode: PublishMode;
+  hostPublishMode?: PublishMode;
   stages: StageSnapshot[];
   checks: HealthFact[];
 };
@@ -154,14 +155,26 @@ export function buildNextActions(input: NextActionInput): AttentionItem[] {
   }
 
   if (input.publishMode === "live") {
-    items.push({
-      id: "publish-live",
-      severity: "watch",
-      title: "Live writes are armed",
-      detail: "The dashboard publish choice is live, so the next publish run can call Etsy and Printify. Return to dry-run from Connections. Host PUBLISH_MODE does not change that choice by itself.",
-      href: "/connections",
-      hrefLabel: "Open Connections",
-    });
+    const host = input.hostPublishMode ?? "dry-run";
+    items.push(
+      host === "live"
+        ? {
+            id: "publish-live",
+            severity: "watch",
+            title: "Live writes are armed",
+            detail: "Dashboard choice and host PUBLISH_MODE are both live, so the next publish run can call Etsy and Printify. Return to dry-run from Connections.",
+            href: "/connections",
+            hrefLabel: "Open Connections",
+          }
+        : {
+            id: "publish-live",
+            severity: "watch",
+            title: "Live choice is blocked",
+            detail: "Dashboard choice is live, but host PUBLISH_MODE is dry-run, so write APIs stay off. Return to dry-run from Connections, or set the host variable to live.",
+            href: "/connections",
+            hrefLabel: "Open Connections",
+          },
+    );
   }
 
   for (const check of input.checks) {

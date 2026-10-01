@@ -8,7 +8,7 @@ import type { StageFn } from "./types";
 
 export const runAnalytics: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const etsy = await getEtsyAdapter(db, ctx.random);
+  const etsy = await getEtsyAdapter(db, ctx.random, "read");
   const published = await db
     .select()
     .from(listings)

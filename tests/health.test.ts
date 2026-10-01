@@ -124,6 +124,16 @@ describe("connection health", () => {
     expect(lockedById.publish.detail).toContain("Host PUBLISH_MODE is live");
     expect(armedById.publish.level).toBe("red");
     expect(armedById.publish.label).toBe("Live");
+    expect(armedById.publish.detail).toContain("both live");
+    delete process.env.PUBLISH_MODE;
+    const blocked = connectionHealth({ etsyConnected: true, publishMode: "live", accessExpired: true });
+    const blockedPublish = blocked.find((check) => check.id === "publish");
+    const blockedEtsy = blocked.find((check) => check.id === "etsy");
+    expect(blockedPublish?.level).toBe("yellow");
+    expect(blockedPublish?.label).toBe("Blocked");
+    expect(blockedPublish?.detail).toContain("write APIs stay off");
+    expect(blockedEtsy?.label).toBe("Refresh due");
+    expect(JSON.stringify(blockedEtsy)).not.toContain("shared");
     expect(lockedById.demo.level).toBe("green");
     expect(lockedById.llm.level).toBe("red");
     expect(lockedById.images.level).toBe("red");

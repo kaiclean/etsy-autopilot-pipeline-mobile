@@ -33,13 +33,15 @@ export function GoLiveControl({ mode, envMode }: { mode: PublishMode; envMode: P
     });
 
   if (mode === "live") {
+    const blocked = envMode !== "live";
     return (
-      <Panel className="space-y-3 border-destructive/40 bg-destructive/10 p-4">
+      <Panel className={`space-y-3 p-4 ${blocked ? "border-warning/40 bg-warning/10" : "border-destructive/40 bg-destructive/10"}`}>
         <div>
-          <div className="font-semibold">Live writes are on</div>
+          <div className="font-semibold">{blocked ? "Live choice is blocked" : "Live writes are on"}</div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            The dashboard choice is live. Approved listings can be sent to Etsy and Printify on the next publish run. Host <code>PUBLISH_MODE</code> is{" "}
-            {envMode}. That variable does not arm writes by itself, and new Etsy listings stay drafts unless you also set <code>ETSY_ACTIVATE=true</code>.
+            {blocked
+              ? "The dashboard choice is live, but host PUBLISH_MODE is dry-run, so Etsy and Printify write APIs stay off. Orders and analytics still use the connected shop. Set PUBLISH_MODE=live on the host to honor this choice, or return to dry-run."
+              : "The dashboard choice and host PUBLISH_MODE are both live. Approved listings can be sent to Etsy and Printify on the next publish run. New Etsy listings stay drafts unless you also set ETSY_ACTIVATE=true."}
           </p>
         </div>
         <Button variant="secondary" className="h-10 rounded-xl" disabled={pending} onClick={() => apply("dry-run")}>
@@ -55,8 +57,8 @@ export function GoLiveControl({ mode, envMode }: { mode: PublishMode; envMode: P
         <div className="min-w-0">
           <div className="font-semibold">Dry-run</div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Default. Nothing is sent to Etsy or Printify. Host <code>PUBLISH_MODE</code> is {envMode}. Leave it at dry-run on Railway. The switch below is
-            what this app uses, and it stays off until you confirm.
+            Default. Nothing is sent to Etsy or Printify. Host <code>PUBLISH_MODE</code> is {envMode}. Writes stay off until this switch is confirmed
+            and the host variable is also live.
           </p>
         </div>
         {!open && (

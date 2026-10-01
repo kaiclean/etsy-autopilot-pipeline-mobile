@@ -94,8 +94,8 @@ export function ConnectionsPanel({
         })}
       </Panel>
       <p className="text-[11px] text-muted-foreground">
-        Status uses env var names only. Secret values are never shown. Live Etsy and Printify writes stay off until you confirm Go live. The host{" "}
-        <code>PUBLISH_MODE</code> variable does not turn them on by itself.
+        Status uses env var names only. Secret values are never shown. Write APIs run only when the dashboard choice and host{" "}
+        <code>PUBLISH_MODE</code> are both live. Shop reads use the stored OAuth tokens either way.
       </p>
     </section>
   );

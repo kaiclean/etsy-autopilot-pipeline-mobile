@@ -9,7 +9,7 @@ import type { StageFn } from "./types";
 
 export const runOrders: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const etsy = await getEtsyAdapter(db, ctx.random);
+  const etsy = await getEtsyAdapter(db, ctx.random, "read");
   const published = await db
     .select()
     .from(listings)
@@ -75,7 +75,7 @@ export const runOrders: StageFn = async (ctx) => {
   let advanced = 0;
   if (open.length) {
     const known = Object.fromEntries(open.map((o) => [o.podOrderId!, o.status as PrintifyOrderStatus]));
-    const printify = await getPrintifyAdapter({ db, random: ctx.random, known });
+    const printify = await getPrintifyAdapter({ db, random: ctx.random, known, intent: "read" });
     const statuses = await printify.getOrderStatuses(open.map((o) => o.podOrderId!));
     for (const o of open) {
       const next = statuses[o.podOrderId!];

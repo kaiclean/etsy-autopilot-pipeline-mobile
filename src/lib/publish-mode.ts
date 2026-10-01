@@ -10,6 +10,11 @@ export function effectivePublishMode(value: unknown): PublishMode {
   return value === "live" ? "live" : "dry-run";
 }
 
+/** Writes run only when the dashboard confirmation and the host variable are both live. */
+export function writesEnabled(dashboard: unknown, host: unknown): boolean {
+  return effectivePublishMode(dashboard) === "live" && effectivePublishMode(host) === "live";
+}
+
 export function goLiveDecision(input: { mode: string; confirmation?: string; understood?: boolean }):
   | { ok: true; mode: PublishMode }
   | { ok: false; error: string } {

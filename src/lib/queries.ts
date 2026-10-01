@@ -278,9 +278,10 @@ export async function getConnectionsData() {
       .limit(8),
   ]);
   const etsyConnected = Boolean(tokens?.accessToken);
+  const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
   return {
-    checks: connectionHealth({ etsyConnected, publishMode }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired }),
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
     etsyKeysReady: hasEtsyCredentials(),

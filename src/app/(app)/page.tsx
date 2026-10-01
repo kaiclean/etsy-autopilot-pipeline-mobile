@@ -28,6 +28,7 @@ export default async function HomePage() {
     printifyEventCount: connections.printifyEventCount,
     killSwitch: data.killSwitch,
     publishMode: connections.publishMode,
+    hostPublishMode: connections.envPublishMode,
     stages: toStageSnapshots(connections.lastRuns, connections.stages),
     checks: connections.checks,
   });

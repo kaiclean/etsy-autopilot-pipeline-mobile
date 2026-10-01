@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { GO_LIVE_ACK, GO_LIVE_CONFIRMATION, effectivePublishMode, goLiveDecision } from "@/lib/publish-mode";
+import { GO_LIVE_ACK, GO_LIVE_CONFIRMATION, effectivePublishMode, goLiveDecision, writesEnabled } from "@/lib/publish-mode";
 import { etsyRedirectUri, publicAppOrigin, setupChecklist, setupPresence, stepStatus, SETUP_STEPS } from "@/lib/setup-guide";
 
 const ENV_KEYS = ["APP_URL", "DATABASE_URL", "ETSY_API_KEY", "OPENAI_API_KEY", "DASHBOARD_PASSWORD"] as const;
@@ -20,6 +20,13 @@ describe("go-live gate", () => {
     expect(effectivePublishMode("LIVE")).toBe("dry-run");
     expect(effectivePublishMode(true)).toBe("dry-run");
     expect(effectivePublishMode("live")).toBe("live");
+  });
+
+  it("blocks writes unless the dashboard choice and the host variable are both live", () => {
+    expect(writesEnabled("live", "live")).toBe(true);
+    expect(writesEnabled("live", "dry-run")).toBe(false);
+    expect(writesEnabled("dry-run", "live")).toBe(false);
+    expect(writesEnabled(undefined, "live")).toBe(false);
   });
 
   it("rejects live writes without the checkbox and the exact confirmation", () => {
