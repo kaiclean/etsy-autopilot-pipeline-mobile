@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { costs, dailyStats, events, jobRuns, keywords, listings, orders, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, events, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
 import { STAGES } from "@/pipeline/types";
-import { config, isDemoMode } from "./config";
+import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
+import { printifyEventLog } from "./ops-copy";
 import { connectionHealth } from "./health";
 import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
@@ -179,7 +180,7 @@ export async function getAnalytics() {
   const listingById = new Map(allListings.map((l) => [l.id, l]));
   const days = lastNDays(30);
 
-  const series = days.map((date) => ({ date, revenue: 0, profit: 0, orders: 0, views: 0 }));
+  const series = days.map((date) => ({ date, revenue: 0, profit: 0, orders: 0, views: 0, favorites: 0 }));
   const idx = new Map(days.map((d, i) => [d, i]));
   for (const x of o) {
     const i = idx.get(dayKey(x.createdAt));
@@ -191,7 +192,10 @@ export async function getAnalytics() {
   }
   for (const s of stats) {
     const i = idx.get(s.date);
-    if (i != null) series[i].views += s.views;
+    if (i != null) {
+      series[i].views += s.views;
+      series[i].favorites += s.favorites;
+    }
   }
 
   const niches = Object.values(NICHES).map((n) => ({ id: n.id, label: n.short, revenue: 0, profit: 0, orders: 0, listings: 0, views: 0 }));
@@ -255,13 +259,38 @@ export async function getAnalytics() {
 
 export async function getConnectionsData() {
   const db = await getDb();
-  const [tokens, automation] = await Promise.all([getSetting(db, "etsyTokens"), getSetting(db, "automation")]);
+  const [tokens, automation, stages, lastRuns, eventCount, recentEvents] = await Promise.all([
+    getSetting(db, "etsyTokens"),
+    getSetting(db, "automation"),
+    getSetting(db, "stages"),
+    getLastRuns(),
+    db.select({ total: count() }).from(printifyEvents),
+    db
+      .select({
+        id: printifyEvents.id,
+        eventId: printifyEvents.eventId,
+        topic: printifyEvents.topic,
+        createdAt: printifyEvents.createdAt,
+        verified: printifyEvents.verified,
+      })
+      .from(printifyEvents)
+      .orderBy(desc(printifyEvents.id))
+      .limit(8),
+  ]);
   const etsyConnected = Boolean(tokens?.accessToken);
   const publishMode = effectivePublishMode(automation.publishMode);
   return {
     checks: connectionHealth({ etsyConnected, publishMode }),
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
+    etsyKeysReady: hasEtsyCredentials(),
+    printifyConfigured: hasPrintifyCredentials(),
+    webhookSecretSet: Boolean(config.printify.webhookSecret),
+    printifyEventCount: Number(eventCount[0]?.total ?? 0),
+    printifyEvents: printifyEventLog(recentEvents),
+    stages,
+    lastRuns,
+    killSwitch: automation.killSwitch,
     publishMode,
     envPublishMode: config.publishMode,
     demo: isDemoMode(),
@@ -271,6 +300,11 @@ export async function getConnectionsData() {
 
 export async function getSettingsData() {
   const db = await getDb();
-  const [automation, stages, connections] = await Promise.all([getSetting(db, "automation"), getSetting(db, "stages"), getConnectionsData()]);
-  return { automation, stages, ...connections };
+  const [automation, stages, pushPrefs, connections] = await Promise.all([
+    getSetting(db, "automation"),
+    getSetting(db, "stages"),
+    getSetting(db, "pushPrefs"),
+    getConnectionsData(),
+  ]);
+  return { ...connections, automation, stages, pushPrefs };
 }

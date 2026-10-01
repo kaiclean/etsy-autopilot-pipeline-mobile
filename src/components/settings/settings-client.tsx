@@ -4,13 +4,15 @@ import { Bell, BellOff, Loader2, Moon, Power, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useOptimistic, useState, useSyncExternalStore, useTransition } from "react";
 import { toast } from "sonner";
-import { saveAutomation, setKillSwitch, setStagePaused } from "@/app/actions";
+import { saveAutomation, savePushPrefs, setKillSwitch, setStagePaused } from "@/app/actions";
 import { Panel, STAGE_ICONS } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { StageName } from "@/db/schema";
 import { describeCron } from "@/lib/cron";
+import { relTime } from "@/lib/format";
+import { PUSH_PREF_OPTIONS, type PushPrefKey, type PushPrefs } from "@/lib/push-prefs";
 import type { AutomationSettings, StageSettings } from "@/lib/settings";
 import { STAGES } from "@/pipeline/types";
 import { cn } from "@/lib/utils";
@@ -126,17 +128,36 @@ export function BudgetsForm({ automation }: { automation: AutomationSettings }) 
   );
 }
 
-export function SchedulesList({ stages }: { stages: StageSettings }) {
+export function SchedulesList({
+  stages,
+  lastRuns,
+}: {
+  stages: StageSettings;
+  lastRuns?: { id: StageName; run: { status: string; startedAt: Date | string } | null }[];
+}) {
+  const byId = new Map(lastRuns?.map((row) => [row.id, row.run]));
   return (
     <Panel className="divide-y divide-border">
       {STAGES.map((s) => (
-        <ScheduleRow key={s.id} id={s.id} label={s.label} cron={stages[s.id].cron} paused={stages[s.id].paused} />
+        <ScheduleRow key={s.id} id={s.id} label={s.label} cron={stages[s.id].cron} paused={stages[s.id].paused} last={byId.get(s.id) ?? null} />
       ))}
     </Panel>
   );
 }
 
-function ScheduleRow({ id, label, cron, paused }: { id: StageName; label: string; cron: string; paused: boolean }) {
+function ScheduleRow({
+  id,
+  label,
+  cron,
+  paused,
+  last,
+}: {
+  id: StageName;
+  label: string;
+  cron: string;
+  paused: boolean;
+  last: { status: string; startedAt: Date | string } | null;
+}) {
   const [p, setP] = useOptimistic(paused);
   const [, start] = useTransition();
   const Icon = STAGE_ICONS[id];
@@ -147,6 +168,9 @@ function ScheduleRow({ id, label, cron, paused }: { id: StageName; label: string
         <div className="text-sm font-medium">{label}</div>
         <div className="font-mono text-[11px] text-muted-foreground">
           {describeCron(cron)} · <span className="opacity-70">{cron}</span>
+        </div>
+        <div className="text-[11px] text-muted-foreground" suppressHydrationWarning>
+          {last ? `Last ${last.status} · ${relTime(last.startedAt)}` : "Never run"}
         </div>
       </div>
       <Switch
@@ -190,6 +214,38 @@ async function subscribeToPush(publicKey: string) {
     throw new Error(data.error ?? "Could not save the push subscription");
   }
   return true;
+}
+
+export function PushEventPrefs({ prefs }: { prefs: PushPrefs }) {
+  return (
+    <Panel className="divide-y divide-border">
+      {PUSH_PREF_OPTIONS.map((option) => (
+        <PushPrefRow key={option.key} prefKey={option.key} label={option.label} detail={option.detail} on={prefs[option.key]} />
+      ))}
+    </Panel>
+  );
+}
+
+function PushPrefRow({ prefKey, label, detail, on }: { prefKey: PushPrefKey; label: string; detail: string; on: boolean }) {
+  const [value, setValue] = useOptimistic(on);
+  const [, start] = useTransition();
+  return (
+    <label className="flex items-center gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-[11px] text-muted-foreground">{detail}</div>
+      </div>
+      <Switch
+        checked={value}
+        onCheckedChange={(next) =>
+          start(async () => {
+            setValue(next);
+            await savePushPrefs({ [prefKey]: next });
+          })
+        }
+      />
+    </label>
+  );
 }
 
 export function NotificationsCard({ vapidPublicKey }: { vapidPublicKey: string | null }) {

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
 import { settings } from "@/db/schema";
 import type { StageName } from "@/db/schema";
+import { DEFAULT_PUSH_PREFS, type PushPrefs } from "@/lib/push-prefs";
 
 export type AutomationSettings = {
   killSwitch: boolean;
@@ -51,12 +52,14 @@ type SettingMap = {
   automation: AutomationSettings;
   stages: StageSettings;
   etsyTokens: EtsyTokens | null;
+  pushPrefs: PushPrefs;
 };
 
 const DEFAULTS: SettingMap = {
   automation: DEFAULT_AUTOMATION,
   stages: DEFAULT_STAGES,
   etsyTokens: null,
+  pushPrefs: DEFAULT_PUSH_PREFS,
 };
 
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {

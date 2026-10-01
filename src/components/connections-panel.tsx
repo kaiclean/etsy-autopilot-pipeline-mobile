@@ -13,6 +13,9 @@ export function EtsyConnectCta({ canConnect }: { canConnect: boolean }) {
           ? "OAuth tokens are missing. Connect the shop so Autopilot can authorize it. Publishing stays dry-run until you confirm Go live."
           : "OAuth tokens are missing. Set ETSY_API_KEY, ETSY_SHARED_SECRET, ETSY_SHOP_ID, and ETSY_REDIRECT_URI, then connect. Publishing stays dry-run until you confirm Go live."}
       </p>
+      <p className="mt-2 text-xs font-medium leading-relaxed text-warning">
+        Shop billing onboarding blocks Etsy Shop Manager until Etsy finishes it. OAuth cannot complete while that gate is closed, so tokens stay missing. This is a shop-side blocker, not a dashboard outage.
+      </p>
       <a
         href="/api/etsy/oauth/start"
         className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-semibold text-background"

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import type { DryRunNotice } from "@/lib/operator-mode";
 import type { PublishMode } from "@/lib/publish-mode";
 import { cn } from "@/lib/utils";
+import { InstallPrompt } from "./install-prompt";
 import { LiveProvider, useLive } from "./live-provider";
 
 type Shell = {
@@ -165,6 +166,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="sticky top-0 z-30">
             {shell.dryRunNotice ? <DryRunBanner notice={shell.dryRunNotice} /> : null}
+            <InstallPrompt />
             <header className="border-b border-border/60 bg-background/80 pt-safe backdrop-blur-xl md:hidden">
               <div className="flex min-h-12 items-center justify-between gap-2 px-4 py-1.5">
                 <Link href="/" className="flex shrink-0 items-center gap-2">

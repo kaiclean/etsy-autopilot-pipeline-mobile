@@ -1,0 +1,141 @@
+# Scheduled stage runs for the Railway deployment.
+# GitHub only runs `schedule` from the default branch.
+# After merge, set repository secrets once:
+#   CRON_SECRET     same value as Railway CRON_SECRET (required)
+#   AUTOPILOT_URL   optional; defaults to the production Railway URL below
+# This file never contains secret values. Schedules do not change dry-run publishing.
+
+name: Autopilot cron
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # analytics
+    - cron: "0 5 * * 1" # research, Monday
+    - cron: "0 6 * * *" # design
+    - cron: "30 6 * * *" # listing
+    - cron: "0 7 * * *" # publish
+    - cron: "0 8 * * *" # orders
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Pipeline stage to run now
+        required: true
+        type: choice
+        options:
+          - analytics
+          - research
+          - design
+          - listing
+          - publish
+          - orders
+
+permissions: {}
+
+jobs:
+  analytics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'analytics' || github.event.schedule == '0 3 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run analytics
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/analytics"
+
+  research:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'research' || github.event.schedule == '0 5 * * 1' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run research
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/research"
+
+  design:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'design' || github.event.schedule == '0 6 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run design
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/design"
+
+  listing:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'listing' || github.event.schedule == '30 6 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run listing
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/listing"
+
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'publish' || github.event.schedule == '0 7 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run publish
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/publish"
+
+  orders:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'orders' || github.event.schedule == '0 8 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run orders
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/orders"
