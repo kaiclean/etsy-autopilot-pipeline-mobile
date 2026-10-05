@@ -37,7 +37,9 @@ export async function countListingsMissingEtsyId(db: DB) {
   return Number(row?.n ?? 0);
 }
 
-export function railwayDeploySha(env: NodeJS.ProcessEnv = process.env): string | null {
+export function railwayDeploySha(
+  env: { RAILWAY_GIT_COMMIT_SHA?: string; RAILWAY_DEPLOYMENT_ID?: string; [key: string]: string | undefined } = process.env,
+): string | null {
   const sha = env.RAILWAY_GIT_COMMIT_SHA?.trim() || env.RAILWAY_DEPLOYMENT_ID?.trim();
   return sha || null;
 }

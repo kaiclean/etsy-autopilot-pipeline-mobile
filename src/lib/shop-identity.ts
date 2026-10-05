@@ -31,7 +31,15 @@ export function shortHost(raw: string | undefined): string | null {
   return label || host;
 }
 
-export function railwayHostShort(env: NodeJS.ProcessEnv = process.env): string | null {
+export type ShopIdentityEnv = {
+  ETSY_SHOP_ID?: string;
+  RAILWAY_PUBLIC_DOMAIN?: string;
+  RAILWAY_STATIC_URL?: string;
+  APP_URL?: string;
+  [key: string]: string | undefined;
+};
+
+export function railwayHostShort(env: ShopIdentityEnv = process.env): string | null {
   return shortHost(env.RAILWAY_PUBLIC_DOMAIN) ?? shortHost(env.RAILWAY_STATIC_URL) ?? shortHost(env.APP_URL);
 }
 
@@ -45,7 +53,7 @@ export function buildShopIdentity(input: {
   etsyShopId?: string | null;
   displayName?: string;
   handle?: string;
-  env?: NodeJS.ProcessEnv;
+  env?: ShopIdentityEnv;
 }): ShopIdentity {
   const env = input.env ?? process.env;
   const fromEnv = trim(env.ETSY_SHOP_ID);
