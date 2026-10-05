@@ -13,8 +13,8 @@ export type EmitInput = {
   href?: string;
 };
 
-export async function emit(db: DB, e: EmitInput) {
-  await db.insert(events).values({ ...e, severity: e.severity ?? "info", isDemo: isDemoMode() });
+export async function emit(db: DB, e: EmitInput, demo = isDemoMode()) {
+  await db.insert(events).values({ ...e, severity: e.severity ?? "info", isDemo: demo });
   try {
     await dispatchEventPush(db, e);
   } catch (error) {

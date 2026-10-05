@@ -4,6 +4,7 @@ import type { LogLine, StageName } from "@/db/schema";
 export type StageContext = {
   db: DB;
   shopId: string;
+  demo: boolean;
   trigger: "manual" | "cron" | "chain";
   random: () => number;
   now: Date;

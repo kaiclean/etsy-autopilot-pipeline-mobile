@@ -1,7 +1,6 @@
 import { and, eq, gte, isNotNull, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
-import { isDemoMode } from "@/lib/config";
 import { dayKey } from "@/lib/format";
 import { getSetting } from "@/lib/settings";
 import type { StageFn } from "./types";
@@ -32,7 +31,7 @@ export const runAnalytics: StageFn = async (ctx) => {
   }
 
   const today = dayKey(ctx.now);
-  const demo = isDemoMode();
+  const demo = ctx.demo;
   const [row] = await db
     .select()
     .from(dailyStats)

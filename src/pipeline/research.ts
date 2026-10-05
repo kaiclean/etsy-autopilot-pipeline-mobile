@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { keywords } from "@/db/schema";
-import { config, isDemoMode } from "@/lib/config";
+import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
@@ -57,7 +57,7 @@ export const runResearch: StageFn = async (ctx) => {
           seasonalityScore: seasonality(c.niche, ctx.now),
           score: 0,
           status: "rejected",
-          isDemo: isDemoMode(),
+          isDemo: ctx.demo,
         })
         .onConflictDoUpdate({
           target: keywords.phrase,
@@ -89,7 +89,7 @@ export const runResearch: StageFn = async (ctx) => {
         seasonalityScore: season,
         trendScore: trend,
         score,
-        isDemo: isDemoMode(),
+        isDemo: ctx.demo,
       })
       .onConflictDoUpdate({
         target: keywords.phrase,
@@ -129,7 +129,7 @@ export const runResearch: StageFn = async (ctx) => {
       body: top.map((t) => t.phrase).join(" · "),
       severity: "info",
       href: "/pipeline",
-    });
+    }, ctx.demo);
   }
   return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog`;
 };

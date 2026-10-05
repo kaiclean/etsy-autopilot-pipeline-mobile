@@ -2,7 +2,6 @@ import { and, desc, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter, type PrintifyOrderStatus } from "@/adapters/printify";
 import { listings, orders } from "@/db/schema";
-import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { calculateFees } from "@/lib/fees";
 import type { StageFn } from "./types";
@@ -56,7 +55,7 @@ export const runOrders: StageFn = async (ctx) => {
       profitChf: fees.netChf,
       fulfillmentStatus: l.productType === "digital" ? "delivered_digital" : "pending",
       podOrderId: l.productType === "pod" && etsy.mode === "dry-run" ? `dry-po-${r.receiptId}` : null,
-      isDemo: isDemoMode(),
+      isDemo: ctx.demo,
       createdAt: r.createdAt,
     });
     inserted++;
@@ -66,7 +65,7 @@ export const runOrders: StageFn = async (ctx) => {
       body: `${l.title.slice(0, 70)} → ${r.buyerCountry} · profit CHF ${fees.netChf.toFixed(2)}`,
       severity: "success",
       href: "/orders",
-    });
+    }, ctx.demo);
   }
 
   const open = await db

@@ -29,8 +29,8 @@ export async function getShellData() {
     getSetting(db, "automation"),
     resolveRequestShop(db).catch(() => null),
   ]);
-  const demo = isDemoMode();
-  const publishMode = effectivePublishMode(shop?.publishMode ?? automation.publishMode);
+  const demo = isDemoMode(shop?.etsyShopId ?? undefined);
+  const publishMode = effectivePublishMode(automation.publishMode);
   const killSwitch = automation.killSwitch || Boolean(shop?.killSwitch);
   return {
     pendingCount: pending.length,
@@ -290,6 +290,7 @@ export async function getAnalytics() {
 
 export async function getConnectionsData() {
   const db = await getDb();
+  const shop = await resolveRequestShop(db).catch(() => null);
   const [tokens, automation, stages, lastRuns, eventCount, recentEvents] = await Promise.all([
     getSetting(db, "etsyTokens"),
     getSetting(db, "automation"),
@@ -312,10 +313,10 @@ export async function getConnectionsData() {
   const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
   return {
-    checks: connectionHealth({ etsyConnected, publishMode, accessExpired }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId }),
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
-    etsyKeysReady: hasEtsyCredentials(),
+    etsyKeysReady: hasEtsyCredentials(shop?.etsyShopId),
     printifyConfigured: hasPrintifyCredentials(),
     webhookSecretSet: Boolean(config.printify.webhookSecret),
     printifyEventCount: Number(eventCount[0]?.total ?? 0),
@@ -325,7 +326,7 @@ export async function getConnectionsData() {
     killSwitch: automation.killSwitch,
     publishMode,
     envPublishMode: config.publishMode,
-    demo: isDemoMode(),
+    demo: isDemoMode(shop?.etsyShopId),
     presence: setupPresence(),
   };
 }

@@ -2,7 +2,6 @@ import { eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
-import { isDemoMode } from "@/lib/config";
 import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
@@ -130,11 +129,11 @@ export const runListing: StageFn = async (ctx) => {
         marginPct: fees.marginPct,
         validation: issues,
         status: "pending_approval",
-        isDemo: isDemoMode(),
+        isDemo: ctx.demo,
       });
       await db.update(designs).set({ status: "listed" }).where(eq(designs.id, design.id));
       if (llmCost > 0) {
-        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_text", amountChf: llmCost, note: `${provider}: listing copy`, isDemo: isDemoMode() });
+        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_text", amountChf: llmCost, note: `${provider}: listing copy`, isDemo: ctx.demo });
       }
       const errors = issues.filter((i) => i.severity === "error").length;
       if (errors) invalid++;
@@ -151,7 +150,7 @@ export const runListing: StageFn = async (ctx) => {
       body: invalid ? `${invalid} need edits before they can be approved` : "Swipe to approve or reject",
       severity: "warning",
       href: "/queue",
-    });
+    }, ctx.demo);
   }
   return `Drafted ${created} listings for approval${invalid ? ` (${invalid} need fixes)` : ""}`;
 };

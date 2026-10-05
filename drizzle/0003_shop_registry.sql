@@ -50,7 +50,6 @@ UPDATE "shops" SET
 		WHEN coalesce((SELECT value->>'publishMode' FROM "settings" WHERE key = 'automation'), 'dry-run') = 'live' THEN 'live'
 		ELSE 'dry-run'
 	END,
-	"kill_switch" = coalesce((SELECT (value->>'killSwitch')::boolean FROM "settings" WHERE key = 'automation'), false),
 	"status" = CASE
 		WHEN coalesce((SELECT value->>'publishMode' FROM "settings" WHERE key = 'automation'), 'dry-run') = 'live' THEN 'live'
 		ELSE 'dry-run'

@@ -12,7 +12,7 @@ export const ACTIVE_SHOP_COOKIE = "autopilot_shop";
  * Kill switches:
  * - settings.automation.killSwitch is the global emergency stop. It pauses every shop.
  * - shops.kill_switch pauses only that shop.
- * Neither switch is turned on by the registry backfill unless automation.killSwitch was already true.
+ * The registry backfill never copies the global switch into shops.kill_switch.
  */
 
 export function etsyShopIdFromEnv(value: string | undefined | null) {
@@ -33,13 +33,13 @@ function openRouterStatus(): ShopConnectionStatus {
   return "missing";
 }
 
-export function connectionStatusPlan(etsyConnected: boolean): { provider: ShopProvider; status: ShopConnectionStatus; secretsRef: string }[] {
+export function connectionStatusPlan(etsyConnected: boolean, etsyShopId?: string | null): { provider: ShopProvider; status: ShopConnectionStatus; secretsRef: string }[] {
   const printify = config.printify;
   const printifyStatus: ShopConnectionStatus = hasPrintifyCredentials() ? "connected" : printify.token || printify.shopId ? "configured" : "missing";
   const storage = storageBackend();
   const storageStatus: ShopConnectionStatus = storage === "s3" ? "connected" : storage === "blob" ? "configured" : "missing";
   return [
-    { provider: "etsy", status: etsyConnected ? "connected" : hasEtsyCredentials() ? "configured" : "missing", secretsRef: "ETSY_" },
+    { provider: "etsy", status: etsyConnected ? "connected" : hasEtsyCredentials(etsyShopId ?? undefined) ? "configured" : "missing", secretsRef: "ETSY_" },
     { provider: "printify", status: printifyStatus, secretsRef: "PRINTIFY_" },
     { provider: "s3", status: storageStatus, secretsRef: "S3_" },
     { provider: "openrouter", status: openRouterStatus(), secretsRef: "OPENROUTER_" },
@@ -170,7 +170,6 @@ export async function syncShopRegistry(db: DB) {
       marketLocale: existing.marketLocale ?? "de-CH",
       ...(etsyShopId ? { etsyShopId } : {}),
       publishMode,
-      killSwitch: automation.killSwitch,
       status: nextStatus,
       updatedAt: new Date(),
     })
@@ -184,7 +183,7 @@ export async function syncShopRegistry(db: DB) {
       set: { automation, stages, updatedAt: new Date() },
     });
 
-  const plan = connectionStatusPlan(Boolean(legacyTokens?.accessToken));
+  const plan = connectionStatusPlan(Boolean(legacyTokens?.accessToken), existing.etsyShopId);
   for (const item of plan) {
     const [row] = await db
       .select()

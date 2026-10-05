@@ -1,5 +1,5 @@
 import type { DB } from "@/db";
-import { config } from "@/lib/config";
+import { config, hasEtsyCredentials } from "@/lib/config";
 import { liveWritesEnabled } from "@/lib/read-publish-mode";
 import { readEtsyTokens, resolveActiveShop, writeEtsyTokens } from "@/lib/shops";
 import { EtsyLiveClient } from "./client";
@@ -13,9 +13,9 @@ import type { EtsyAdapter } from "./types";
  */
 export async function getEtsyAdapter(db: DB, random?: () => number, intent: "read" | "write" = "write"): Promise<EtsyAdapter> {
   const shop = await resolveActiveShop(db);
-  const shopId = shop.etsyShopId || config.etsy.shopId;
+  const shopId = shop.etsyShopId?.trim() || config.etsy.shopId;
   const allowed = intent === "read" || (await liveWritesEnabled(db));
-  if (allowed && config.etsy.apiKey && config.etsy.sharedSecret && shopId) {
+  if (allowed && hasEtsyCredentials(shopId)) {
     const tokens = await readEtsyTokens(db, shop.id);
     if (tokens) return new EtsyLiveClient(tokens, (t) => writeEtsyTokens(db, shop.id, t), shopId);
   }

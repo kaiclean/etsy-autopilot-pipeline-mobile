@@ -51,9 +51,9 @@ function databaseCheck(): HealthCheck {
   };
 }
 
-function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpired: boolean): HealthCheck {
+function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpired: boolean, shopId?: string | null): HealthCheck {
   const envVars = ["ETSY_API_KEY", "ETSY_SHARED_SECRET", "ETSY_SHOP_ID", "ETSY_REDIRECT_URI"];
-  const shop = config.etsy.shopId;
+  const shop = shopId?.trim() || config.etsy.shopId;
   if (etsyConnected && accessExpired) {
     return {
       id: "etsy",
@@ -78,7 +78,7 @@ function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpir
       envVars,
     };
   }
-  if (hasEtsyCredentials()) {
+  if (hasEtsyCredentials(shopId)) {
     return {
       id: "etsy",
       name: "Etsy OAuth",
@@ -341,9 +341,9 @@ function publishCheck(mode: PublishMode): HealthCheck {
   };
 }
 
-function demoCheck(): HealthCheck {
+function demoCheck(shopId?: string | null): HealthCheck {
   const flag = explicit("DEMO_MODE");
-  const on = isDemoMode();
+  const on = isDemoMode(shopId);
   if (on) {
     return {
       id: "demo",
@@ -393,18 +393,23 @@ function authCheck(): HealthCheck {
 }
 
 /** Status for the command center. Reports env var names and modes only, never secret values. */
-export function connectionHealth(input: { etsyConnected: boolean; publishMode?: PublishMode; accessExpired?: boolean }): HealthCheck[] {
+export function connectionHealth(input: {
+  etsyConnected: boolean;
+  publishMode?: PublishMode;
+  accessExpired?: boolean;
+  etsyShopId?: string | null;
+}): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
   return [
     databaseCheck(),
-    etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true),
+    etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
     printifyCheck(),
     storageCheck(),
     pushCheck(),
     llmCheck(),
     imageCheck(),
     publishCheck(publishMode),
-    demoCheck(),
+    demoCheck(input.etsyShopId),
     authCheck(),
   ];
 }

@@ -24,10 +24,10 @@ const STAGE_FNS: Record<StageName, StageFn> = {
 
 export type RunOptions = { db?: DB; random?: () => number; now?: Date };
 
-async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string) {
+async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string, demo: boolean) {
   const [run] = await db
     .insert(jobRuns)
-    .values({ shopId, stage, status: "skipped", trigger, summary, finishedAt: new Date(), isDemo: isDemoMode() })
+    .values({ shopId, stage, status: "skipped", trigger, summary, finishedAt: new Date(), isDemo: demo })
     .returning();
   return run;
 }
@@ -35,27 +35,29 @@ async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigg
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
   const db = opts.db ?? (await getDb());
   const shop = await resolveActiveShop(db);
+  const demo = isDemoMode(shop.etsyShopId ?? undefined);
   const automation = await getSetting(db, "automation");
   // Global settings.killSwitch pauses every shop. shops.kill_switch pauses this shop only.
   if (automation.killSwitch || shop.killSwitch) {
     const summary = automation.killSwitch ? "Kill switch is on: all automation paused" : "Shop kill switch is on: this shop is paused";
-    return recordSkip(db, stage, trigger, summary, shop.id);
+    return recordSkip(db, stage, trigger, summary, shop.id, demo);
   }
 
   const stages = await getSetting(db, "stages");
-  if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused", shop.id);
+  if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused", shop.id, demo);
 
   const [running] = await db
     .select({ id: jobRuns.id })
     .from(jobRuns)
     .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
-  if (running) return recordSkip(db, stage, trigger, "Already running", shop.id);
+  if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
 
-  const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: isDemoMode() }).returning();
+  const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();
   const logs: LogLine[] = [];
   const ctx: StageContext = {
     db,
     shopId: shop.id,
+    demo,
     trigger,
     random: opts.random ?? Math.random,
     now: opts.now ?? new Date(),
@@ -69,7 +71,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
       .set({ status: "success", summary, logs, finishedAt: new Date() })
       .where(eq(jobRuns.id, run.id))
       .returning();
-    await emit(db, { type: "job.success", title: `${label} finished`, body: summary, severity: "info", href: "/pipeline" });
+    await emit(db, { type: "job.success", title: `${label} finished`, body: summary, severity: "info", href: "/pipeline" }, demo);
     return done;
   } catch (e) {
     const msg = (e as Error).message;
@@ -79,7 +81,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
       .set({ status: "failed", summary: msg, logs, finishedAt: new Date() })
       .where(eq(jobRuns.id, run.id))
       .returning();
-    await emit(db, { type: "job.failed", title: `${label} failed`, body: msg, severity: "error", href: "/pipeline" });
+    await emit(db, { type: "job.failed", title: `${label} failed`, body: msg, severity: "error", href: "/pipeline" }, demo);
     return done;
   }
 }
