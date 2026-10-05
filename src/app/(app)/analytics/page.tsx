@@ -1,6 +1,7 @@
 import { AnalyticsExport } from "@/components/analytics/export-csv";
 import { NicheChart, RevenueChart, TrafficChart } from "@/components/analytics/charts";
 import { NicheTag, PageHeader, Panel, SectionTitle, Thumb } from "@/components/common";
+import { feeScheduleStatus } from "@/lib/fee-schedule";
 import { chf, num, pct } from "@/lib/format";
 import { getAnalytics } from "@/lib/queries";
 
@@ -9,19 +10,23 @@ export const metadata = { title: "Analytics" };
 export default async function AnalyticsPage() {
   const a = await getAnalytics();
   const t = a.totals;
+  const feeWarning = feeScheduleStatus().message;
+  const basis =
+    t.orders === 0 ? "No orders in this window." : t.reconciledOrders === t.orders ? "Reconciled with the Etsy ledger." : t.reconciledOrders === 0 ? "Estimated. Ledger matches and Printify order costs replace these figures when they are available." : `${t.reconciledOrders} reconciled, ${t.estimatedOrders} estimated.`;
   const waterfall: [string, number, string?][] = [
     ["Gross revenue", t.revenue],
     ["Etsy fees (listing, transaction, processing, VAT)", -t.etsyFees],
-    ["Offsite Ads (15%, attributed)", -t.offsiteAds],
+    ["Offsite Ads", -t.offsiteAds],
     ["POD production + shipping", -t.podCosts],
+    ["Listing publish and renewal fees", -a.costByKind.listing_fee],
     ["AI generation", -(a.costByKind.ai_image + a.costByKind.ai_text)],
-    ["Etsy Ads budget", -a.costByKind.ads],
+    ["Etsy Ads daily cap (estimate)", -a.costByKind.ads],
   ];
   return (
     <div className="space-y-5">
       <PageHeader
         title="Analytics"
-        subtitle="Last 30 days · all amounts in CHF"
+        subtitle={`Last 30 days · CHF · ${basis}`}
         action={
           <AnalyticsExport
             rows={a.series.map((row) => ({
@@ -72,7 +77,8 @@ export default async function AnalyticsPage() {
               <span className="tabular font-semibold text-success">{chf(t.netProfit)}</span>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Listing fees paid at publish time: {chf(a.costByKind.listing_fee)} (dry-run listings are tracked but not charged).
+              {basis} Listing publish and renewal fees are in net profit. The ads line is the daily cap, not measured spend. Dry-run listing fees are tracked and were not charged by Etsy.
+              {feeWarning ? ` ${feeWarning}` : ""}
             </p>
           </div>
         </Panel>

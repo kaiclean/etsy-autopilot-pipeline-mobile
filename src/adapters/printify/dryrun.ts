@@ -1,4 +1,4 @@
-import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from "./types";
+import type { PrintifyAdapter, PrintifyOrderCost, PrintifyOrderStatus, PrintifyProductInput } from "./types";
 
 const NEXT: Record<PrintifyOrderStatus, PrintifyOrderStatus> = {
   pending: "in_production",
@@ -33,6 +33,10 @@ export class PrintifyDryRunAdapter implements PrintifyAdapter {
   /** Dry-run products have no sales channel. Callers mint a synthetic Etsy id instead. */
   async getExternalEtsyIds(productIds: string[]) {
     return Object.fromEntries(productIds.map((id) => [id, null]));
+  }
+
+  async getOrderCosts(podOrderIds: string[]): Promise<Record<string, PrintifyOrderCost | null>> {
+    return Object.fromEntries(podOrderIds.map((id) => [id, null]));
   }
 
   /** Advances each simulated order one step with 60% probability per sync. */

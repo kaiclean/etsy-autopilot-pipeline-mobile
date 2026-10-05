@@ -22,9 +22,13 @@ export type AutomationSettings = {
   digitalTargetMarginPct: number;
   designsPerRun: number;
   assumeOffsiteAds: boolean;
+  /** ISO time ads were switched on. Missing on older rows; backfill starts at the first booked day. */
+  adsEnabledAt: string | null;
   /** Runtime publish switch. Defaults to dry-run. Live is stored only after the confirm gate. */
   publishMode: "dry-run" | "live";
 };
+
+export type FeeFxSetting = { usdToChf: number; asOf: string; source: string };
 
 export type StageSettings = Record<StageName, { paused: boolean; cron: string }>;
 
@@ -59,6 +63,7 @@ export const DEFAULT_AUTOMATION: AutomationSettings = {
   digitalTargetMarginPct: MARGIN_TARGETS.digitalDefault,
   designsPerRun: 3,
   assumeOffsiteAds: false,
+  adsEnabledAt: null,
   publishMode: "dry-run",
 };
 
@@ -78,6 +83,7 @@ type SettingMap = {
   etsyTokens: EtsyTokens | null;
   pushPrefs: PushPrefs;
   catalogDraft: CatalogDraftSetting;
+  feeFx: FeeFxSetting | null;
 };
 
 const DEFAULTS: SettingMap = {
@@ -86,6 +92,7 @@ const DEFAULTS: SettingMap = {
   etsyTokens: null,
   pushPrefs: DEFAULT_PUSH_PREFS,
   catalogDraft: DEFAULT_CATALOG_DRAFT,
+  feeFx: null,
 };
 
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {

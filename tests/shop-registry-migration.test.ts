@@ -263,3 +263,84 @@ describe("0004 POD Etsy id sync migration", () => {
     }
   });
 });
+
+describe("0005 pricing floor migration", () => {
+  const migrationPath = path.join(drizzleDir, "0005_pricing_floor_profit.sql");
+  const chain = [...priorMigrations, "0003_shop_registry.sql", "0004_pod_etsy_id_sync.sql"];
+  const sql = readFileSync(migrationPath, "utf8");
+
+  it("sets defaults before not-null and backfills only nulls", () => {
+    expect(sql).toContain("ADD COLUMN IF NOT EXISTS");
+    expect(sql).not.toMatch(/ADD COLUMN(?! IF NOT EXISTS)/);
+    expect(sql).not.toMatch(/\bDROP\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/);
+    for (const column of ["refunded_chf", "profit_basis"] as const) {
+      const setDefault = sql.indexOf(`ALTER TABLE "orders" ALTER COLUMN "${column}" SET DEFAULT`);
+      const fillNulls = sql.indexOf(`UPDATE "orders" SET "${column}"`);
+      const setNotNull = sql.indexOf(`ALTER TABLE "orders" ALTER COLUMN "${column}" SET NOT NULL`);
+      expect(setDefault).toBeGreaterThan(-1);
+      expect(fillNulls).toBeGreaterThan(setDefault);
+      expect(sql.slice(fillNulls, setNotNull)).toContain("IS NULL");
+      expect(setNotNull).toBeGreaterThan(fillNulls);
+    }
+  });
+
+  it("keeps the journal timestamp after 0004 and not in the future", () => {
+    const journal = JSON.parse(readFileSync(path.join(drizzleDir, "meta/_journal.json"), "utf8")) as {
+      entries: { tag: string; when: number; idx: number }[];
+    };
+    const previous = journal.entries.find((entry) => entry.tag === "0004_pod_etsy_id_sync");
+    const current = journal.entries.find((entry) => entry.tag === "0005_pricing_floor_profit");
+    expect(previous?.when).toBe(1791300000000);
+    expect(current?.idx).toBe(5);
+    expect(current?.when).toBeGreaterThan(previous!.when);
+    expect(current?.when).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("applies 0000 through 0005 and accepts 0005 a second and third time", async () => {
+    const db = new PGlite();
+    try {
+      for (const file of chain) {
+        await applyFile(db, path.join(drizzleDir, file));
+      }
+      await db.exec(`
+        INSERT INTO orders (etsy_receipt_id, buyer_country, total_chf, fees_chf, profit_chf, fulfillment_status)
+        VALUES ('receipt-before-0005', 'CH', 24.9, 4, 10, 'pending');
+      `);
+      const parts = statements(sql);
+      const fillAt = parts.findIndex((part) => part.includes(`"refunded_chf" = 0 WHERE "refunded_chf" IS NULL`));
+      expect(fillAt).toBeGreaterThan(0);
+      await applyStatements(db, parts.slice(0, fillAt));
+      await db.exec(`
+        INSERT INTO orders (etsy_receipt_id, buyer_country, total_chf, fees_chf, profit_chf, fulfillment_status, refunded_chf)
+        VALUES ('receipt-partial-null', 'DE', 19.9, 3, 8, 'pending', NULL);
+      `);
+      await applyStatements(db, parts);
+      await applyStatements(db, parts);
+      await applyStatements(db, parts);
+
+      const rows = await db.query<{ etsy_receipt_id: string; refunded_chf: number; profit_basis: string }>(`
+        SELECT etsy_receipt_id, refunded_chf, profit_basis FROM orders ORDER BY etsy_receipt_id
+      `);
+      expect(rows.rows).toEqual([
+        { etsy_receipt_id: "receipt-before-0005", refunded_chf: 0, profit_basis: "estimated" },
+        { etsy_receipt_id: "receipt-partial-null", refunded_chf: 0, profit_basis: "estimated" },
+      ]);
+
+      const columns = await db.query<{ column_name: string; table_name: string; is_nullable: string }>(`
+        SELECT column_name, table_name, is_nullable
+        FROM information_schema.columns
+        WHERE (table_name = 'listings' AND column_name IN ('pod_cost_note', 'pod_variant_prices'))
+           OR (table_name = 'orders' AND column_name IN ('refunded_chf', 'profit_basis'))
+        ORDER BY table_name, column_name
+      `);
+      expect(columns.rows).toEqual([
+        { column_name: "pod_cost_note", table_name: "listings", is_nullable: "YES" },
+        { column_name: "pod_variant_prices", table_name: "listings", is_nullable: "YES" },
+        { column_name: "profit_basis", table_name: "orders", is_nullable: "NO" },
+        { column_name: "refunded_chf", table_name: "orders", is_nullable: "NO" },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+});

@@ -7,6 +7,8 @@ export type VariantRow = {
   title: string;
   options?: Record<string, string>;
   placeholders?: { position?: string }[];
+  /** Printify catalog cost in minor units when the provider includes it. */
+  cost?: number;
 };
 
 export type CatalogChoice = {
@@ -75,6 +77,36 @@ export function pickProvider(rows: ProviderRow[]): ProviderRow | undefined {
 
 function variantText(row: VariantRow) {
   return `${row.title} ${Object.values(row.options ?? {}).join(" ")}`;
+}
+
+const APPAREL_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"] as const;
+
+/**
+ * Variants that should not share one retail price.
+ * Posters and mugs stay on the single preset size. Apparel enables each adult size
+ * (white when that color exists) so a larger blank can carry its own price.
+ */
+export function pickPricedVariantIds(preset: PodPreset, rows: VariantRow[]): number[] {
+  if (preset !== "tshirt" && preset !== "sweatshirt") return pickVariantIds(preset, rows);
+  const front = rows.filter((row) => !row.placeholders?.length || row.placeholders.some((item) => item.position === "front"));
+  const pool = (front.length > 0 ? front : rows).filter((row) => !/youth|kids|toddler|baby/i.test(variantText(row)));
+  const bySize = new Map<string, VariantRow[]>();
+  for (const row of pool) {
+    const size = variantText(row).match(/\b(5XL|4XL|3XL|2XL|XL|XS|S|M|L)\b/i)?.[1]?.toUpperCase();
+    if (!size) continue;
+    const list = bySize.get(size) ?? [];
+    list.push(row);
+    bySize.set(size, list);
+  }
+  if (bySize.size === 0) return pickVariantIds(preset, rows);
+  const ids: number[] = [];
+  for (const size of APPAREL_SIZES) {
+    const group = bySize.get(size);
+    if (!group?.length) continue;
+    const white = group.find((row) => /white/i.test(variantText(row)));
+    ids.push((white ?? group[0]).id);
+  }
+  return ids;
 }
 
 /** One enabled variant: the preset's size, white when that color exists, with a front print area. */

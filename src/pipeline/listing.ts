@@ -5,7 +5,10 @@ import type { Niche, ProductType } from "@/db/schema";
 import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
-import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
+import { loadPodQuotes } from "@/adapters/printify/catalog-cost";
+import { calculateFees, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
+import { resolveUsdToChf } from "@/lib/fee-schedule";
+import { fallbackPodQuote, repriceQuote, type PodCostQuote } from "@/lib/pod-cost";
 import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
 import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
 import { tryBuildFileManifest } from "@/lib/file-manifest";
@@ -36,6 +39,8 @@ export async function draftListing(opts: {
   assumeOffsiteAds: boolean;
   /** Override the preset's CHF competitor anchor. Digital listings ignore this. */
   competitorChf?: number;
+  usdToChf?: number;
+  podQuote?: PodCostQuote;
   llm?: LLMProvider;
 }) {
   const llm = opts.llm ?? getLLMProvider();
@@ -48,19 +53,22 @@ export async function draftListing(opts: {
     seed: opts.seed,
   });
   const preset = opts.product.pod ?? "posterA3";
-  const pod = opts.product.type === "pod" ? podCostChf(preset) : 0;
   const band = NICHES[opts.niche].priceBand[opts.product.type];
   const targetMarginPct =
     opts.product.type === "pod" ? resolveTargetMargin("pod", opts.podTargetMarginPct) : resolveTargetMargin("digital", opts.digitalTargetMarginPct);
-  const priceChf = suggestPrice({
+  const priceOpts = {
     targetMarginPct,
-    podCostChf: pod,
     offsiteAds: opts.assumeOffsiteAds,
     minChf: band[0] || undefined,
     maxChf: band[1] || undefined,
     competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
-    productType: opts.product.type,
-  });
+    usdToChf: opts.usdToChf,
+  };
+  const quote =
+    opts.product.type === "pod" ? repriceQuote(opts.podQuote ?? fallbackPodQuote(preset, opts.usdToChf), priceOpts) : null;
+  const pod = quote?.costChf ?? 0;
+  const primary = quote?.variants.find((variant) => variant.id === quote.primaryVariantId) ?? quote?.variants[0];
+  const priceChf = primary?.priceChf ?? suggestPrice({ ...priceOpts, podCostChf: pod, productType: opts.product.type });
   const draft = sanitizeDraft({
     title: copy.title,
     tags: copy.tags,
@@ -68,14 +76,17 @@ export async function draftListing(opts: {
     priceChf,
     productType: opts.product.type,
   });
-  const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.assumeOffsiteAds });
+  const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.assumeOffsiteAds, usdToChf: opts.usdToChf });
   const { issues } = validateListing(draft);
-  return { draft, fees, issues, pod, llmCost: copy.costChf, provider: copy.provider };
+  return { draft, fees, issues, pod, quote, llmCost: copy.costChf, provider: copy.provider };
 }
 
 export const runListing: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const automation = await getSetting(db, "automation");
+  const [automation, feeFx] = await Promise.all([getSetting(db, "automation"), getSetting(db, "feeFx")]);
+  const fx = resolveUsdToChf({ stored: feeFx?.usdToChf, storedAsOf: feeFx?.asOf });
+  const podTarget = resolveTargetMargin("pod", automation.podTargetMarginPct);
+  const quotes = await loadPodQuotes(fx.rate, { targetMarginPct: podTarget, offsiteAds: automation.assumeOffsiteAds, usdToChf: fx.rate });
   const pending = await db
     .select({ design: designs, phrase: keywords.phrase })
     .from(designs)
@@ -94,7 +105,7 @@ export const runListing: StageFn = async (ctx) => {
     }
     const product = pickProduct(design.niche, ctx.random());
     try {
-      const { draft, fees, issues, pod, llmCost, provider } = await draftListing({
+      const { draft, fees, issues, pod, quote, llmCost, provider } = await draftListing({
         niche: design.niche,
         keyword: phrase ?? NICHES[design.niche].seeds[0].phrase,
         product,
@@ -102,6 +113,8 @@ export const runListing: StageFn = async (ctx) => {
         podTargetMarginPct: automation.podTargetMarginPct,
         digitalTargetMarginPct: automation.digitalTargetMarginPct,
         assumeOffsiteAds: automation.assumeOffsiteAds,
+        usdToChf: fx.rate,
+        podQuote: product.pod ? quotes[product.pod] : undefined,
       });
       const artworkUrl = await persistableImageUrl(design.imageUrl);
       const image = await listingImageForProduct({
@@ -128,6 +141,13 @@ export const runListing: StageFn = async (ctx) => {
         fileManifest,
         priceChf: draft.priceChf,
         podCostChf: pod,
+        podCostNote: quote?.note ?? null,
+        podBlueprintId: quote?.blueprintId ?? null,
+        podPrintProviderId: quote?.printProviderId ?? null,
+        podVariantPrices:
+          quote && quote.variants.length > 0
+            ? quote.variants.map((variant) => ({ id: variant.id, priceChf: variant.priceChf, costChf: variant.costChf, title: variant.title }))
+            : null,
         netChf: fees.netChf,
         marginPct: fees.marginPct,
         validation: issues,

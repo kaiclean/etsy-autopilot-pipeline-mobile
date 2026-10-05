@@ -133,14 +133,14 @@ export function filterProducts<T extends ProductRow>(listings: T[], filter: Prod
 }
 
 export function planBulkStatus(
-  rows: { id: number; title: string; hasErrors: boolean }[],
+  rows: { id: number; title: string; hasErrors: boolean; error?: string }[],
   status: "approved" | "rejected" | "pending_approval",
 ) {
   const changed: number[] = [];
   const skipped: { id: number; title: string; error: string }[] = [];
   for (const row of rows) {
     if (status === "approved" && row.hasErrors) {
-      skipped.push({ id: row.id, title: row.title, error: "Fix validation issues before approving" });
+      skipped.push({ id: row.id, title: row.title, error: row.error ?? "Fix validation issues before approving" });
     } else {
       changed.push(row.id);
     }

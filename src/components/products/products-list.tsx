@@ -14,7 +14,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
 import { filterProducts, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueTriage } from "@/lib/catalog-filters";
-import { calculateFees, productLabel } from "@/lib/fees";
+import { calculateFees, priceFloorIssue, productLabel } from "@/lib/fees";
 import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
@@ -31,7 +31,17 @@ const FILTERS = [
   { id: "failed", label: "Failed" },
 ] as const;
 
-export function ProductsList({ listings, initialTriage = "all" }: { listings: Listing[]; initialTriage?: QueueTriage }) {
+export function ProductsList({
+  listings,
+  offsiteAds = false,
+  usdToChf,
+  initialTriage = "all",
+}: {
+  listings: Listing[];
+  offsiteAds?: boolean;
+  usdToChf?: number;
+  initialTriage?: QueueTriage;
+}) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
   const [niche, setNiche] = useState<"all" | Niche>("all");
   const [triage, setTriage] = useState<QueueTriage>(initialTriage);
@@ -160,7 +170,7 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
 
       <Drawer open={Boolean(selected)} onOpenChange={(o) => !o && setSelected(null)} showSwipeHandle>
         <DrawerContent className="md:mx-auto md:max-w-2xl">
-          {selected && <Detail l={selected} />}
+          {selected && <Detail l={selected} offsiteAds={offsiteAds} usdToChf={usdToChf} />}
         </DrawerContent>
       </Drawer>
     </>
@@ -182,7 +192,14 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
   );
 }
 
-function HumanPublish({ l }: { l: Listing }) {
+function HumanPublish({ l, offsiteAds, usdToChf }: { l: Listing; offsiteAds: boolean; usdToChf?: number }) {
+  const floor = priceFloorIssue({
+    priceChf: l.priceChf,
+    productType: l.productType,
+    podCostChf: l.podCostChf,
+    offsiteAds,
+    usdToChf,
+  });
   const router = useRouter();
   const [pending, start] = useTransition();
   const file = l.fileManifest?.delivery;
@@ -213,6 +230,7 @@ function HumanPublish({ l }: { l: Listing }) {
         {file && !l.fileVerifiedAt ? (
           <p className="text-muted-foreground">Mark the file verified after you open it. Mock placeholder art cannot be verified or activated.</p>
         ) : null}
+        {floor ? <p className="text-destructive">{floor.message}</p> : null}
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending} onClick={() => run("Delivery file recorded", () => readDeliveryFile(l.id))}>
             Read delivery file
@@ -220,7 +238,7 @@ function HumanPublish({ l }: { l: Listing }) {
           <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending || Boolean(l.fileVerifiedAt)} onClick={() => run("File marked verified", () => verifyDeliveryFile(l.id))}>
             I opened this file
           </Button>
-          <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
+          <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt) || Boolean(floor)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
             Activate
           </Button>
         </div>
@@ -262,7 +280,8 @@ function HumanPublish({ l }: { l: Listing }) {
         >
           Record sample
         </Button>
-        <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.podPublishedAt)} onClick={() => run("Sent to Etsy", () => publishPodListing(l.id))}>
+        {floor ? <p className="text-destructive">{floor.message}</p> : null}
+        <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.podPublishedAt) || Boolean(floor)} onClick={() => run("Sent to Etsy", () => publishPodListing(l.id))}>
           Publish to Etsy
         </Button>
       </div>
@@ -270,8 +289,8 @@ function HumanPublish({ l }: { l: Listing }) {
   );
 }
 
-function Detail({ l }: { l: Listing }) {
-  const fees = calculateFees({ priceChf: l.priceChf, podCostChf: l.podCostChf });
+function Detail({ l, offsiteAds, usdToChf }: { l: Listing; offsiteAds: boolean; usdToChf?: number }) {
+  const fees = calculateFees({ priceChf: l.priceChf, podCostChf: l.podCostChf, offsiteAds, usdToChf });
   return (
     <>
       <DrawerHeader className="text-left">
@@ -308,11 +327,11 @@ function Detail({ l }: { l: Listing }) {
             This is an Etsy draft. Set “How it’s made” to AI tools in Shop Manager, then activate it here after the delivery file is verified. The API cannot set that field, and no cron will activate it.
           </div>
         )}
-        <HumanPublish l={l} />
+        <HumanPublish l={l} offsiteAds={offsiteAds} usdToChf={usdToChf} />
         {l.publishError && <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{l.publishError}</div>}
         {l.rejectedReason && <div className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">Rejected: {l.rejectedReason}</div>}
 
-        <FeeBreakdown fees={fees} />
+        <FeeBreakdown fees={fees} costNote={l.podCostNote} />
 
         <div>
           <div className="mb-1.5 text-[13px] font-semibold">Tags ({l.tags.length})</div>

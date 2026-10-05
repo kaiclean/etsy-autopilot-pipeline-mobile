@@ -2,12 +2,27 @@ import { and, eq } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import type { DB } from "@/db";
-import { designs, listings, podSamples } from "@/db/schema";
+import { designs, listings, podSamples, type Listing } from "@/db/schema";
 import { config } from "@/lib/config";
+import { resolveUsdToChf } from "@/lib/fee-schedule";
+import { priceFloorIssue } from "@/lib/fees";
 import { manifestIsComplete, tryBuildFileManifest } from "@/lib/file-manifest";
 import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
+import { getSetting } from "@/lib/settings";
 import { absoluteUrl, podPreset } from "./publish";
+
+async function priceFloor(db: DB, listing: Pick<Listing, "priceChf" | "productType" | "podCostChf">) {
+  const [automation, feeFx] = await Promise.all([getSetting(db, "automation"), getSetting(db, "feeFx")]);
+  const fx = resolveUsdToChf({ stored: feeFx?.usdToChf, storedAsOf: feeFx?.asOf });
+  return priceFloorIssue({
+    priceChf: listing.priceChf,
+    productType: listing.productType,
+    podCostChf: listing.podCostChf,
+    offsiteAds: automation.assumeOffsiteAds,
+    usdToChf: fx.rate,
+  });
+}
 
 async function designProvider(db: DB, designId: number | null) {
   if (!designId) return null;
@@ -49,6 +64,8 @@ export async function markDeliveryVerified(db: DB, listingId: number, actor: str
 export async function activateDigitalListing(db: DB, listingId: number, now = new Date()) {
   const [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "digital") return { ok: false as const, error: "Not a digital listing" };
+  const floor = await priceFloor(db, l);
+  if (floor) return { ok: false as const, error: floor.message };
   const provider = await designProvider(db, l.designId);
   const refusal = digitalActivationRefusal({
     imageProvider: config.imageProvider,
@@ -94,6 +111,8 @@ export async function recordPodSample(
 export async function publishPodListingToEtsy(db: DB, listingId: number, now = new Date()) {
   const [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "pod") return { ok: false as const, error: "Not a print-on-demand listing" };
+  const floor = await priceFloor(db, l);
+  if (floor) return { ok: false as const, error: floor.message };
   const [sample] =
     l.podBlueprintId && l.podPrintProviderId
       ? await db
@@ -110,6 +129,7 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
   });
   if (refusal) return { ok: false as const, error: refusal };
   const printify = await getPrintifyAdapter({ db });
+  const variantPrices = Object.fromEntries((l.podVariantPrices ?? []).map((variant) => [variant.id, variant.priceChf]));
   const result = await printify.createAndPublish({
     title: l.title,
     description: l.description,
@@ -119,6 +139,7 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
     preset: podPreset(l.podProvider),
     existingProductId: l.printifyProductId ?? undefined,
     publishToEtsy: true,
+    variantPricesChf: Object.keys(variantPrices).length > 0 ? variantPrices : undefined,
     blueprintId: l.podBlueprintId ?? undefined,
     printProviderId: l.podPrintProviderId ?? undefined,
   });

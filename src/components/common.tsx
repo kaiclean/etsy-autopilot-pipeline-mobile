@@ -73,6 +73,7 @@ const FULFILL: Record<FulfillmentStatus, { label: string; cls: string }> = {
   in_production: { label: "In production", cls: "bg-chart-4/15 text-chart-4" },
   shipped: { label: "Shipped", cls: "bg-chart-5/15 text-chart-5" },
   delivered: { label: "Delivered", cls: "bg-success/15 text-success" },
+  cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground" },
 };
 
 export function FulfillmentPill({ status }: { status: FulfillmentStatus }) {

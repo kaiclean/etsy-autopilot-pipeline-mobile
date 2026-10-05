@@ -14,10 +14,11 @@ describe("calculateFees: business plan §6 worked examples", () => {
     expect(f.marginPct).toBeCloseTo(79.66, 1);
   });
 
-  it("A. with Offsite Ads attribution nets CHF 5.17", () => {
+  it("A. with Offsite Ads charges 8.1% VAT on the ads fee and nets CHF 5.08", () => {
     const f = calculateFees({ priceChf: 8, offsiteAds: true });
     expect(f.offsiteAdsFeeChf).toBe(1.2);
-    expect(f.netChf).toBe(5.17);
+    expect(f.vatOnFeesChf).toBe(0.22);
+    expect(f.netChf).toBe(5.08);
   });
 
   it("B. POD poster at CHF 29 with Printful A3 (USD 10.90 + 4.99) nets CHF 11.84", () => {
@@ -29,9 +30,9 @@ describe("calculateFees: business plan §6 worked examples", () => {
     expect(f.marginPct).toBeCloseTo(40.8, 1);
   });
 
-  it("B. with Offsite Ads nets CHF 7.49", () => {
+  it("B. with Offsite Ads nets CHF 7.13 after VAT on the ads fee", () => {
     const f = calculateFees({ priceChf: 29, podCostChf: usdToChf(15.89), offsiteAds: true });
-    expect(f.netChf).toBe(7.49);
+    expect(f.netChf).toBe(7.13);
   });
 
   it("uses the plan's constants", () => {
@@ -148,18 +149,19 @@ describe("competitive CHF pricing", () => {
     }
   });
 
-  it("rounds a 55% Offsite Ads quote down to the mug anchor instead of the ceiling", () => {
+  it("rejects a competitor anchor that misses the 25% POD floor", () => {
+    const cost = podCostChf("mug");
     const price = suggestPrice({
       targetMarginPct: 55,
-      podCostChf: podCostChf("mug"),
+      podCostChf: cost,
       offsiteAds: true,
       minChf: 19.9,
       maxChf: 49.9,
       competitorChf: 21.4,
       productType: "pod",
     });
-    expect(price).toBe(20.9);
-    expect(price).not.toBe(49.9);
+    expect(calculateFees({ priceChf: price, podCostChf: cost, offsiteAds: true }).marginPct).toBeGreaterThanOrEqual(25);
+    expect(price).not.toBe(20.9);
   });
 
   it("keeps digital downloads profitable at or above the niche floor", () => {
@@ -178,7 +180,7 @@ describe("competitive CHF pricing", () => {
     }
   });
 
-  it("does not climb digital prices to the cap when Offsite Ads makes 75% unreachable", () => {
+  it("uses the niche max for digital Offsite Ads because 75% is unreachable", () => {
     const price = suggestPrice({
       targetMarginPct: 75,
       productType: "digital",
@@ -186,8 +188,11 @@ describe("competitive CHF pricing", () => {
       minChf: 4.9,
       maxChf: 19.9,
     });
-    expect(price).toBe(4.9);
-    expect(calculateFees({ priceChf: price, offsiteAds: true }).netChf).toBeGreaterThan(0);
+    expect(price).toBe(19.9);
+    const fees = calculateFees({ priceChf: price, offsiteAds: true });
+    expect(fees.netChf).toBeGreaterThan(0);
+    expect(fees.marginPct).toBeGreaterThan(calculateFees({ priceChf: 4.9, offsiteAds: true }).marginPct);
+    expect(fees.marginPct).toBeLessThan(75);
   });
 });
 
