@@ -5,9 +5,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { DryRunNotice } from "@/lib/operator-mode";
 import type { PublishMode } from "@/lib/publish-mode";
+import type { ShopIdentity } from "@/lib/shop-identity";
 import { cn } from "@/lib/utils";
 import { InstallPrompt } from "./install-prompt";
 import { LiveProvider, useLive } from "./live-provider";
+import { ShopIdentityStrip } from "./shop-identity-strip";
 
 type Shell = {
   pendingCount: number;
@@ -15,6 +17,7 @@ type Shell = {
   killSwitch: boolean;
   publishMode: PublishMode;
   dryRunNotice: DryRunNotice | null;
+  identity: ShopIdentity;
 };
 
 const MOBILE_TABS = [
@@ -22,7 +25,7 @@ const MOBILE_TABS = [
   { href: "/pipeline", label: "Pipeline", icon: Workflow },
   { href: "/queue", label: "Queue", icon: Inbox, badge: true },
   { href: "/orders", label: "Orders", icon: Receipt },
-  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections"] },
+  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections", "/catalog-draft"] },
 ];
 
 const SIDEBAR = [
@@ -135,7 +138,7 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
             <img src="/icons/192" alt="" className="size-8 rounded-lg" />
             <div className="leading-tight">
               <div className="text-sm font-semibold">Etsy Autopilot</div>
-              <div className="text-[11px] text-muted-foreground">Designed by Kai · CH</div>
+              <div className="text-[11px] text-muted-foreground">OmniShop CH</div>
             </div>
           </Link>
           <nav className="flex flex-1 flex-col gap-0.5">
@@ -157,9 +160,12 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
               );
             })}
           </nav>
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5">
-            <LiveDot />
-            <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
+          <div className="space-y-2">
+            <div className="px-1 text-[11px] text-muted-foreground">Designed by Kai · CH</div>
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5">
+              <LiveDot />
+              <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
+            </div>
           </div>
         </aside>
 
@@ -167,17 +173,27 @@ export function AppShell({ children, shell }: { children: React.ReactNode; shell
           <div className="sticky top-0 z-30">
             {shell.dryRunNotice ? <DryRunBanner notice={shell.dryRunNotice} /> : null}
             <InstallPrompt />
-            <header className="border-b border-border/60 bg-background/80 pt-safe backdrop-blur-xl md:hidden">
-              <div className="flex min-h-12 items-center justify-between gap-2 px-4 py-1.5">
-                <Link href="/" className="flex shrink-0 items-center gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/icons/192" alt="" className="size-6 rounded-md" />
-                  <span className="text-sm font-semibold">Autopilot</span>
-                </Link>
-                <div className="flex items-center gap-3">
+            <header className="border-b border-border/60 bg-background/80 pt-safe backdrop-blur-xl">
+              <div className="hidden items-center justify-between gap-4 px-8 py-3 md:flex">
+                <ShopIdentityStrip identity={shell.identity} />
+                <div className="flex shrink-0 items-center gap-3">
                   <LiveDot />
                   <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
                 </div>
+              </div>
+              <div className="space-y-1 px-4 py-1.5 md:hidden">
+                <div className="flex min-h-12 items-center justify-between gap-2">
+                  <Link href="/" className="flex shrink-0 items-center gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/icons/192" alt="" className="size-6 rounded-md" />
+                    <span className="text-sm font-semibold">Autopilot</span>
+                  </Link>
+                  <div className="flex items-center gap-3">
+                    <LiveDot />
+                    <Badges demo={shell.demo} killSwitch={shell.killSwitch} publishMode={shell.publishMode} />
+                  </div>
+                </div>
+                <ShopIdentityStrip identity={shell.identity} />
               </div>
             </header>
           </div>

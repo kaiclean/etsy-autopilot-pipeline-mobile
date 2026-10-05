@@ -15,7 +15,7 @@ import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import type { PushPrefs } from "@/lib/push-prefs";
-import { getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
+import { DEFAULT_CATALOG_DRAFT, getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
 import {
   activateDigitalListing,
   markDeliveryVerified,
@@ -310,4 +310,19 @@ export async function saveAutomation(patch: Partial<AutomationSettings>) {
   await setSetting(db, "automation", { ...a, ...clean });
   revalidateAll();
   return { ok: true };
+}
+
+/** Records Kai's review of the catalog draft. Does not write listings or call Etsy. */
+export async function setCatalogDraftReviewed(reviewed: boolean) {
+  await requireAuth();
+  const db = await getDb();
+  const current = await getSetting(db, "catalogDraft");
+  await setSetting(db, "catalogDraft", {
+    ...DEFAULT_CATALOG_DRAFT,
+    ...current,
+    reviewedByKai: reviewed,
+    pending: !reviewed,
+  });
+  revalidateAll();
+  return { ok: true as const, reviewed };
 }
