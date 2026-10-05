@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 /** Counts taken from the 2026-10-05 Meridian + Listing package. Flag only; nothing writes to Etsy. */
 export const CATALOG_DRAFT_SUMMARY = {
   title: "Catalog order (draft)",
@@ -14,17 +11,3 @@ export const CATALOG_DRAFT_SUMMARY = {
 } as const;
 
 export const CATALOG_DRAFT_DOC = CATALOG_DRAFT_SUMMARY.docPath;
-
-export async function readCatalogDraftMarkdown() {
-  const absolute = path.join(process.cwd(), CATALOG_DRAFT_DOC);
-  try {
-    const markdown = await readFile(absolute, "utf8");
-    return { markdown, available: true as const, path: CATALOG_DRAFT_DOC };
-  } catch {
-    return {
-      markdown: "",
-      available: false as const,
-      path: CATALOG_DRAFT_DOC,
-    };
-  }
-}
