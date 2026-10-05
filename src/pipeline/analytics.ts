@@ -52,7 +52,7 @@ export const runAnalytics: StageFn = async (ctx) => {
     const note = `Etsy Ads budget ${today}`;
     const [already] = await db.select({ id: costs.id }).from(costs).where(and(eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
       log(`Booked Etsy Ads daily budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (set in Etsy UI; no Ads API)`);
     }
   }

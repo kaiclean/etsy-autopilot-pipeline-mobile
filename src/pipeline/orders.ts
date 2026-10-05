@@ -44,6 +44,7 @@ export const runOrders: StageFn = async (ctx) => {
     const offsite = etsy.mode === "dry-run" ? ctx.random() < 0.12 : false;
     const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: l.podCostChf, offsiteAds: offsite });
     await db.insert(orders).values({
+      shopId: ctx.shopId,
       etsyReceiptId: r.receiptId,
       listingId: l.id,
       buyerCountry: r.buyerCountry,

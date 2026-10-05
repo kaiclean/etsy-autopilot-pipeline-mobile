@@ -69,6 +69,7 @@ export const runDesign: StageFn = async (ctx) => {
         label: kw.phrase,
       });
       await db.insert(designs).values({
+        shopId: ctx.shopId,
         keywordId: kw.id,
         niche: kw.niche,
         prompt,
@@ -78,7 +79,7 @@ export const runDesign: StageFn = async (ctx) => {
         isDemo: isDemoMode(),
       });
       if (img.costChf > 0) {
-        await db.insert(costs).values({ kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: isDemoMode() });
+        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: isDemoMode() });
       }
       spentToday += img.costChf;
       spentMonth += img.costChf;

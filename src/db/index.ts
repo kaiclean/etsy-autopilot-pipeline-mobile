@@ -25,6 +25,8 @@ async function connect(): Promise<DB> {
     const { migrate } = await import("drizzle-orm/neon-http/migrator");
     const db = drizzle(neon(url), { schema });
     await migrate(db, { migrationsFolder });
+    const { syncShopRegistry } = await import("@/lib/shops");
+    await syncShopRegistry(db as unknown as DB);
     // Query-builder API is identical across drivers; unify the type.
     return db as unknown as DB;
   }
@@ -39,6 +41,8 @@ async function connect(): Promise<DB> {
   const client = new PGlite(dir);
   const db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder });
+  const { syncShopRegistry } = await import("@/lib/shops");
+  await syncShopRegistry(db);
   return db;
 }
 

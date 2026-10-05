@@ -134,6 +134,7 @@ export const runPublish: StageFn = async (ctx) => {
         })
         .where(eq(listings.id, l.id));
       await db.insert(costs).values({
+        shopId: ctx.shopId,
         kind: "listing_fee",
         amountChf: round2(FEES.listingFeeUsd * FEES.usdToChf * (1 + FEES.vatOnFeesRate)),
         note: `Listing fee #${l.id}${mode === "dry-run" ? " (dry-run, not charged)" : ""}`,

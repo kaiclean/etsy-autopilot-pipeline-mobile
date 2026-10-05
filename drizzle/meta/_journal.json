@@ -22,6 +22,13 @@
       "when": 1791193114897,
       "tag": "0002_delivery_gates",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791292800000,
+      "tag": "0003_shop_registry",
+      "breakpoints": true
     }
   ]
 }

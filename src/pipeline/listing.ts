@@ -112,6 +112,7 @@ export const runListing: StageFn = async (ctx) => {
       const deliveryUrl = product.type === "digital" ? design.imageUrl : null;
       const fileManifest = deliveryUrl ? tryBuildFileManifest(deliveryUrl, image.url) : null;
       await db.insert(listings).values({
+        shopId: ctx.shopId,
         designId: design.id,
         keywordId: design.keywordId,
         niche: design.niche,
@@ -133,7 +134,7 @@ export const runListing: StageFn = async (ctx) => {
       });
       await db.update(designs).set({ status: "listed" }).where(eq(designs.id, design.id));
       if (llmCost > 0) {
-        await db.insert(costs).values({ kind: "ai_text", amountChf: llmCost, note: `${provider}: listing copy`, isDemo: isDemoMode() });
+        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_text", amountChf: llmCost, note: `${provider}: listing copy`, isDemo: isDemoMode() });
       }
       const errors = issues.filter((i) => i.severity === "error").length;
       if (errors) invalid++;

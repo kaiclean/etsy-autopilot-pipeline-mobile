@@ -4,6 +4,7 @@ import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema"
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { getSetting } from "@/lib/settings";
+import { resolveActiveShop } from "@/lib/shops";
 import { runAnalytics } from "./analytics";
 import { runDesign } from "./design";
 import { runListing } from "./listing";
@@ -23,32 +24,38 @@ const STAGE_FNS: Record<StageName, StageFn> = {
 
 export type RunOptions = { db?: DB; random?: () => number; now?: Date };
 
-async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string) {
+async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string) {
   const [run] = await db
     .insert(jobRuns)
-    .values({ stage, status: "skipped", trigger, summary, finishedAt: new Date(), isDemo: isDemoMode() })
+    .values({ shopId, stage, status: "skipped", trigger, summary, finishedAt: new Date(), isDemo: isDemoMode() })
     .returning();
   return run;
 }
 
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
   const db = opts.db ?? (await getDb());
+  const shop = await resolveActiveShop(db);
   const automation = await getSetting(db, "automation");
-  if (automation.killSwitch) return recordSkip(db, stage, trigger, "Kill switch is on: all automation paused");
+  // Global settings.killSwitch pauses every shop. shops.kill_switch pauses this shop only.
+  if (automation.killSwitch || shop.killSwitch) {
+    const summary = automation.killSwitch ? "Kill switch is on: all automation paused" : "Shop kill switch is on: this shop is paused";
+    return recordSkip(db, stage, trigger, summary, shop.id);
+  }
 
   const stages = await getSetting(db, "stages");
-  if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused");
+  if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused", shop.id);
 
   const [running] = await db
     .select({ id: jobRuns.id })
     .from(jobRuns)
     .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
-  if (running) return recordSkip(db, stage, trigger, "Already running");
+  if (running) return recordSkip(db, stage, trigger, "Already running", shop.id);
 
-  const [run] = await db.insert(jobRuns).values({ stage, status: "running", trigger, isDemo: isDemoMode() }).returning();
+  const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: isDemoMode() }).returning();
   const logs: LogLine[] = [];
   const ctx: StageContext = {
     db,
+    shopId: shop.id,
     trigger,
     random: opts.random ?? Math.random,
     now: opts.now ?? new Date(),

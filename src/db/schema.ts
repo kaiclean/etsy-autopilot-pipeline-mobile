@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
@@ -8,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 export type Niche = "alpine" | "gothic" | "christmas" | "birthday" | "stream";
@@ -49,6 +51,58 @@ export type StageName =
 
 export type LogLine = { t: string; level: "info" | "warn" | "error"; msg: string };
 
+export type ShopStatus = "draft" | "connecting" | "dry-run" | "live" | "paused" | "archived";
+export type ShopPublishMode = "dry-run" | "live";
+export type ShopProvider = "etsy" | "printify" | "s3" | "openrouter";
+export type ShopConnectionStatus = "connected" | "configured" | "missing" | "error";
+
+/** Default for rows created before a request passes an explicit shop id. */
+const omnishopId = sql`current_omnishop_id()`;
+
+export const shops = pgTable("shops", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  etsyShopId: text("etsy_shop_id").unique(),
+  etsyShopName: text("etsy_shop_name"),
+  currency: text("currency").notNull().default("CHF"),
+  locale: text("locale").notNull().default("en"),
+  marketLocale: text("market_locale"),
+  status: text("status").$type<ShopStatus>().notNull().default("dry-run"),
+  publishMode: text("publish_mode").$type<ShopPublishMode>().notNull().default("dry-run"),
+  killSwitch: boolean("kill_switch").notNull().default(false),
+  brandBriefRef: text("brand_brief_ref"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const shopConnections = pgTable(
+  "shop_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    provider: text("provider").$type<ShopProvider>().notNull(),
+    status: text("status").$type<ShopConnectionStatus>().notNull(),
+    secretsRef: text("secrets_ref").notNull(),
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    tokens: jsonb("tokens").$type<Record<string, unknown> | null>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("shop_connections_shop_provider").on(t.shopId, t.provider)],
+);
+
+export const shopAutomation = pgTable("shop_automation", {
+  shopId: uuid("shop_id")
+    .primaryKey()
+    .references(() => shops.id),
+  automation: jsonb("automation").$type<Record<string, unknown>>().notNull(),
+  stages: jsonb("stages").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type ValidationIssue = {
   field: "title" | "tags" | "description" | "price";
   severity: "error" | "warning";
@@ -58,6 +112,10 @@ export type ValidationIssue = {
 
 export const keywords = pgTable("keywords", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   phrase: text("phrase").notNull().unique(),
   niche: text("niche").$type<Niche>().notNull(),
   source: text("source").notNull(),
@@ -74,6 +132,10 @@ export const keywords = pgTable("keywords", {
 
 export const designs = pgTable("designs", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   keywordId: integer("keyword_id").references(() => keywords.id),
   niche: text("niche").$type<Niche>().notNull(),
   prompt: text("prompt").notNull(),
@@ -87,6 +149,10 @@ export const designs = pgTable("designs", {
 
 export const listings = pgTable("listings", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   designId: integer("design_id").references(() => designs.id),
   keywordId: integer("keyword_id").references(() => keywords.id),
   niche: text("niche").$type<Niche>().notNull(),
@@ -129,6 +195,10 @@ export const listings = pgTable("listings", {
 
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   etsyReceiptId: text("etsy_receipt_id").notNull().unique(),
   listingId: integer("listing_id").references(() => listings.id),
   buyerCountry: text("buyer_country").notNull(),
@@ -147,6 +217,10 @@ export const orders = pgTable("orders", {
 
 export const jobRuns = pgTable("job_runs", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   stage: text("stage").$type<StageName>().notNull(),
   status: text("status").$type<"running" | "success" | "failed" | "skipped">().notNull(),
   trigger: text("trigger").$type<"manual" | "cron" | "chain">().notNull(),
@@ -159,6 +233,10 @@ export const jobRuns = pgTable("job_runs", {
 
 export const events = pgTable("events", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   type: text("type").notNull(),
   title: text("title").notNull(),
   body: text("body"),
@@ -170,6 +248,10 @@ export const events = pgTable("events", {
 
 export const costs = pgTable("costs", {
   id: serial("id").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .default(omnishopId)
+    .references(() => shops.id),
   kind: text("kind").$type<"ai_image" | "ai_text" | "ads" | "listing_fee" | "other">().notNull(),
   amountChf: doublePrecision("amount_chf").notNull(),
   note: text("note"),
@@ -239,6 +321,8 @@ export const printifyEvents = pgTable("printify_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export type Shop = typeof shops.$inferSelect;
+export type ShopConnection = typeof shopConnections.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
 export type Design = typeof designs.$inferSelect;
 export type Listing = typeof listings.$inferSelect;

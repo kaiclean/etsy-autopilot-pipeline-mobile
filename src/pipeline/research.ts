@@ -48,6 +48,7 @@ export const runResearch: StageFn = async (ctx) => {
       await db
         .insert(keywords)
         .values({
+          shopId: ctx.shopId,
           phrase: c.phrase,
           niche: c.niche,
           source: c.source,
@@ -79,6 +80,7 @@ export const runResearch: StageFn = async (ctx) => {
     await db
       .insert(keywords)
       .values({
+        shopId: ctx.shopId,
         phrase: c.phrase,
         niche: c.niche,
         source: trend != null ? `${c.source}+google-trends` : c.source,
