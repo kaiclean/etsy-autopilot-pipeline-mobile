@@ -2,11 +2,12 @@ import { eq, inArray } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
-import { costs, listings } from "@/db/schema";
+import { costs, designs, listings } from "@/db/schema";
 import { isDemoMode, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
+import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import type { StageFn } from "./types";
 
 function podPreset(provider: string | null): PodPreset | undefined {
@@ -79,15 +80,24 @@ export const runPublish: StageFn = async (ctx) => {
         const state = etsy.mode === "live" && activateLive ? "active" : "draft";
         log(`#${l.id} → Etsy ${state} ${listingId} (${etsy.mode})`);
       } else {
+        let artwork = l.imageUrl;
+        if (l.designId) {
+          const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));
+          artwork = printArtworkUrl(l.imageUrl, design?.imageUrl);
+        }
         const result = await printify.createAndPublish({
           title: l.title,
           description: l.description,
           tags: l.tags,
           priceChf: l.priceChf,
-          imageUrl: absoluteUrl(l.imageUrl),
+          imageUrl: absoluteUrl(artwork),
           preset: podPreset(l.podProvider),
           existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
         });
+        const mockup = await fetchPrintifyMockupUrl(result.productId);
+        if (mockup) {
+          await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+        }
         printifyProductId = result.productId;
         // Printify creates the Etsy listing asynchronously; in dry-run we mint a synthetic id so orders can link.
         etsyListingId = result.externalEtsyId ?? (printify.mode === "dry-run" ? `dry-etsy-${result.productId}` : l.etsyListingId);

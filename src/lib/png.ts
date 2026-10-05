@@ -97,6 +97,67 @@ function nicheScene(niche: string): (fill: (x: number, y: number, w: number, h: 
   };
 }
 
+const ACCENT: Record<string, RGB> = {
+  alpine: [78, 122, 146],
+  gothic: [92, 36, 58],
+  christmas: [148, 52, 48],
+  birthday: [196, 128, 72],
+  stream: [72, 48, 140],
+};
+
+/**
+ * Lifestyle product PNG for POD listings. Flat shapes only (no raw full-bleed artwork),
+ * so the queue shows a mug / framed print / garment instead of the print file.
+ */
+export function podMockupPng(preset: "posterA3" | "mug" | "tshirt" | "sweatshirt", niche: string) {
+  const accent = ACCENT[niche] ?? ACCENT.alpine;
+  const wall: RGB = niche === "gothic" ? [32, 24, 36] : niche === "christmas" ? [245, 236, 228] : [236, 230, 222];
+  return encodePng(480, 640, (fill) => {
+    fill(0, 0, 480, 640, wall);
+    if (preset === "mug") {
+      fill(0, 430, 480, 210, [186, 154, 124]);
+      fill(168, 250, 150, 200, [250, 250, 248]);
+      fill(168, 250, 150, 22, [232, 232, 230]);
+      fill(300, 300, 36, 90, [250, 250, 248]);
+      fill(318, 318, 28, 54, wall);
+      fill(188, 300, 110, 100, accent);
+      fill(150, 440, 186, 16, [160, 130, 104]);
+      return;
+    }
+    if (preset === "tshirt" || preset === "sweatshirt") {
+      const bulky = preset === "sweatshirt";
+      fill(0, 520, 480, 120, [214, 208, 200]);
+      fill(90, bulky ? 150 : 170, 300, bulky ? 360 : 320, [248, 246, 242]);
+      fill(40, 190, 70, 110, [248, 246, 242]);
+      fill(370, 190, 70, 110, [248, 246, 242]);
+      fill(150, bulky ? 230 : 250, 180, bulky ? 140 : 120, accent);
+      if (bulky) fill(90, 480, 300, 30, [230, 226, 220]);
+      return;
+    }
+    fill(0, 560, 480, 80, [214, 206, 196]);
+    fill(78, 70, 324, 430, [42, 36, 32]);
+    fill(102, 94, 276, 382, [248, 244, 236]);
+    const sky: RGB = [Math.min(255, accent[0] + 30), accent[1], accent[2]];
+    fill(124, 120, 232, 320, accent);
+    fill(124, 120, 232, 70, sky);
+  });
+}
+
+/** Raster for our own `/api/placeholder` and `/api/mockup` URLs, so publish does not HTTP-fetch this server. */
+export function localAssetPng(url: string): Buffer | null {
+  const placeholder = placeholderPng(url);
+  if (placeholder) return placeholder;
+  let parsed: URL;
+  try {
+    parsed = new URL(url, "http://localhost");
+  } catch {
+    return null;
+  }
+  const preset = parsed.pathname.match(/\/api\/mockup\/(posterA3|mug|tshirt|sweatshirt)/)?.[1];
+  if (!preset) return null;
+  return podMockupPng(preset as "posterA3" | "mug" | "tshirt" | "sweatshirt", parsed.searchParams.get("niche") ?? "alpine");
+}
+
 /** Raster for `/api/placeholder/...` so publish does not HTTP-fetch this server through its own tunnel. */
 export function placeholderPng(url: string): Buffer | null {
   let parsed: URL;

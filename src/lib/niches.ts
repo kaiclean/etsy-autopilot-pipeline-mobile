@@ -9,6 +9,7 @@ export type NicheConfig = {
   /** Month indexes (0-11) where demand peaks. Empty = evergreen. */
   peakMonths: number[];
   productMix: { type: ProductType; pod?: PodPreset; weight: number }[];
+  /** Soft CHF guard [min, max]. Pricing may sit inside the band; POD is not pinned to the max. */
   priceBand: { digital: [number, number]; pod: [number, number] };
   style: string;
   seeds: { phrase: string; demand: number; competition: number }[];
@@ -126,7 +127,25 @@ export function seasonality(niche: Niche, date = new Date()) {
   return Math.max(0.1, 1 - dist * 0.25);
 }
 
-export function scoreKeyword(k: { demand: number; competition: number; seasonality: number; trend?: number | null }) {
-  const demand = k.trend != null ? k.demand * 0.6 + k.trend * 0.4 : k.demand;
+/**
+ * Map an Etsy search volume onto 0–1.
+ * 10 → 0.2, 100 → 0.4, 1_000 → 0.6, 10_000 → 0.8, 100_000 → 1.
+ */
+export function normalizeEtsyVolume(volume: number) {
+  if (!Number.isFinite(volume) || volume <= 0) return 0;
+  const score = Math.log10(volume) / 5;
+  return Math.round(Math.min(1, Math.max(0, score)) * 100) / 100;
+}
+
+export function scoreKeyword(k: {
+  demand: number;
+  competition: number;
+  seasonality: number;
+  trend?: number | null;
+  /** Measured Etsy search volume. When set, it replaces seed demand and is not blended with Google Trends. */
+  searchVolume?: number | null;
+}) {
+  const measured = k.searchVolume != null ? normalizeEtsyVolume(k.searchVolume) : null;
+  const demand = measured != null ? measured : k.trend != null ? k.demand * 0.6 + k.trend * 0.4 : k.demand;
   return Math.round((0.45 * demand + 0.3 * (1 - k.competition) + 0.25 * k.seasonality) * 100) / 100;
 }

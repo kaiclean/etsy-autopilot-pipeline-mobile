@@ -7,9 +7,14 @@ export type KeywordCandidate = {
   source: string;
   demand: number;
   competition: number;
+  /** Raw Etsy search volume when this candidate was measured rather than seeded. */
+  searchVolume?: number;
 };
 
-/** A pluggable keyword source. Add eRank / Etsy autocomplete / Marketplace Insights exports here. */
+/**
+ * A pluggable keyword source. Seed lists, long-tail expansion, env seeds, and Etsy
+ * Marketplace Insights exports (see etsy-demand.ts) all implement this.
+ */
 export interface KeywordSource {
   readonly name: string;
   collect(): Promise<KeywordCandidate[]>;

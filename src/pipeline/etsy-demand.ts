@@ -1,0 +1,121 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import type { Niche } from "@/db/schema";
+import { NICHE_LIST, normalizeEtsyVolume } from "@/lib/niches";
+import type { KeywordCandidate } from "./sources";
+
+/**
+ * One row of Etsy demand: Marketplace Insights search volume, or a public search count.
+ * Live scraping is unreliable in CI, so sources are pluggable and may return a fixture.
+ */
+export type EtsyDemandSignal = {
+  phrase: string;
+  searchVolume: number;
+  /** 0–1 competition score, or a raw competing-listing count (values above 1 are log-scaled). */
+  competition?: number;
+  niche?: Niche;
+};
+
+export interface EtsyDemandSource {
+  readonly name: string;
+  collect(): Promise<EtsyDemandSignal[]>;
+}
+
+const NICHES = new Set(NICHE_LIST.map((n) => n.id));
+
+export function normalizeCompetition(value: number | undefined, fallback = 0.5) {
+  if (value == null || !Number.isFinite(value)) return fallback;
+  if (value <= 1) return Math.round(Math.min(1, Math.max(0, value)) * 100) / 100;
+  return normalizeEtsyVolume(value);
+}
+
+function inferNiche(phrase: string): Niche | undefined {
+  const p = phrase.toLowerCase();
+  let best: { niche: Niche; len: number } | undefined;
+  for (const n of NICHE_LIST) {
+    for (const seed of n.seeds) {
+      if (p === seed.phrase || p.includes(seed.phrase) || seed.phrase.includes(p)) {
+        if (!best || seed.phrase.length > best.len) best = { niche: n.id, len: seed.phrase.length };
+      }
+    }
+  }
+  return best?.niche;
+}
+
+/**
+ * Marketplace Insights-style CSV:
+ * keyword,search_volume,competition[,niche]
+ * A header row is optional. Lines starting with # are ignored.
+ */
+export function parseEtsyInsights(text: string): EtsyDemandSignal[] {
+  const out: EtsyDemandSignal[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const cols = line.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+    if (/^(keyword|phrase)$/i.test(cols[0] ?? "")) continue;
+    const [phrase, volumeRaw, competitionRaw, nicheRaw] = cols;
+    const searchVolume = Number(volumeRaw);
+    if (!phrase || !Number.isFinite(searchVolume) || searchVolume < 0) continue;
+    const niche = nicheRaw && NICHES.has(nicheRaw as Niche) ? (nicheRaw as Niche) : inferNiche(phrase);
+    if (!niche) continue;
+    out.push({
+      phrase: phrase.toLowerCase(),
+      searchVolume,
+      competition: competitionRaw ? Number(competitionRaw) : undefined,
+      niche,
+    });
+  }
+  return out;
+}
+
+export function signalToCandidate(signal: EtsyDemandSignal): KeywordCandidate {
+  return {
+    phrase: signal.phrase,
+    niche: signal.niche ?? inferNiche(signal.phrase) ?? "alpine",
+    source: "etsy-insights",
+    demand: normalizeEtsyVolume(signal.searchVolume),
+    competition: normalizeCompetition(signal.competition),
+    searchVolume: signal.searchVolume,
+  };
+}
+
+/** When the same phrase arrives from seeds and from Etsy, keep the measured volume. */
+export function preferMeasuredDemand(candidates: KeywordCandidate[]): KeywordCandidate[] {
+  const byPhrase = new Map<string, KeywordCandidate>();
+  for (const candidate of candidates) {
+    const key = candidate.phrase.toLowerCase();
+    const prev = byPhrase.get(key);
+    if (!prev) {
+      byPhrase.set(key, candidate);
+      continue;
+    }
+    const nextMeasured = candidate.searchVolume != null;
+    const prevMeasured = prev.searchVolume != null;
+    if (nextMeasured && (!prevMeasured || (candidate.searchVolume ?? 0) > (prev.searchVolume ?? 0))) {
+      byPhrase.set(key, candidate);
+    }
+  }
+  return [...byPhrase.values()];
+}
+
+export async function loadEtsyDemandSignals(): Promise<EtsyDemandSignal[]> {
+  const inline = process.env.ETSY_INSIGHTS_CSV;
+  if (inline && inline.trim()) return parseEtsyInsights(inline);
+  const file = process.env.ETSY_INSIGHTS_PATH ?? (process.env.ETSY_DEMAND_SOURCE === "fixture" ? path.join(process.cwd(), "data/etsy-insights.fixture.csv") : "");
+  if (!file) return [];
+  try {
+    return parseEtsyInsights(await readFile(file, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+/** KeywordSource adapter. Returns nothing until a CSV, path, or ETSY_DEMAND_SOURCE=fixture is set. */
+export const etsyInsightsSource = {
+  name: "etsy-insights",
+  async collect(): Promise<KeywordCandidate[]> {
+    const signals = await loadEtsyDemandSignals();
+    return signals.map(signalToCandidate);
+  },
+};

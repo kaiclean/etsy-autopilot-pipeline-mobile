@@ -69,7 +69,7 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 
 | Stage | Real today | Mock / dry-run fallback |
 | --- | --- | --- |
-| Research | Seed list from the plan plus long-tail expansion and `KEYWORD_SEEDS`. Google Trends (unofficial) is tried for 5 keywords per run. | Seed scores when Trends is rate-limited |
+| Research | Seed list from the plan plus long-tail expansion, `KEYWORD_SEEDS`, and a pluggable Etsy demand source (`ETSY_INSIGHTS_CSV`, `ETSY_INSIGHTS_PATH`, or `ETSY_DEMAND_SOURCE=fixture`). Measured search volume replaces seed demand. Google Trends (unofficial) is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is rate-limited and no Etsy export is configured |
 | Design | Higgsfield / OpenAI Images / Replicate adapters, capped by the daily and monthly AI budget | Niche-themed SVG placeholder art stamped "MOCK ART" |
 | Listing | OpenAI JSON writer, then sanitize, validate, and price with the fee engine | Deterministic niche templates |
 | Approval | Always a human gate: swipe, edit inline, undo | — |
@@ -84,7 +84,12 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 - A digital download at CHF 8.00 nets **CHF 6.37** (79.7%), or **CHF 5.17** if the sale is attributed to Offsite Ads.
 - A POD A3 poster at CHF 29.00 (Printful USD 10.90 + 4.99) nets **CHF 11.84** (40.8%), or **CHF 7.49** with Offsite Ads.
 
-`suggestPrice()` solves for the lowest `.90` retail price that reaches the target margin you set in Settings, bounded by each niche's price band. All of this is covered in `tests/fees.test.ts`.
+`suggestPrice()` prices in CHF (`.90` retail rounding). Margins are per product type, set in Settings:
+
+- **Print-on-demand** targets **30%** net (clamped to 25–35%). A competitor anchor in CHF (mug 19.90, A3 poster 24.90) wins when it is lower than the margin price and still clears print cost, so listings are not pinned to the niche ceiling.
+- **Digital downloads** target **75%** or more. Niche floors still apply. Offsite Ads makes 75% unreachable (fees approach ~26%), so those prices stay on the floor instead of the cap.
+
+Before this change a global 55% target, with Offsite Ads on, solved near CHF 54 (mug) and CHF 74 (poster) and then clamped to the band max: mugs CHF 49.90 and gothic posters CHF 44.90. At the 30% default, the same products land in the competitive bands (mug about CHF 15–25, poster about CHF 18–33). Covered in `tests/fees.test.ts`.
 
 ### Listing validator
 

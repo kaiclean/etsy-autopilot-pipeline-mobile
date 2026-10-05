@@ -9,7 +9,7 @@ import { listings, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { calculateFees } from "@/lib/fees";
+import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
 import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
@@ -253,6 +253,12 @@ export async function saveAutomation(patch: Partial<AutomationSettings>) {
     (clean as Record<string, unknown>)[k] = v;
   }
   if (clean.targetMarginPct !== undefined) clean.targetMarginPct = Math.min(80, clean.targetMarginPct);
+  if (clean.podTargetMarginPct !== undefined) {
+    clean.podTargetMarginPct = Math.min(MARGIN_TARGETS.podMax, Math.max(MARGIN_TARGETS.podMin, clean.podTargetMarginPct));
+  }
+  if (clean.digitalTargetMarginPct !== undefined) {
+    clean.digitalTargetMarginPct = Math.min(MARGIN_TARGETS.digitalMax, Math.max(MARGIN_TARGETS.digitalMin, clean.digitalTargetMarginPct));
+  }
   if (clean.designsPerRun !== undefined) clean.designsPerRun = Math.max(1, Math.min(20, Math.round(clean.designsPerRun)));
   await setSetting(db, "automation", { ...a, ...clean });
   revalidateAll();

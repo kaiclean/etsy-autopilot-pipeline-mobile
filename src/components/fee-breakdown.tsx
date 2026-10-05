@@ -12,7 +12,7 @@ export function FeeBreakdown({ fees, className }: { fees: FB; className?: string
   ];
   if (fees.offsiteAdsFeeChf) rows.push(["Offsite Ads 15%", -fees.offsiteAdsFeeChf]);
   if (fees.podCostChf) rows.push(["POD base + shipping", -fees.podCostChf]);
-  const good = fees.marginPct >= 35;
+  const good = fees.podCostChf > 0 ? fees.marginPct >= 25 : fees.marginPct >= 75;
   return (
     <div className={cn("rounded-xl border border-border bg-muted/30 p-3", className)}>
       <div className="space-y-1.5 text-[13px]">

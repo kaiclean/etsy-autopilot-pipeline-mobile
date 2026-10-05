@@ -1,7 +1,7 @@
 import type { PodPreset } from "@/lib/fees";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
-import { placeholderPng } from "@/lib/png";
+import { localAssetPng } from "@/lib/png";
 import { blueprintRows, pickBlueprint, pickProvider, pickVariantIds, providerRows, variantRows, type CatalogChoice } from "./catalog";
 import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from "./types";
 
@@ -70,7 +70,7 @@ export class PrintifyLiveClient implements PrintifyAdapter {
   }
 
   private async uploadDesign(imageUrl: string) {
-    const png = placeholderPng(imageUrl);
+    const png = localAssetPng(imageUrl);
     const body = png
       ? { file_name: "design.png", contents: png.toString("base64") }
       : { file_name: `design-${Date.now()}.png`, url: imageUrl };

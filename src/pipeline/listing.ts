@@ -5,10 +5,11 @@ import type { Niche, ProductType } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
-import { calculateFees, podCostChf, suggestPrice, type PodPreset } from "@/lib/fees";
+import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
 import { NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
+import { listingImageForProduct } from "./mockup";
 import type { StageFn } from "./types";
 
 export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?: PodPreset } {
@@ -26,8 +27,13 @@ export async function draftListing(opts: {
   keyword: string;
   product: { type: ProductType; pod?: PodPreset };
   seed: number;
-  targetMarginPct: number;
+  /** Ignored. Pricing uses podTargetMarginPct / digitalTargetMarginPct. */
+  targetMarginPct?: number;
+  podTargetMarginPct?: number;
+  digitalTargetMarginPct?: number;
   assumeOffsiteAds: boolean;
+  /** Override the preset's CHF competitor anchor. Digital listings ignore this. */
+  competitorChf?: number;
   llm?: LLMProvider;
 }) {
   const llm = opts.llm ?? getLLMProvider();
@@ -38,14 +44,19 @@ export async function draftListing(opts: {
     podPreset: opts.product.pod,
     seed: opts.seed,
   });
-  const pod = opts.product.type === "pod" ? podCostChf(opts.product.pod ?? "posterA3") : 0;
+  const preset = opts.product.pod ?? "posterA3";
+  const pod = opts.product.type === "pod" ? podCostChf(preset) : 0;
   const band = NICHES[opts.niche].priceBand[opts.product.type];
+  const targetMarginPct =
+    opts.product.type === "pod" ? resolveTargetMargin("pod", opts.podTargetMarginPct) : resolveTargetMargin("digital", opts.digitalTargetMarginPct);
   const priceChf = suggestPrice({
-    targetMarginPct: opts.targetMarginPct,
+    targetMarginPct,
     podCostChf: pod,
     offsiteAds: opts.assumeOffsiteAds,
-    minChf: band[0],
+    minChf: band[0] || undefined,
     maxChf: band[1] || undefined,
+    competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
+    productType: opts.product.type,
   });
   const draft = sanitizeDraft({
     title: copy.title,
@@ -80,7 +91,8 @@ export const runListing: StageFn = async (ctx) => {
         keyword: phrase ?? NICHES[design.niche].seeds[0].phrase,
         product,
         seed: design.id,
-        targetMarginPct: automation.targetMarginPct,
+        podTargetMarginPct: automation.podTargetMarginPct,
+        digitalTargetMarginPct: automation.digitalTargetMarginPct,
         assumeOffsiteAds: automation.assumeOffsiteAds,
       });
       await db.insert(listings).values({
@@ -92,7 +104,14 @@ export const runListing: StageFn = async (ctx) => {
         title: draft.title,
         tags: draft.tags,
         description: draft.description,
-        imageUrl: design.imageUrl,
+        imageUrl: (
+          await listingImageForProduct({
+            productType: product.type,
+            artworkUrl: design.imageUrl,
+            preset: product.pod,
+            niche: design.niche,
+          })
+        ).url,
         priceChf: draft.priceChf,
         podCostChf: pod,
         netChf: fees.netChf,
