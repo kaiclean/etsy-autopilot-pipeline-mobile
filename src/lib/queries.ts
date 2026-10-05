@@ -11,6 +11,8 @@ import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
+import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, railwayDeploySha } from "./alerts";
+import { buildShopIdentity } from "./shop-identity";
 import { getSetting } from "./settings";
 
 const DAY = 864e5;
@@ -33,7 +35,27 @@ export async function getShellData() {
     killSwitch: automation.killSwitch,
     publishMode,
     dryRunNotice: dryRunNotice({ publishMode, demo }),
+    identity: buildShopIdentity({ publishMode, killSwitch: automation.killSwitch }),
   };
+}
+
+export async function getCockpitAlerts() {
+  const db = await getDb();
+  const [tokens, automation, catalogDraft, cronRuns, nullEtsyIdCount] = await Promise.all([
+    getSetting(db, "etsyTokens"),
+    getSetting(db, "automation"),
+    getSetting(db, "catalogDraft"),
+    loadCronRunFacts(db),
+    countListingsMissingEtsyId(db),
+  ]);
+  return buildCockpitAlerts({
+    cronRuns,
+    nullEtsyIdCount,
+    deploySha: railwayDeploySha(),
+    tokens,
+    killSwitch: automation.killSwitch,
+    catalogDraftPending: catalogDraft.pending && !catalogDraft.reviewedByKai,
+  });
 }
 
 type RangeKey = "today" | "7d" | "30d";

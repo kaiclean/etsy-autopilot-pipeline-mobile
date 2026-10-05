@@ -10,7 +10,7 @@ import { ProvenanceBadge } from "@/components/provenance-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
-import { filterQueue, listingHasErrors, type QueueStatusFilter } from "@/lib/catalog-filters";
+import { filterQueue, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueStatusFilter, type QueueTriage } from "@/lib/catalog-filters";
 import { productLabel } from "@/lib/fees";
 import { listingProvenance } from "@/lib/provenance";
 import { chf } from "@/lib/format";
@@ -25,7 +25,7 @@ function vibrate(ms: number) {
   if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(ms);
 }
 
-export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offsiteAds: boolean }) {
+export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { listings: Listing[]; offsiteAds: boolean; initialTriage?: QueueTriage }) {
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Listing | null>(null);
   const [exit, setExit] = useState<{ id: number; dir: 1 | -1 } | null>(null);
@@ -33,12 +33,13 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
   const [query, setQuery] = useState("");
   const [niche, setNiche] = useState<"all" | Niche>("all");
   const [status, setStatus] = useState<QueueStatusFilter>("all");
+  const [triage, setTriage] = useState<QueueTriage>(initialTriage);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const startRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const remaining = listings.filter((l) => !hidden.has(l.id));
-  const visible = useMemo(() => filterQueue(remaining, { query, niche, status }), [remaining, query, niche, status]);
+  const visible = useMemo(() => filterQueue(remaining, { query, niche, status, triage }), [remaining, query, niche, status, triage]);
   const top = visible[0];
   const selectedVisible = visible.filter((l) => selected.has(l.id));
   const hasErrors = (l: Listing) => listingHasErrors(l.validation);
@@ -213,6 +214,7 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
     setQuery("");
     setNiche("all");
     setStatus("all");
+    setTriage("all");
   };
 
   return (
@@ -240,6 +242,11 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
           <QueueChip active={status === "ready"} onClick={() => setStatus("ready")} label="Ready" />
           <QueueChip active={status === "needs_fixes"} onClick={() => setStatus("needs_fixes")} label="Needs fixes" />
           <span className="ml-auto text-[11px] text-muted-foreground">{visible.length} shown</span>
+        </div>
+        <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
+          {QUEUE_TRIAGE.map((item) => (
+            <QueueChip key={item.id} active={triage === item.id} onClick={() => setTriage(item.id)} label={item.label} />
+          ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="secondary" className="h-9 rounded-xl px-3 text-xs" onClick={() => setSelected(new Set(visible.map((listing) => listing.id)))}>
@@ -394,6 +401,8 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                     <NicheTag niche={l.niche} /> {chf(l.priceChf)} · net {chf(l.netChf)}
                     {hasErrors(l) && <span className="text-destructive">· needs fixes</span>}
+                    {titleImageMismatch(l) && <span className="text-warning">· title/image mismatch</span>}
+                    {!l.etsyListingId && l.imageUrl && <span>· no Etsy id</span>}
                     {l.id === top.id && <span>· reviewing</span>}
                   </div>
                 </div>

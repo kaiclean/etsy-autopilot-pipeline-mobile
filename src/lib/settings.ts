@@ -35,6 +35,19 @@ export type EtsyTokens = {
   userId?: string;
 };
 
+/** Review flag for the committed catalog diff. Pending stays true until Kai marks it reviewed. */
+export type CatalogDraftSetting = {
+  pending: boolean;
+  reviewedByKai: boolean;
+  source: string;
+};
+
+export const DEFAULT_CATALOG_DRAFT: CatalogDraftSetting = {
+  pending: true,
+  reviewedByKai: false,
+  source: "Meridian + Listing package 2026-10-05",
+};
+
 export const DEFAULT_AUTOMATION: AutomationSettings = {
   killSwitch: false,
   dailyAiCapChf: 2,
@@ -64,6 +77,7 @@ type SettingMap = {
   stages: StageSettings;
   etsyTokens: EtsyTokens | null;
   pushPrefs: PushPrefs;
+  catalogDraft: CatalogDraftSetting;
 };
 
 const DEFAULTS: SettingMap = {
@@ -71,6 +85,7 @@ const DEFAULTS: SettingMap = {
   stages: DEFAULT_STAGES,
   etsyTokens: null,
   pushPrefs: DEFAULT_PUSH_PREFS,
+  catalogDraft: DEFAULT_CATALOG_DRAFT,
 };
 
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {

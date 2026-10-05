@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
-import { filterProducts, listingHasErrors } from "@/lib/catalog-filters";
+import { filterProducts, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueTriage } from "@/lib/catalog-filters";
 import { calculateFees, productLabel } from "@/lib/fees";
 import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
@@ -30,9 +30,10 @@ const FILTERS = [
   { id: "failed", label: "Failed" },
 ] as const;
 
-export function ProductsList({ listings }: { listings: Listing[] }) {
+export function ProductsList({ listings, initialTriage = "all" }: { listings: Listing[]; initialTriage?: QueueTriage }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
   const [niche, setNiche] = useState<"all" | Niche>("all");
+  const [triage, setTriage] = useState<QueueTriage>(initialTriage);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Listing | null>(null);
   const counts = useMemo(() => {
@@ -40,7 +41,7 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
     for (const l of listings) c[l.status] = (c[l.status] ?? 0) + 1;
     return c;
   }, [listings]);
-  const rows = filterProducts(listings, { query, niche, status: filter });
+  const rows = filterProducts(listings, { query, niche, status: filter, triage });
   const liveDrafts = listings.filter((l) => l.status === "published" && l.publishMode === "live").length;
   const invalid = listings.filter((l) => listingHasErrors(l.validation)).length;
 
@@ -82,6 +83,11 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
           <FilterChip key={item.id} active={niche === item.id} onClick={() => setNiche(item.id)} label={item.short} />
         ))}
       </div>
+      <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
+        {QUEUE_TRIAGE.map((item) => (
+          <FilterChip key={item.id} active={triage === item.id} onClick={() => setTriage(item.id)} label={item.label} />
+        ))}
+      </div>
       <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
         {FILTERS.map((f) => (
           <button
@@ -116,6 +122,7 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
                   <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
                   <NicheTag niche={l.niche} />
                 </div>
+                {titleImageMismatch(l) && <div className="mt-1 text-[11px] text-warning">Title/image mismatch · flag only</div>}
                 {listingHasErrors(l.validation) && (
                   <div className="mt-1 line-clamp-2 text-[11px] text-destructive">{l.validation.find((issue) => issue.severity === "error")?.message}</div>
                 )}
