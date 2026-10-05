@@ -168,7 +168,8 @@ export async function getOrders() {
     count30d: recent.length,
     revenue30d: recent.reduce((s, r) => s + r.order.totalChf, 0),
     profit30d: recent.reduce((s, r) => s + r.order.profitChf, 0),
-    openPod: rows.filter((r) => ["pending", "in_production", "shipped"].includes(r.order.fulfillmentStatus)).length,
+    openPod: rows.filter((r) => r.order.matchStatus !== "unmatched" && ["pending", "in_production", "shipped"].includes(r.order.fulfillmentStatus)).length,
+    unmatched: rows.filter((r) => r.order.matchStatus === "unmatched").length,
   };
   return { rows, summary };
 }

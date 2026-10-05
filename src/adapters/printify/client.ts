@@ -1,6 +1,7 @@
 import type { PodPreset } from "@/lib/fees";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
+import { externalEtsyIdFromProduct } from "@/lib/pod-etsy-id";
 import { localAssetPng } from "@/lib/png";
 import { LIVE_PROVIDER_PIN_ERROR } from "@/lib/publish-gates";
 import type { CatalogChoice } from "./catalog";
@@ -69,6 +70,20 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     });
   }
 
+  /** GET the product. Printify fills `external.id` only after Etsy accepts the publish. */
+  private async readExternalEtsyId(shopId: string, productId: string) {
+    const product = await this.request<unknown>(`/shops/${shopId}/products/${productId}.json`);
+    return externalEtsyIdFromProduct(product);
+  }
+
+  private async externalIdAfterPublish(shopId: string, productId: string) {
+    try {
+      return (await this.readExternalEtsyId(shopId, productId)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async createAndPublish(input: PrintifyProductInput) {
     const shopId = config.printify.shopId;
     if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
@@ -86,10 +101,12 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         const message = error instanceof Error ? error.message : String(error);
         throw new PrintifyPublishError(message, input.existingProductId);
       }
+      const externalEtsyId = await this.externalIdAfterPublish(shopId, input.existingProductId);
       return {
         productId: input.existingProductId,
         blueprintId: input.blueprintId,
         printProviderId: input.printProviderId,
+        ...(externalEtsyId ? { externalEtsyId } : {}),
       };
     }
     const choice = this.envChoice() ?? (input.preset ? await this.choiceFor(input.preset) : undefined);
@@ -113,6 +130,7 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         ],
       }),
     });
+    let externalEtsyId: string | undefined;
     if (input.publishToEtsy) {
       try {
         await this.publishProduct(shopId, product.id);
@@ -120,8 +138,29 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         const message = error instanceof Error ? error.message : String(error);
         throw new PrintifyPublishError(message, product.id);
       }
+      externalEtsyId = await this.externalIdAfterPublish(shopId, product.id);
     }
-    return { productId: product.id, blueprintId: choice.blueprintId, printProviderId: choice.printProviderId };
+    return {
+      productId: product.id,
+      blueprintId: choice.blueprintId,
+      printProviderId: choice.printProviderId,
+      ...(externalEtsyId ? { externalEtsyId } : {}),
+    };
+  }
+
+  async getExternalEtsyIds(productIds: string[]) {
+    const shopId = config.printify.shopId;
+    if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
+    const out: Record<string, string | null> = {};
+    for (const id of productIds) {
+      try {
+        out[id] = await this.readExternalEtsyId(shopId, id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[printify] could not read external id for ${id}: ${message}`);
+      }
+    }
+    return out;
   }
 
   async getOrderStatuses(podOrderIds: string[]) {

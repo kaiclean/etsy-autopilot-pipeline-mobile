@@ -171,6 +171,23 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
    The publish run **creates** the Printify product and stops. It does not call Printify `publish.json`. Publishing that product to Etsy is a per-listing button. It stays blocked until you record a physical sample for that blueprint id + print provider id (Products → the listing → Record sample). Live creation does not auto-pick a provider: `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID` and `PRINTIFY_VARIANT_IDS` are required, and they are the only blueprint that live products use. Order a sample of that pair before you record it.
 6. Point webhooks at `POST https://<your-domain>/api/webhooks/printify`. Create one webhook per topic (`order:created`, `order:updated`, `order:sent-to-production`, `order:shipment:created`, `order:shipment:delivered`, `product:publish:started`) with the same URL and `"secret": "<PRINTIFY_WEBHOOK_SECRET>"`. Printify signs the raw body as `sha256=<hmac>` in `x-pfy-signature`. The handler stores the event once, strips buyer contact fields, and when the ids match a local row it records the Etsy listing id and Printify order id. It does not call Printify or Etsy, so it is safe while `PUBLISH_MODE=dry-run`. Production rejects unsigned deliveries.
 
+The cron creates the Printify product and sets status `pod_created`. That row is not on Etsy yet, so the orders stage does not poll it and does not alert on it. **Publish to Etsy** is the human step. After Printify accepts that publish, the row becomes `publishing` (dashboard: “Awaiting Etsy id”) until `external.id` exists. The orders stage then polls `GET /v1/shops/{shop_id}/products/{product_id}.json` and writes that id; the webhook still does the same write. A numeric id promotes the row to `published`. Receipts for an Etsy listing id the pipeline does not know yet are stored as unmatched and linked when the id arrives. After 24 hours in `publishing` the orders stage emits `listing.awaiting_etsy_id` once per listing (also a push when failed-job notifications are on). The wait starts at `pod_published_at`.
+
+No new environment variables. The poll and the backfill fetch use `PRINTIFY_API_TOKEN` and `PRINTIFY_SHOP_ID`. `PRINTIFY_WEBHOOK_SECRET` is still only for the webhook.
+
+Backfill (migration `0003` does the same status rewrite on startup):
+
+- legacy `published` POD rows with a null Etsy id become `publishing`
+- `pod_created` rows that already have `pod_published_at` and a null Etsy id become `publishing`
+- `pod_created` rows that have not been sent to Etsy stay `pod_created`
+
+```bash
+npm run backfill:etsy-ids                 # status only, no network
+npm run backfill:etsy-ids -- --fetch      # GET each Printify product; does not publish
+```
+
+`--fetch` refuses to run unless both Printify variables are set.
+
 ### Web Push
 
 The service worker already shows `{ title, body, url }` payloads. To deliver them while the PWA is closed:
