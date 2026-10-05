@@ -4,6 +4,7 @@ import { config, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
+import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import type { StageFn } from "./types";
@@ -13,7 +14,7 @@ const TRENDS_LOOKUPS_PER_RUN = 5;
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const candidates: KeywordCandidate[] = [];
-  for (const source of [etsyInsightsSource, ...KEYWORD_SOURCES]) {
+  for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect();
       log(`Source ${source.name}: ${found.length} candidates`);

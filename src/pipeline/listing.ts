@@ -3,6 +3,7 @@ import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
+import { alignDeliveryCopy } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
@@ -61,7 +62,7 @@ export async function draftListing(opts: {
   const draft = sanitizeDraft({
     title: copy.title,
     tags: copy.tags,
-    description: withDisclosures(copy.body, opts.product.type),
+    description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type), opts.product.type),
     priceChf,
     productType: opts.product.type,
   });

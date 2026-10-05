@@ -5,8 +5,9 @@ import { NICHE_LIST, normalizeEtsyVolume } from "@/lib/niches";
 import type { KeywordCandidate } from "./sources";
 
 /**
- * One row of Etsy demand: Marketplace Insights search volume, or a public search count.
- * Live scraping is unreliable in CI, so sources are pluggable and may return a fixture.
+ * Operator-supplied Etsy demand (a Marketplace Insights export or the committed fixture).
+ * Do not scrape etsy.com search or autocomplete. Measured competition belongs on the
+ * official Open API v3 client in etsy-api.ts.
  */
 export type EtsyDemandSignal = {
   phrase: string;
@@ -90,11 +91,16 @@ export function preferMeasuredDemand(candidates: KeywordCandidate[]): KeywordCan
       byPhrase.set(key, candidate);
       continue;
     }
-    const nextMeasured = candidate.searchVolume != null;
-    const prevMeasured = prev.searchVolume != null;
-    if (nextMeasured && (!prevMeasured || (candidate.searchVolume ?? 0) > (prev.searchVolume ?? 0))) {
-      byPhrase.set(key, candidate);
+    let next = prev;
+    const nextVolume = candidate.searchVolume != null;
+    const prevVolume = prev.searchVolume != null;
+    if (nextVolume && (!prevVolume || (candidate.searchVolume ?? 0) >= (prev.searchVolume ?? 0))) next = candidate;
+    const measured = candidate.competitionMeasured ? candidate : prev.competitionMeasured ? prev : undefined;
+    if (measured) {
+      const source = next.source.includes("etsy-api-v3") ? next.source : `${next.source}+etsy-api-v3`;
+      next = { ...next, competition: measured.competition, competitionMeasured: true, source };
     }
+    byPhrase.set(key, next);
   }
   return [...byPhrase.values()];
 }

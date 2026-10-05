@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { MockLLMProvider } from "@/adapters/llm/mock";
+import { alignDeliveryCopy } from "@/lib/delivery";
 import { normalizeEtsyVolume, scoreKeyword } from "@/lib/niches";
 import { localAssetPng, podMockupPng } from "@/lib/png";
+import { assertOfficialEtsyApi, createEtsyApiCompetitionSource } from "@/pipeline/etsy-api";
 import { parseEtsyInsights, preferMeasuredDemand, signalToCandidate } from "@/pipeline/etsy-demand";
 import { listingImageForProduct, printArtworkUrl } from "@/pipeline/mockup";
 import type { KeywordCandidate } from "@/pipeline/sources";
@@ -73,5 +76,69 @@ swiss alps wall art,100,0.45,alpine
     expect(withVolume).toBe(fromVolume);
     expect(withVolume).not.toBe(trendsOnly);
     expect(normalizeEtsyVolume(10000)).toBe(0.8);
+  });
+
+  it("keeps seed demand and overlays official API competition", () => {
+    const [row] = preferMeasuredDemand([
+      { phrase: "cozy christmas mug", niche: "christmas", source: "seed-list", demand: 0.76, competition: 0.2 },
+      {
+        phrase: "cozy christmas mug",
+        niche: "christmas",
+        source: "etsy-api-v3",
+        demand: 0.5,
+        competition: 0.9,
+        competitionMeasured: true,
+      },
+    ]);
+    expect(row.demand).toBe(0.76);
+    expect(row.competition).toBe(0.9);
+    expect(row.source).toBe("seed-list+etsy-api-v3");
+  });
+
+  it("reads listing counts from openapi.etsy.com and rejects etsy.com scraping", async () => {
+    expect(() => assertOfficialEtsyApi("https://www.etsy.com/search?q=mug")).toThrow(/openapi\.etsy\.com/);
+    expect(() => assertOfficialEtsyApi("https://www.etsy.com/api/v3/ajax/bespoke/member/neu/specs/async_search")).toThrow(/Scraping/);
+    const source = createEtsyApiCompetitionSource({
+      enabled: true,
+      apiKey: "key:secret",
+      phrases: [{ phrase: "cozy christmas mug", niche: "christmas" }],
+      fetchImpl: async (input) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        expect(new URL(url).hostname).toBe("openapi.etsy.com");
+        expect(url).toContain("/v3/application/listings/active");
+        expect(url).not.toContain("www.etsy.com");
+        return new Response(JSON.stringify({ count: 1200 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+    const [row] = await source.collect();
+    expect(row.competitionMeasured).toBe(true);
+    expect(row.competition).toBe(normalizeEtsyVolume(1200));
+    expect(row.searchVolume).toBeUndefined();
+  });
+});
+
+describe("digital delivery copy", () => {
+  it("describes the single PNG the shop uploads", async () => {
+    const copy = await new MockLLMProvider().writeListing({
+      keyword: "swiss alps wall art",
+      niche: "alpine",
+      productType: "digital",
+      seed: 1,
+    });
+    expect(copy.body).toContain("One PNG of this artwork");
+    expect(copy.body).not.toMatch(/300\s*dpi/i);
+    expect(copy.body).not.toMatch(/2:3/);
+    expect(copy.body).not.toMatch(/11x14/i);
+  });
+
+  it("strips a model that promises a multi-ratio 300 DPI pack", () => {
+    const body = alignDeliveryCopy(
+      "A calm alpine print.\n\nWHAT YOU GET\n• High-resolution files (300 DPI)\n• Sizes: 2:3, 3:4, 4:5, ISO A-series, 11x14\n• Editable Canva template",
+      "digital",
+    );
+    expect(body).not.toMatch(/300\s*dpi/i);
+    expect(body).not.toMatch(/2:3|canva|11x14/i);
+    expect(body).toContain("One PNG of this artwork");
+    expect(alignDeliveryCopy("Printed by our partner.", "pod")).toBe("Printed by our partner.");
   });
 });

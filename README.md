@@ -69,7 +69,7 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 
 | Stage | Real today | Mock / dry-run fallback |
 | --- | --- | --- |
-| Research | Seed list from the plan plus long-tail expansion, `KEYWORD_SEEDS`, and a pluggable Etsy demand source (`ETSY_INSIGHTS_CSV`, `ETSY_INSIGHTS_PATH`, or `ETSY_DEMAND_SOURCE=fixture`). Measured search volume replaces seed demand. Google Trends (unofficial) is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is rate-limited and no Etsy export is configured |
+| Research | Seed list, local long-tail modifiers, and `KEYWORD_SEEDS`. Etsy search volume comes from an operator CSV or `ETSY_DEMAND_SOURCE=fixture` (no etsy.com scraping). `ETSY_API_COMPETITION=true` reads listing counts from Open API v3. Google Trends is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is blocked and no export is configured |
 | Design | Higgsfield / OpenAI Images / Replicate adapters, capped by the daily and monthly AI budget | Niche-themed SVG placeholder art stamped "MOCK ART" |
 | Listing | OpenAI JSON writer, then sanitize, validate, and price with the fee engine | Deterministic niche templates |
 | Approval | Always a human gate: swipe, edit inline, undo | — |
@@ -90,6 +90,8 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 - **Digital downloads** target **75%** or more. Niche floors still apply. Offsite Ads makes 75% unreachable (fees approach ~26%), so those prices stay on the floor instead of the cap.
 
 Before this change a global 55% target, with Offsite Ads on, solved near CHF 54 (mug) and CHF 74 (poster) and then clamped to the band max: mugs CHF 49.90 and gothic posters CHF 44.90. At the 30% default, the same products land in the competitive bands (mug about CHF 15–25, poster about CHF 18–33). Covered in `tests/fees.test.ts`.
+
+Digital publish uploads **one PNG**. Listing copy says that. It does not promise a 300 DPI pack in 2:3, 3:4, 4:5, 11x14, and ISO A, or an editable template. Those exports are not generated yet. POD queue images use a template mockup at `/api/mockup/{preset}`; the print file stays the design artwork.
 
 ### Listing validator
 
