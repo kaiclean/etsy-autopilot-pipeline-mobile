@@ -40,7 +40,7 @@ export async function countListingsMissingEtsyId(db: DB) {
 export function railwayDeploySha(
   env: { RAILWAY_GIT_COMMIT_SHA?: string; RAILWAY_DEPLOYMENT_ID?: string; [key: string]: string | undefined } = process.env,
 ): string | null {
-  const sha = env.RAILWAY_GIT_COMMIT_SHA?.trim() || env.RAILWAY_DEPLOYMENT_ID?.trim();
+  const sha = env.RAILWAY_GIT_COMMIT_SHA?.trim();
   return sha || null;
 }
 
@@ -80,8 +80,8 @@ export function buildCockpitAlerts(input: {
     alerts.push({
       id: "cron-401",
       severity: "blocker",
-      title: "Cron returned 401",
-      evidence: `${unauthorized.stage} cron failed with unauthorized / 401. ${unauthorized.summary ?? "No summary stored."}`,
+      title: "Cron stage reported unauthorized / 401",
+      evidence: `${unauthorized.stage} recorded an authorization error during execution, not at the cron endpoint. ${unauthorized.summary ?? "No summary stored."}`,
       href: "/connections#cron",
       hrefLabel: "Open cron",
     });
@@ -90,7 +90,7 @@ export function buildCockpitAlerts(input: {
       id: "cron-secret",
       severity: "watch",
       title: "Cron run failed",
-      evidence: `Verify GitHub Actions CRON_SECRET matches Railway. Last failed cron stage: ${failed.stage}.`,
+      evidence: `Last failed cron stage: ${failed.stage}. Inspect the run logs; endpoint CRON_SECRET failures are not recorded as job runs.`,
       href: "/connections#cron",
       hrefLabel: "Open cron",
     });
@@ -112,8 +112,8 @@ export function buildCockpitAlerts(input: {
     alerts.push({
       id: "deploy-pin",
       severity: "info",
-      title: "Railway deploy is pinned",
-      evidence: `Pinned to ${short}; main merges may not deploy.`,
+      title: "Railway deployed commit",
+      evidence: `Running commit ${short}. Commit metadata alone does not indicate whether automatic deploys are enabled.`,
       href: "/connections#deploy",
       hrefLabel: "Open deploy pin",
     });

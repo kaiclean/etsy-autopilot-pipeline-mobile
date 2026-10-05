@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/common";
-import { CATALOG_DRAFT_SUMMARY, readCatalogDraftMarkdown } from "@/lib/catalog-draft";
+import { CATALOG_DRAFT_SUMMARY } from "@/lib/catalog-draft";
+import { readCatalogDraftMarkdown } from "@/lib/catalog-draft-document";
 
 export const metadata = { title: "Catalog diff" };
 
