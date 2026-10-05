@@ -1,4 +1,5 @@
 import type { Niche } from "@/db/schema";
+import { DIGITAL_FILE_BLURB } from "@/lib/delivery";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
 const title = (s: string) => s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
@@ -44,9 +45,9 @@ const NICHE_COPY: Record<Niche, { hooks: string[]; tags: string[]; body: string 
     tags: [
       "birthday invitation", "editable invite", "kids party invite", "printable invite", "instant download",
       "first birthday", "silly goose party", "girl birthday", "boy birthday", "party template",
-      "corjl template", "evite digital", "pastel invitation", "phone invitation", "diy invitation",
+      "party invite file", "evite digital", "pastel invitation", "phone invitation", "diy invitation",
     ],
-    body: "Edit the text in your browser, then print at home or send it by text. Includes a 5x7 printable version and a phone-sized evite. Fonts and colors are fully editable.",
+    body: "A playful birthday invitation artwork in a pastel palette. The download is the single PNG described below, ready to print or share as an image.",
   },
   stream: {
     hooks: ["Neon Stream Overlay Package", "Cute Emote And Overlay Pack", "Pastel Streamer Asset Bundle"],
@@ -55,7 +56,7 @@ const NICHE_COPY: Record<Niche, { hooks: string[]; tags: string[]; body: string 
       "neon overlay", "obs overlay", "gaming overlay", "webcam frame", "stream alerts",
       "cute emotes", "streamer gift", "starting soon", "animated overlay", "kick overlay",
     ],
-    body: "A ready-to-use streaming package: webcam frame, starting soon, BRB and ending screens, panels and alert graphics. Transparent PNGs that drop straight into OBS or Streamlabs.",
+    body: "A neon streaming graphic in purple and cyan. The download is one PNG you can place in OBS or Streamlabs as a single overlay image.",
   },
 };
 
@@ -96,7 +97,7 @@ export class MockLLMProvider implements LLMProvider {
 
     const what =
       brief.productType === "digital"
-        ? "WHAT YOU GET\n• High-resolution files (300 DPI)\n• Sizes: 2:3, 3:4, 4:5, ISO A-series, 11x14\n• Instant download after purchase"
+        ? DIGITAL_FILE_BLURB
         : "DETAILS\n• Premium print, made to order\n• Printed and shipped by our production partner\n• Colors may vary slightly between screens";
     return {
       title: t,

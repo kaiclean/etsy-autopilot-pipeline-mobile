@@ -1,6 +1,6 @@
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
-import { placeholderPng } from "@/lib/png";
+import { localAssetPng } from "@/lib/png";
 import type { EtsyTokens } from "@/lib/settings";
 import { refreshTokens } from "./oauth";
 import type { EtsyAdapter, EtsyDraftInput, EtsyReceipt } from "./types";
@@ -77,7 +77,7 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   /** Own placeholder art is rendered here. Fetching it through the public tunnel throws "fetch failed". */
   private async fetchBlob(url: string) {
-    const png = placeholderPng(url);
+    const png = localAssetPng(url);
     if (png) return new Blob([new Uint8Array(png)], { type: "image/png" });
     let res: Response;
     try {

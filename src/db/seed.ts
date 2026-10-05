@@ -6,6 +6,7 @@ import { dayKey } from "@/lib/format";
 import { NICHE_LIST, scoreKeyword, seasonality } from "@/lib/niches";
 import { buildPrompt } from "@/pipeline/design";
 import { draftListing, pickProduct } from "@/pipeline/listing";
+import { listingImageForProduct } from "@/pipeline/mockup";
 import type { DB } from "./index";
 import { costs, dailyStats, designs, events, jobRuns, keywords, listings, orders, type ListingStatus } from "./schema";
 
@@ -104,7 +105,6 @@ export async function seedDemo(db: DB, now = new Date()) {
       keyword: kw.phrase,
       product,
       seed: i,
-      targetMarginPct: 55,
       assumeOffsiteAds: false,
       llm,
     });
@@ -130,7 +130,14 @@ export async function seedDemo(db: DB, now = new Date()) {
         title,
         tags: draft.tags,
         description: draft.description,
-        imageUrl: design.imageUrl,
+        imageUrl: (
+          await listingImageForProduct({
+            productType: product.type,
+            artworkUrl: design.imageUrl,
+            preset: product.pod,
+            niche: kw.niche,
+          })
+        ).url,
         priceChf: draft.priceChf,
         podCostChf: pod,
         netChf: fees.netChf,

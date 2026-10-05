@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { calculateFees, FEES, podCostChf, retailRound, suggestPrice, usdToChf } from "@/lib/fees";
+import { calculateFees, FEES, MARGIN_TARGETS, POD_PRESETS, podCostChf, resolveTargetMargin, retailRound, retailRoundDown, suggestPrice, usdToChf, type PodPreset } from "@/lib/fees";
+import { NICHES } from "@/lib/niches";
+import type { Niche } from "@/db/schema";
 
 describe("calculateFees: business plan §6 worked examples", () => {
   it("A. digital printable at CHF 8.00 nets CHF 6.37 (79.7%)", () => {
@@ -93,6 +95,99 @@ describe("suggestPrice", () => {
     expect(retailRound(7.2)).toBe(7.9);
     expect(retailRound(7.9)).toBe(7.9);
     expect(retailRound(7.95)).toBe(8.9);
+  });
+
+  it("retailRoundDown snaps toward the market .90", () => {
+    expect(retailRoundDown(19.9)).toBe(19.9);
+    expect(retailRoundDown(20)).toBe(19.9);
+    expect(retailRoundDown(20.4)).toBe(19.9);
+    expect(retailRoundDown(24.9)).toBe(24.9);
+  });
+});
+
+function shopPrice(preset: PodPreset, niche: Niche, offsiteAds = false) {
+  const band = NICHES[niche].priceBand.pod;
+  return suggestPrice({
+    targetMarginPct: resolveTargetMargin("pod", MARGIN_TARGETS.podDefault),
+    podCostChf: podCostChf(preset),
+    offsiteAds,
+    minChf: band[0] || undefined,
+    maxChf: band[1] || undefined,
+    competitorChf: POD_PRESETS[preset].marketAnchorChf,
+    productType: "pod",
+  });
+}
+
+describe("competitive CHF pricing", () => {
+  it("keeps POD margins in the 25–35 band and digital at 75%+", () => {
+    expect(resolveTargetMargin("pod", undefined)).toBe(30);
+    expect(resolveTargetMargin("pod", 55)).toBe(35);
+    expect(resolveTargetMargin("pod", 10)).toBe(25);
+    expect(resolveTargetMargin("digital", undefined)).toBe(75);
+    expect(resolveTargetMargin("digital", 40)).toBe(75);
+  });
+
+  it("prices a Christmas mug in the competitive CHF 15–25 band, not the CHF 49.90 cap", () => {
+    for (const offsite of [false, true]) {
+      const price = shopPrice("mug", "christmas", offsite);
+      expect(price).toBeGreaterThanOrEqual(15);
+      expect(price).toBeLessThanOrEqual(25);
+      expect(price).not.toBe(49.9);
+      expect(Math.round(price * 100) % 100).toBe(90);
+    }
+  });
+
+  it("prices A3 posters in the competitive CHF 18–33 band, not niche ceilings", () => {
+    for (const niche of ["alpine", "gothic", "christmas"] as const) {
+      for (const offsite of [false, true]) {
+        const price = shopPrice("posterA3", niche, offsite);
+        expect(price).toBeGreaterThanOrEqual(18);
+        expect(price).toBeLessThanOrEqual(33);
+        expect(price).not.toBe(NICHES[niche].priceBand.pod[1]);
+      }
+    }
+  });
+
+  it("rounds a 55% Offsite Ads quote down to the mug anchor instead of the ceiling", () => {
+    const price = suggestPrice({
+      targetMarginPct: 55,
+      podCostChf: podCostChf("mug"),
+      offsiteAds: true,
+      minChf: 19.9,
+      maxChf: 49.9,
+      competitorChf: 21.4,
+      productType: "pod",
+    });
+    expect(price).toBe(20.9);
+    expect(price).not.toBe(49.9);
+  });
+
+  it("keeps digital downloads profitable at or above the niche floor", () => {
+    for (const niche of ["alpine", "gothic", "christmas", "birthday", "stream"] as const) {
+      const band = NICHES[niche].priceBand.digital;
+      const price = suggestPrice({
+        targetMarginPct: resolveTargetMargin("digital", MARGIN_TARGETS.digitalDefault),
+        productType: "digital",
+        minChf: band[0],
+        maxChf: band[1],
+      });
+      expect(price).toBeGreaterThanOrEqual(band[0]);
+      expect(price).toBeLessThanOrEqual(band[1]);
+      expect(price).not.toBe(band[1]);
+      expect(calculateFees({ priceChf: price }).marginPct).toBeGreaterThanOrEqual(75);
+    }
+  });
+
+  it("does not climb digital prices to the cap when Offsite Ads makes 75% unreachable", () => {
+    const price = suggestPrice({
+      targetMarginPct: 75,
+      productType: "digital",
+      offsiteAds: true,
+      minChf: 4.9,
+      maxChf: 19.9,
+    });
+    expect(price).toBe(4.9);
+    expect(calculateFees({ priceChf: price, offsiteAds: true }).netChf).toBeGreaterThan(0);
   });
 });
 

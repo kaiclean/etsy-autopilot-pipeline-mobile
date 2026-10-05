@@ -7,9 +7,16 @@ export type KeywordCandidate = {
   source: string;
   demand: number;
   competition: number;
+  /** Raw Etsy search volume from an operator CSV or fixture. Never scraped from etsy.com. */
+  searchVolume?: number;
+  /** True when `competition` came from the official Open API v3 listing count. */
+  competitionMeasured?: boolean;
 };
 
-/** A pluggable keyword source. Add eRank / Etsy autocomplete / Marketplace Insights exports here. */
+/**
+ * A pluggable keyword source. Seed lists, long-tail expansion, env seeds, and Etsy
+ * Marketplace Insights exports (see etsy-demand.ts) all implement this.
+ */
 export interface KeywordSource {
   readonly name: string;
   collect(): Promise<KeywordCandidate[]>;
@@ -52,7 +59,8 @@ const LONG_TAIL: Record<Niche, string[]> = {
 };
 
 /**
- * Long-tail expansion (Etsy-autocomplete style): seed phrase + modifier.
+ * Local long-tail expansion: seed phrase plus a modifier.
+ * This does not call Etsy autocomplete or scrape etsy.com.
  * Long-tail phrases get slightly lower demand and noticeably lower competition, per eRank guidance.
  */
 export const longTailSource: KeywordSource = {

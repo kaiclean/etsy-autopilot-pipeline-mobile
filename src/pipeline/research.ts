@@ -2,8 +2,10 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { keywords } from "@/db/schema";
 import { config, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { scoreKeyword, seasonality } from "@/lib/niches";
+import { normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
+import { etsyApiCompetitionSource } from "./etsy-api";
+import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import type { StageFn } from "./types";
 
@@ -12,7 +14,7 @@ const TRENDS_LOOKUPS_PER_RUN = 5;
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const candidates: KeywordCandidate[] = [];
-  for (const source of KEYWORD_SOURCES) {
+  for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect();
       log(`Source ${source.name}: ${found.length} candidates`);
@@ -41,17 +43,25 @@ export const runResearch: StageFn = async (ctx) => {
   }
 
   let upserted = 0;
-  for (const c of candidates) {
+  for (const c of preferMeasuredDemand(candidates)) {
     const season = seasonality(c.niche, ctx.now);
-    const trend = trends.get(c.phrase) ?? null;
-    const score = scoreKeyword({ demand: c.demand, competition: c.competition, seasonality: season, trend });
+    const measured = c.searchVolume != null;
+    const trend = measured ? null : (trends.get(c.phrase) ?? null);
+    const demand = measured ? normalizeEtsyVolume(c.searchVolume ?? 0) : c.demand;
+    const score = scoreKeyword({
+      demand,
+      competition: c.competition,
+      seasonality: season,
+      trend,
+      searchVolume: c.searchVolume,
+    });
     await db
       .insert(keywords)
       .values({
         phrase: c.phrase,
         niche: c.niche,
         source: trend != null ? `${c.source}+google-trends` : c.source,
-        demandScore: c.demand,
+        demandScore: demand,
         competitionScore: c.competition,
         seasonalityScore: season,
         trendScore: trend,
@@ -65,6 +75,9 @@ export const runResearch: StageFn = async (ctx) => {
           score,
           updatedAt: ctx.now,
           ...(trend != null ? { trendScore: trend } : {}),
+          ...(measured
+            ? { demandScore: demand, competitionScore: c.competition, source: c.source, niche: c.niche }
+            : {}),
         },
       });
     upserted++;

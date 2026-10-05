@@ -16,6 +16,7 @@ export class OpenAILLMProvider implements LLMProvider {
       `Title: max ${ETSY_LIMITS.titleMax} characters, front-load the main keyword, no more than 3 ALL-CAPS words, use each of % : & at most once.`,
       `Tags: exactly ${ETSY_LIMITS.tagCount} lowercase tags, each at most ${ETSY_LIMITS.tagMax} characters, letters/numbers/spaces only, no duplicates.`,
       "Body: 2 short paragraphs plus a bullet list of what the buyer gets. Do NOT include AI or production disclosures (they are appended automatically).",
+      "Digital downloads ship as one PNG. Do not mention 300 DPI, print ratios (2:3, 3:4, 4:5, 11x14, ISO A), ZIP or PDF bundles, or editable Canva or Corjl templates.",
       "Never use trademarked brands or characters.",
     ].join("\n");
     const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}`;

@@ -53,12 +53,29 @@ export function KillSwitchCard({ on }: { on: boolean }) {
   );
 }
 
-type NumKey = "dailyAiCapChf" | "monthlyAiBudgetChf" | "dailyAdsCapChf" | "targetMarginPct" | "designsPerRun";
-const FIELDS: { key: NumKey; label: string; hint: string; suffix: string; step: string }[] = [
+type NumKey = "dailyAiCapChf" | "monthlyAiBudgetChf" | "dailyAdsCapChf" | "podTargetMarginPct" | "digitalTargetMarginPct" | "designsPerRun";
+const FIELDS: { key: NumKey; label: string; hint: string; suffix: string; step: string; min?: number; max?: number }[] = [
   { key: "dailyAiCapChf", label: "Daily AI spend cap", hint: "Design stage stops when reached", suffix: "CHF", step: "0.5" },
   { key: "monthlyAiBudgetChf", label: "Monthly AI budget", hint: "Hard stop for image + text generation", suffix: "CHF", step: "1" },
   { key: "dailyAdsCapChf", label: "Etsy Ads daily budget", hint: "Tracked here; set the same value in Etsy", suffix: "CHF", step: "0.01" },
-  { key: "targetMarginPct", label: "Target net margin", hint: "Used for price suggestions", suffix: "%", step: "1" },
+  {
+    key: "podTargetMarginPct",
+    label: "POD target margin",
+    hint: "25–35% for mugs, posters, and apparel. Prices round down toward competitor CHF, not the niche cap.",
+    suffix: "%",
+    step: "1",
+    min: 25,
+    max: 35,
+  },
+  {
+    key: "digitalTargetMarginPct",
+    label: "Digital target margin",
+    hint: "Downloads stay at 75% or more. Niche floors still apply when the formula is lower.",
+    suffix: "%",
+    step: "1",
+    min: 75,
+    max: 85,
+  },
   { key: "designsPerRun", label: "Designs per run", hint: "Keywords picked per Research/Design run", suffix: "", step: "1" },
 ];
 
@@ -83,7 +100,8 @@ export function BudgetsForm({ automation }: { automation: AutomationSettings }) 
               inputMode="decimal"
               type="number"
               step={f.step}
-              min={0}
+              min={f.min ?? 0}
+              max={f.max}
               value={values[f.key]}
               onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
               className={cn("tabular h-10 rounded-xl text-right", f.suffix && "pr-11")}

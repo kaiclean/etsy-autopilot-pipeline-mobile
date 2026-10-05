@@ -1,0 +1,12 @@
+# Fixture Etsy demand for Designed by Kai. Not live Marketplace Insights.
+# Enable with ETSY_DEMAND_SOURCE=fixture or point ETSY_INSIGHTS_PATH at a real export.
+# keyword,search_volume,competition,niche
+keyword,search_volume,competition,niche
+cozy christmas mug,8400,0.62,christmas
+alpine christmas print,1200,0.28,christmas
+moody botanical art,3100,0.42,gothic
+gothic floral shirt,5600,0.55,gothic
+swiss alps wall art,2200,0.45,alpine
+matterhorn print,1800,0.38,alpine
+one silly goose birthday,4100,0.25,birthday
+animated stream overlay,2700,0.58,stream

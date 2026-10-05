@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
 import { settings } from "@/db/schema";
 import type { StageName } from "@/db/schema";
+import { MARGIN_TARGETS } from "@/lib/fees";
 import { DEFAULT_PUSH_PREFS, type PushPrefs } from "@/lib/push-prefs";
 
 export type AutomationSettings = {
@@ -10,7 +11,15 @@ export type AutomationSettings = {
   monthlyAiBudgetChf: number;
   dailyAdsCapChf: number;
   adsEnabled: boolean;
+  /**
+   * Legacy single margin. Pricing ignores this and uses the per-type fields below,
+   * so an old stored 55 does not push POD back onto niche ceilings.
+   */
   targetMarginPct: number;
+  /** Print-on-demand net margin. Default 30, clamped to 25–35. */
+  podTargetMarginPct: number;
+  /** Digital download net margin. Default 75, clamped to 75–85. */
+  digitalTargetMarginPct: number;
   designsPerRun: number;
   assumeOffsiteAds: boolean;
   /** Runtime publish switch. Defaults to dry-run. Live is stored only after the confirm gate. */
@@ -32,7 +41,9 @@ export const DEFAULT_AUTOMATION: AutomationSettings = {
   monthlyAiBudgetChf: 25,
   dailyAdsCapChf: 0.83,
   adsEnabled: false,
-  targetMarginPct: 55,
+  targetMarginPct: MARGIN_TARGETS.podDefault,
+  podTargetMarginPct: MARGIN_TARGETS.podDefault,
+  digitalTargetMarginPct: MARGIN_TARGETS.digitalDefault,
   designsPerRun: 3,
   assumeOffsiteAds: false,
   publishMode: "dry-run",
