@@ -3,7 +3,7 @@ import { getImageProvider } from "@/adapters/image";
 import { costs, designs, keywords } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { NICHES } from "@/lib/niches";
+import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
 import type { StageFn } from "./types";
 
@@ -16,7 +16,7 @@ export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
 }
 
 export function buildPrompt(phrase: string, style: string) {
-  return `${style}. Subject: ${phrase}. Original composition, print-ready, high detail, no text, no logos, no brand names, no trademarked characters.`;
+  return `${style}. Subject: ${phrase}. Original composition, high detail, opaque background, not transparent, no text, no lettering, no logos, no brand names, no trademarked characters.`;
 }
 
 export const runDesign: StageFn = async (ctx) => {
@@ -52,6 +52,11 @@ export const runDesign: StageFn = async (ctx) => {
     if (spentMonth + provider.estimatedCostChf > automation.monthlyAiBudgetChf) {
       log(`Monthly AI budget reached (CHF ${automation.monthlyAiBudgetChf}); stopping`, "warn");
       break;
+    }
+    if (isNichePaused(kw.niche)) {
+      await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      log(`Skipped “${kw.phrase}”: ${NICHES[kw.niche].pausedReason}`, "warn");
+      continue;
     }
     const niche = NICHES[kw.niche];
     const prompt = buildPrompt(kw.phrase, niche.style);

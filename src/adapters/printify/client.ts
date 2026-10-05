@@ -2,7 +2,8 @@ import type { PodPreset } from "@/lib/fees";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
 import { localAssetPng } from "@/lib/png";
-import { blueprintRows, pickBlueprint, pickProvider, pickVariantIds, providerRows, variantRows, type CatalogChoice } from "./catalog";
+import { LIVE_PROVIDER_PIN_ERROR } from "@/lib/publish-gates";
+import type { CatalogChoice } from "./catalog";
 import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from "./types";
 
 const API = "https://api.printify.com/v1";
@@ -19,8 +20,6 @@ export class PrintifyPublishError extends Error {
 
 export class PrintifyLiveClient implements PrintifyAdapter {
   readonly mode = "live" as const;
-  private blueprints: ReturnType<typeof blueprintRows> | null = null;
-  private choices = new Map<PodPreset, CatalogChoice>();
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const method = init.method ?? "GET";
@@ -50,23 +49,9 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     return { blueprintId, printProviderId, variantIds };
   }
 
+  /** Catalog scoring stays in catalog.ts. Live creation never calls pickProvider. */
   private async choiceFor(preset: PodPreset): Promise<CatalogChoice> {
-    const cached = this.choices.get(preset);
-    if (cached) return cached;
-    if (!this.blueprints) this.blueprints = blueprintRows(await this.request<unknown>("/catalog/blueprints.json"));
-    const blueprint = pickBlueprint(preset, this.blueprints);
-    if (!blueprint) throw new Error(`Printify catalog has no ${preset} product. Set PRINTIFY_BLUEPRINT_ID, PRINTIFY_PRINT_PROVIDER_ID and PRINTIFY_VARIANT_IDS to override.`);
-    const providers = providerRows(await this.request<unknown>(`/catalog/blueprints/${blueprint.id}/print_providers.json`));
-    const provider = pickProvider(providers);
-    if (!provider) throw new Error(`Printify blueprint ${blueprint.id} (${blueprint.title}) has no print provider.`);
-    const variants = variantRows(
-      await this.request<unknown>(`/catalog/blueprints/${blueprint.id}/print_providers/${provider.id}/variants.json`),
-    );
-    const variantIds = pickVariantIds(preset, variants);
-    if (variantIds.length === 0) throw new Error(`Printify blueprint ${blueprint.id} / provider ${provider.id} has no ${preset} variant.`);
-    const choice = { blueprintId: blueprint.id, printProviderId: provider.id, variantIds };
-    this.choices.set(preset, choice);
-    return choice;
+    throw new Error(`${LIVE_PROVIDER_PIN_ERROR} Blocked preset: ${preset}.`);
   }
 
   private async uploadDesign(imageUrl: string) {
@@ -88,13 +73,24 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     const shopId = config.printify.shopId;
     if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
     if (input.existingProductId) {
+      if (!input.publishToEtsy) {
+        return {
+          productId: input.existingProductId,
+          blueprintId: input.blueprintId,
+          printProviderId: input.printProviderId,
+        };
+      }
       try {
         await this.publishProduct(shopId, input.existingProductId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new PrintifyPublishError(message, input.existingProductId);
       }
-      return { productId: input.existingProductId };
+      return {
+        productId: input.existingProductId,
+        blueprintId: input.blueprintId,
+        printProviderId: input.printProviderId,
+      };
     }
     const choice = this.envChoice() ?? (input.preset ? await this.choiceFor(input.preset) : undefined);
     if (!choice) throw new Error("POD listing is missing its Printify preset");
@@ -117,13 +113,15 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         ],
       }),
     });
-    try {
-      await this.publishProduct(shopId, product.id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new PrintifyPublishError(message, product.id);
+    if (input.publishToEtsy) {
+      try {
+        await this.publishProduct(shopId, product.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new PrintifyPublishError(message, product.id);
+      }
     }
-    return { productId: product.id };
+    return { productId: product.id, blueprintId: choice.blueprintId, printProviderId: choice.printProviderId };
   }
 
   async getOrderStatuses(podOrderIds: string[]) {

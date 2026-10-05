@@ -3,7 +3,8 @@ import { MockLLMProvider } from "@/adapters/llm/mock";
 import { isDemoMode } from "@/lib/config";
 import { calculateFees, FEES, round2 } from "@/lib/fees";
 import { dayKey } from "@/lib/format";
-import { NICHE_LIST, scoreKeyword, seasonality } from "@/lib/niches";
+import { tryBuildFileManifest } from "@/lib/file-manifest";
+import { isNichePaused, NICHE_LIST, scoreKeyword, seasonality } from "@/lib/niches";
 import { buildPrompt } from "@/pipeline/design";
 import { draftListing, pickProduct } from "@/pipeline/listing";
 import { listingImageForProduct } from "@/pipeline/mockup";
@@ -62,12 +63,13 @@ export async function seedDemo(db: DB, now = new Date()) {
         competitionScore: s.competition,
         seasonalityScore: season,
         score: scoreKeyword({ demand: s.demand, competition: s.competition, seasonality: season }),
+        status: n.pausedReason ? ("rejected" as const) : ("new" as const),
         isDemo: true,
         createdAt: ago(28),
       });
     }
   }
-  const insertedKw = await db.insert(keywords).values(kwRows).returning();
+  const insertedKw = (await db.insert(keywords).values(kwRows).returning()).filter((kw) => !isNichePaused(kw.niche));
 
   // Designs + listings (30), across niches
   type Plan = { status: ListingStatus; publishedDaysAgo?: number };
@@ -119,6 +121,13 @@ export async function seedDemo(db: DB, now = new Date()) {
     const publishedAt = plan.publishedDaysAgo != null ? ago(plan.publishedDaysAgo) : null;
     const ageDays = plan.publishedDaysAgo ?? 0;
     const views = publishedAt ? Math.floor(ageDays * (6 + rand() * 18)) : 0;
+    const gallery = await listingImageForProduct({
+      productType: product.type,
+      artworkUrl: design.imageUrl,
+      preset: product.pod,
+      niche: kw.niche,
+    });
+    const deliveryUrl = product.type === "digital" ? design.imageUrl : null;
     const [listing] = await db
       .insert(listings)
       .values({
@@ -130,14 +139,9 @@ export async function seedDemo(db: DB, now = new Date()) {
         title,
         tags: draft.tags,
         description: draft.description,
-        imageUrl: (
-          await listingImageForProduct({
-            productType: product.type,
-            artworkUrl: design.imageUrl,
-            preset: product.pod,
-            niche: kw.niche,
-          })
-        ).url,
+        imageUrl: gallery.url,
+        deliveryUrl,
+        fileManifest: deliveryUrl ? tryBuildFileManifest(deliveryUrl, gallery.url) : null,
         priceChf: draft.priceChf,
         podCostChf: pod,
         netChf: fees.netChf,

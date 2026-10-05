@@ -7,6 +7,7 @@ import {
   serial,
   text,
   timestamp,
+  unique,
 } from "drizzle-orm/pg-core";
 
 export type Niche = "alpine" | "gothic" | "christmas" | "birthday" | "stream";
@@ -15,8 +16,23 @@ export type ListingStatus =
   | "pending_approval"
   | "approved"
   | "rejected"
+  | "pod_created"
   | "published"
   | "failed";
+
+/** Recorded bytes for the file a digital buyer downloads, plus the smaller gallery preview. */
+export type DeliveryFileRecord = {
+  filename: string;
+  width: number;
+  height: number;
+  bytes: number;
+  sha256: string;
+};
+
+export type FileManifest = {
+  delivery: DeliveryFileRecord;
+  preview?: DeliveryFileRecord;
+};
 export type FulfillmentStatus =
   | "delivered_digital"
   | "pending"
@@ -80,6 +96,17 @@ export const listings = pgTable("listings", {
   tags: jsonb("tags").$type<string[]>().notNull(),
   description: text("description").notNull(),
   imageUrl: text("image_url").notNull(),
+  /** Full-resolution digital file. The gallery `imageUrl` must be a different preview. */
+  deliveryUrl: text("delivery_url"),
+  fileManifest: jsonb("file_manifest").$type<FileManifest>(),
+  fileVerifiedAt: timestamp("file_verified_at", { withTimezone: true }),
+  fileVerifiedBy: text("file_verified_by"),
+  /** Set only by the per-listing Activate action. Cron never sets this. */
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  podBlueprintId: integer("pod_blueprint_id"),
+  podPrintProviderId: integer("pod_print_provider_id"),
+  /** Set when a human publishes the Printify product to Etsy. */
+  podPublishedAt: timestamp("pod_published_at", { withTimezone: true }),
   priceChf: doublePrecision("price_chf").notNull(),
   podCostChf: doublePrecision("pod_cost_chf").notNull().default(0),
   netChf: doublePrecision("net_chf").notNull(),
@@ -158,6 +185,24 @@ export const dailyStats = pgTable("daily_stats", {
   isDemo: boolean("is_demo").notNull().default(false),
 });
 
+/**
+ * A physical sample Kai has approved for one Printify blueprint + print provider.
+ * Publishing that pair to Etsy is blocked until a row exists.
+ */
+export const podSamples = pgTable(
+  "pod_samples",
+  {
+    id: serial("id").primaryKey(),
+    blueprintId: integer("blueprint_id").notNull(),
+    providerId: integer("provider_id").notNull(),
+    note: text("note"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull(),
+    approvedBy: text("approved_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("pod_samples_blueprint_provider").on(t.blueprintId, t.providerId)],
+);
+
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -203,3 +248,4 @@ export type AppEvent = typeof events.$inferSelect;
 export type Cost = typeof costs.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type PrintifyEvent = typeof printifyEvents.$inferSelect;
+export type PodSample = typeof podSamples.$inferSelect;

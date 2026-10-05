@@ -17,10 +17,17 @@ export class PrintifyDryRunAdapter implements PrintifyAdapter {
   ) {}
 
   async createAndPublish(input: PrintifyProductInput) {
-    this.calls.push({ op: "createProduct", payload: input });
-    this.calls.push({ op: "publishProduct", payload: { title: true, description: true, images: true, variants: true, tags: true } });
-    if (input.existingProductId) return { productId: input.existingProductId };
-    return { productId: `dry-pfy-${Date.now().toString(36)}${Math.floor(this.random() * 1e4)}` };
+    const blueprintId = input.blueprintId ?? 9001;
+    const printProviderId = input.printProviderId ?? 9002;
+    if (input.existingProductId && !input.publishToEtsy) {
+      return { productId: input.existingProductId, blueprintId, printProviderId };
+    }
+    this.calls.push({ op: input.existingProductId ? "reuseProduct" : "createProduct", payload: input });
+    if (input.publishToEtsy) {
+      this.calls.push({ op: "publishProduct", payload: { title: true, description: true, images: true, variants: true, tags: true } });
+    }
+    if (input.existingProductId) return { productId: input.existingProductId, blueprintId, printProviderId };
+    return { productId: `dry-pfy-${Date.now().toString(36)}${Math.floor(this.random() * 1e4)}`, blueprintId, printProviderId };
   }
 
   /** Advances each simulated order one step with 60% probability per sync. */

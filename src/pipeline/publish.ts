@@ -3,14 +3,15 @@ import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, designs, listings } from "@/db/schema";
-import { isDemoMode, publicAppUrl } from "@/lib/config";
+import { config, isDemoMode, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
+import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import type { StageFn } from "./types";
 
-function podPreset(provider: string | null): PodPreset | undefined {
+export function podPreset(provider: string | null): PodPreset | undefined {
   const name = provider?.startsWith("printify:") ? provider.slice("printify:".length) : undefined;
   if (name === "posterA3" || name === "mug" || name === "tshirt" || name === "sweatshirt") return name;
   return undefined;
@@ -56,7 +57,22 @@ export const runPublish: StageFn = async (ctx) => {
     try {
       let etsyListingId: string | null = null;
       let printifyProductId: string | null = null;
+      let podBlueprintId: number | null = null;
+      let podPrintProviderId: number | null = null;
+      let nextStatus: "published" | "pod_created" = "published";
       if (l.productType === "digital") {
+        const [design] = l.designId
+          ? await db.select({ provider: designs.provider, imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId))
+          : [];
+        const refusal = digitalDraftRefusal({
+          etsyMode: etsy.mode,
+          imageProvider: config.imageProvider,
+          designProvider: design?.provider ?? null,
+          imageUrl: l.imageUrl,
+          deliveryUrl: l.deliveryUrl,
+          manifest: l.fileManifest,
+        });
+        if (refusal) throw new Error(refusal);
         let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
         if (!listingId) {
           const created = await etsy.createDraftListing({
@@ -69,22 +85,19 @@ export const runPublish: StageFn = async (ctx) => {
           listingId = created.listingId;
           await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(eq(listings.id, l.id));
         }
-        const image = absoluteUrl(l.imageUrl);
-        await etsy.uploadListingImage(listingId, image);
-        await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: image });
-        // Live listings stay drafts unless ETSY_ACTIVATE=true. Etsy has no API for the
-        // “How it’s made” / AI-tools field, and Kai’s clearance was drafts only.
-        const activateLive = process.env.ETSY_ACTIVATE === "true";
-        if (etsy.mode === "dry-run" || activateLive) await etsy.activateListing(listingId);
+        // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
+        await etsy.uploadListingImage(listingId, absoluteUrl(l.imageUrl));
+        await etsy.uploadListingFile(listingId, { name: l.fileManifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
         etsyListingId = listingId;
-        const state = etsy.mode === "live" && activateLive ? "active" : "draft";
-        log(`#${l.id} → Etsy ${state} ${listingId} (${etsy.mode})`);
+        log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {
-        let artwork = l.imageUrl;
+        let artwork = l.deliveryUrl || l.imageUrl;
         if (l.designId) {
           const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));
-          artwork = printArtworkUrl(l.imageUrl, design?.imageUrl);
+          artwork = printArtworkUrl(artwork, design?.imageUrl);
         }
+        // Create the Printify product only. publish.json is a per-listing human action.
+        // Live etsyListingId is left null here so the orders backfill can fill it later.
         const result = await printify.createAndPublish({
           title: l.title,
           description: l.description,
@@ -93,26 +106,30 @@ export const runPublish: StageFn = async (ctx) => {
           imageUrl: absoluteUrl(artwork),
           preset: podPreset(l.podProvider),
           existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
+          publishToEtsy: false,
         });
         const mockup = await fetchPrintifyMockupUrl(result.productId);
         if (mockup) {
           await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(eq(listings.id, l.id));
         }
         printifyProductId = result.productId;
-        // Printify creates the Etsy listing asynchronously; in dry-run we mint a synthetic id so orders can link.
-        etsyListingId = result.externalEtsyId ?? (printify.mode === "dry-run" ? `dry-etsy-${result.productId}` : l.etsyListingId);
-        log(`#${l.id} → Printify product ${result.productId}, published to Etsy (${printify.mode})`);
+        podBlueprintId = result.blueprintId ?? null;
+        podPrintProviderId = result.printProviderId ?? null;
+        nextStatus = "pod_created";
+        log(`#${l.id} → Printify product ${result.productId} created, not published to Etsy (${printify.mode})`);
       }
       const mode = l.productType === "digital" ? etsy.mode : printify.mode;
       await db
         .update(listings)
         .set({
-          status: "published",
-          etsyListingId,
+          status: nextStatus,
+          ...(l.productType === "digital" ? { etsyListingId } : {}),
           printifyProductId,
+          ...(podBlueprintId != null ? { podBlueprintId } : {}),
+          ...(podPrintProviderId != null ? { podPrintProviderId } : {}),
           publishMode: mode,
           publishError: null,
-          publishedAt: ctx.now,
+          publishedAt: nextStatus === "published" ? ctx.now : null,
           updatedAt: ctx.now,
         })
         .where(eq(listings.id, l.id));

@@ -1,6 +1,7 @@
 import { config } from "@/lib/config";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { NICHES } from "@/lib/niches";
+import { PROMISE_RULES } from "@/lib/delivery";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
 export class OpenAILLMProvider implements LLMProvider {
@@ -16,10 +17,13 @@ export class OpenAILLMProvider implements LLMProvider {
       `Title: max ${ETSY_LIMITS.titleMax} characters, front-load the main keyword, no more than 3 ALL-CAPS words, use each of % : & at most once.`,
       `Tags: exactly ${ETSY_LIMITS.tagCount} lowercase tags, each at most ${ETSY_LIMITS.tagMax} characters, letters/numbers/spaces only, no duplicates.`,
       "Body: 2 short paragraphs plus a bullet list of what the buyer gets. Do NOT include AI or production disclosures (they are appended automatically).",
-      "Digital downloads ship as one PNG. Do not mention 300 DPI, print ratios (2:3, 3:4, 4:5, 11x14, ISO A), ZIP or PDF bundles, or editable Canva or Corjl templates.",
+      "The shop delivers one opaque PNG (about 1024x1536, or 1536x1024 for wide art) or one physical print-on-demand item. Nothing is editable, a template, a bundle, transparent, animated, or a set.",
+      `Do not use these claims unless they are literally true of that one file: ${PROMISE_RULES.map((rule) => rule.label).join(", ")}.`,
+      "Do not use empty praise (unique, stunning, premium, perfect, beautiful, gift idea).",
+      "Start the title with the keyword exactly as given. Do not put a different phrase first.",
       "Never use trademarked brands or characters.",
     ].join("\n");
-    const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}`;
+    const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}\nDeliverable: ${brief.productType === "digital" ? "one opaque PNG, instant download, no physical item" : "one made-to-order physical item, printed and shipped"}`;
 
     const base = config.openaiBaseUrl;
     const res = await fetch(`${base}/chat/completions`, {

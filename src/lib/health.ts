@@ -317,7 +317,7 @@ function publishCheck(mode: PublishMode): HealthCheck {
       level: "red",
       label: "Live",
       detail:
-        "Dashboard choice and host PUBLISH_MODE are both live, so Etsy and Printify write APIs can run. Return to dry-run from Connections or Settings. New Etsy listings stay drafts unless ETSY_ACTIVATE=true.",
+        "Dashboard choice and host PUBLISH_MODE are both live, so Etsy and Printify write APIs can run. Return to dry-run from Connections or Settings. Digital listings stay drafts until a human verifies the file and activates that listing. POD is created in Printify only; publishing it to Etsy is a separate step and needs a recorded sample.",
       envVars,
     };
   }

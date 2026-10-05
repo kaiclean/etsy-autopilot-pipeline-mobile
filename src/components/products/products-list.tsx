@@ -2,7 +2,10 @@
 
 import { Eye, Heart, Package, Search, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState, useTransition } from "react";
+import { toast } from "sonner";
+import { activateListing, publishPodListing, readDeliveryFile, savePodSample, verifyDeliveryFile } from "@/app/actions";
 import { EmptyState, ListingStatusPill, NicheTag, Panel, Thumb } from "@/components/common";
 import { ProvenanceBadge } from "@/components/provenance-badge";
 import { FeeBreakdown } from "@/components/fee-breakdown";
@@ -19,7 +22,8 @@ import { cn } from "@/lib/utils";
 
 const FILTERS = [
   { id: "all", label: "All" },
-  { id: "published", label: "Published" },
+  { id: "published", label: "On Etsy" },
+  { id: "pod_created", label: "Printify only" },
   { id: "pending_approval", label: "In review" },
   { id: "approved", label: "Approved" },
   { id: "rejected", label: "Rejected" },
@@ -48,7 +52,7 @@ export function ProductsList({ listings }: { listings: Listing[] }) {
             <Panel className="flex gap-2 border-warning/30 bg-warning/10 p-3 text-xs text-warning">
               <TriangleAlert className="size-4 shrink-0" />
               <span>
-                {liveDrafts} live draft{liveDrafts === 1 ? "" : "s"} still need Shop Manager: set “How it’s made” to AI tools, then activate. The API cannot set that field.
+                {liveDrafts} Etsy listing{liveDrafts === 1 ? "" : "s"} still need “How it’s made” set to AI tools in Shop Manager. Activation in this app is per listing, after the delivery file is verified. There is no auto-activate flag.
               </span>
             </Panel>
           )}
@@ -158,6 +162,92 @@ function FilterChip({ active, onClick, label }: { active: boolean; onClick: () =
   );
 }
 
+function HumanPublish({ l }: { l: Listing }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const file = l.fileManifest?.delivery;
+  const run = (label: string, action: () => Promise<{ ok: boolean; error?: string }>) =>
+    start(async () => {
+      const result = await action();
+      if (!result.ok) {
+        toast.error(result.error ?? "Could not update the listing");
+        return;
+      }
+      toast.success(label);
+      router.refresh();
+    });
+
+  if (l.productType === "digital") {
+    return (
+      <div className="space-y-2 rounded-xl border border-border p-3 text-xs">
+        <div className="font-semibold">Delivery file</div>
+        {file ? (
+          <p className="text-muted-foreground">
+            {file.filename} · {file.width}×{file.height}px · {file.bytes} bytes · {file.sha256.slice(0, 12)}
+            {l.fileVerifiedAt ? " · verified" : " · not verified"}
+            {l.activatedAt ? " · active" : " · draft"}
+          </p>
+        ) : (
+          <p className="text-muted-foreground">No manifest yet. Reading the file records the filename, pixel size, bytes and hash. Activate refuses until you open the file and mark it verified.</p>
+        )}
+        {file && !l.fileVerifiedAt ? (
+          <p className="text-muted-foreground">Mark the file verified after you open it. Mock placeholder art cannot be verified or activated.</p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending} onClick={() => run("Delivery file recorded", () => readDeliveryFile(l.id))}>
+            Read delivery file
+          </Button>
+          <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending || Boolean(l.fileVerifiedAt)} onClick={() => run("File marked verified", () => verifyDeliveryFile(l.id))}>
+            I opened this file
+          </Button>
+          <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
+            Activate
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border border-border p-3 text-xs">
+      <div className="font-semibold">Printify</div>
+      <p className="text-muted-foreground">
+        {l.printifyProductId ? `Product ${l.printifyProductId}` : "No Printify product yet. The publish run creates it and stops there."}
+        {l.podBlueprintId ? ` · blueprint ${l.podBlueprintId}` : ""}
+        {l.podPrintProviderId ? ` · provider ${l.podPrintProviderId}` : ""}
+        {l.podPublishedAt ? " · sent to Etsy" : " · not sent to Etsy"}
+      </p>
+      {!l.podBlueprintId || !l.podPrintProviderId ? (
+        <p className="text-muted-foreground">A sample can be recorded only after a Printify create stores the blueprint id and print provider id.</p>
+      ) : l.status !== "pod_created" ? (
+        <p className="text-muted-foreground">Publish to Etsy is only for a Printify product that has not been sent yet.</p>
+      ) : (
+        <p className="text-muted-foreground">Record a physical sample for this blueprint and provider, then publish this listing to Etsy.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          className="h-9 rounded-xl"
+          disabled={pending}
+          onClick={() => {
+            if (!l.podBlueprintId || !l.podPrintProviderId) {
+              toast.error("Blueprint and print provider are not recorded, so a sample cannot be checked.");
+              return;
+            }
+            run("Sample recorded", () => savePodSample(l.podBlueprintId!, l.podPrintProviderId!, "Physical sample approved"));
+          }}
+        >
+          Record sample
+        </Button>
+        <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.podPublishedAt)} onClick={() => run("Sent to Etsy", () => publishPodListing(l.id))}>
+          Publish to Etsy
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function Detail({ l }: { l: Listing }) {
   const fees = calculateFees({ priceChf: l.priceChf, podCostChf: l.podCostChf });
   return (
@@ -183,12 +273,13 @@ function Detail({ l }: { l: Listing }) {
           </div>
         </div>
 
-        {l.status === "published" && l.publishMode === "live" && (
+        {l.status === "published" && l.publishMode === "live" && !l.activatedAt && (
           <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
             <TriangleAlert className="size-4 shrink-0" />
-            Etsy draft until you set “How it’s made” → AI tools in Shop Manager and activate it there. The API cannot set that field, so this app leaves listings as drafts.
+            This is an Etsy draft. Set “How it’s made” to AI tools in Shop Manager, then activate it here after the delivery file is verified. The API cannot set that field, and no cron will activate it.
           </div>
         )}
+        <HumanPublish l={l} />
         {l.publishError && <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{l.publishError}</div>}
         {l.rejectedReason && <div className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">Rejected: {l.rejectedReason}</div>}
 

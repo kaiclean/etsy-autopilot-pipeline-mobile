@@ -1,6 +1,6 @@
 import type { Niche } from "@/db/schema";
 import { config } from "@/lib/config";
-import { NICHE_LIST, normalizeEtsyVolume } from "@/lib/niches";
+import { activeNiches, normalizeEtsyVolume } from "@/lib/niches";
 import type { KeywordCandidate, KeywordSource } from "./sources";
 
 /** Official Open API v3 origin. etsy.com HTML, search, and autocomplete are out of bounds. */
@@ -69,7 +69,7 @@ export function createEtsyApiCompetitionSource(deps: {
       if (!enabled || !apiKey) return [];
       const phrases =
         deps.phrases ??
-        NICHE_LIST.flatMap((niche) => niche.seeds.map((seed) => ({ phrase: seed.phrase, niche: niche.id }))).slice(0, LOOKUPS_PER_RUN);
+        activeNiches().flatMap((niche) => niche.seeds.map((seed) => ({ phrase: seed.phrase, niche: niche.id }))).slice(0, LOOKUPS_PER_RUN);
       const out: KeywordCandidate[] = [];
       for (const row of phrases) {
         const count = await fetchActiveListingCount(row.phrase, { apiKey, fetchImpl: deps.fetchImpl });

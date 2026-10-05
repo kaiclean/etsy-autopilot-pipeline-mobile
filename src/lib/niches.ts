@@ -13,6 +13,11 @@ export type NicheConfig = {
   priceBand: { digital: [number, number]; pod: [number, number] };
   style: string;
   seeds: { phrase: string; demand: number; competition: number }[];
+  /**
+   * Set when the niche's honest product does not exist yet.
+   * Research, design and listing skip it. Copy must still not promise the missing files.
+   */
+  pausedReason?: string;
 };
 
 /**
@@ -38,7 +43,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
       { phrase: "minimalist mountain poster", demand: 0.81, competition: 0.7 },
       { phrase: "alpine lake printable", demand: 0.55, competition: 0.3 },
       { phrase: "swiss travel poster", demand: 0.68, competition: 0.52 },
-      { phrase: "mountain gallery wall set", demand: 0.74, competition: 0.61 },
+      { phrase: "mountain gallery wall art", demand: 0.74, competition: 0.61 },
     ],
   },
   gothic: {
@@ -78,46 +83,59 @@ export const NICHES: Record<Niche, NicheConfig> = {
     seeds: [
       { phrase: "cozy christmas mug", demand: 0.76, competition: 0.62 },
       { phrase: "alpine christmas print", demand: 0.6, competition: 0.28 },
-      { phrase: "personalized gift for her", demand: 0.85, competition: 0.8 },
-      { phrase: "christmas ornament design", demand: 0.7, competition: 0.5 },
+      { phrase: "cozy winter gift", demand: 0.85, competition: 0.8 },
+      { phrase: "christmas cabin print", demand: 0.7, competition: 0.5 },
       { phrase: "hygge winter poster", demand: 0.57, competition: 0.33 },
     ],
   },
   birthday: {
     id: "birthday",
-    label: "Editable birthday invitations",
-    short: "Invites",
+    label: "Birthday party art",
+    short: "Birthday",
     color: "var(--chart-4)",
     peakMonths: [],
     productMix: [{ type: "digital", weight: 1 }],
     priceBand: { digital: [4.9, 9.9], pod: [0, 0] },
-    style: "playful editable birthday invitation template, pastel palette, whimsical hand lettering",
+    style: "playful pastel birthday illustration, soft shapes, opaque background, no lettering",
+    pausedReason:
+      "Paused until a real invitation file exists. The pipeline only makes one opaque PNG, so it cannot sell an editable invite, template, or evite.",
     seeds: [
       { phrase: "one silly goose birthday", demand: 0.88, competition: 0.25 },
-      { phrase: "editable birthday invite", demand: 0.8, competition: 0.72 },
+      { phrase: "birthday party art", demand: 0.8, competition: 0.72 },
       { phrase: "wildflower first birthday", demand: 0.62, competition: 0.4 },
-      { phrase: "two cool birthday invitation", demand: 0.59, competition: 0.35 },
+      { phrase: "two cool birthday art", demand: 0.59, competition: 0.35 },
     ],
   },
   stream: {
     id: "stream",
-    label: "Stream overlays & emotes",
+    label: "Stream art",
     short: "Stream",
     color: "var(--chart-5)",
     peakMonths: [],
     productMix: [{ type: "digital", weight: 1 }],
     priceBand: { digital: [4.9, 19.9], pod: [0, 0] },
-    style: "neon cyberpunk stream overlay, clean UI frames, vibrant purple and cyan, transparent png ready",
+    style: "neon purple and cyan scene, solid opaque background, no text, no frames",
+    pausedReason:
+      "Paused until a real stream kit exists. The pipeline only makes one opaque PNG, so it cannot sell emotes, panels, alerts, webcam frames, or animated overlays.",
     seeds: [
-      { phrase: "animated stream overlay", demand: 0.74, competition: 0.58 },
-      { phrase: "vtuber model assets", demand: 0.8, competition: 0.55 },
-      { phrase: "cute emote pack", demand: 0.7, competition: 0.62 },
-      { phrase: "pastel stream package", demand: 0.61, competition: 0.4 },
+      { phrase: "neon stream art", demand: 0.74, competition: 0.58 },
+      { phrase: "purple cyan artwork", demand: 0.8, competition: 0.55 },
+      { phrase: "cute neon graphic", demand: 0.7, competition: 0.62 },
+      { phrase: "pastel neon art", demand: 0.61, competition: 0.4 },
     ],
   },
 };
 
 export const NICHE_LIST = Object.values(NICHES);
+
+export function isNichePaused(id: Niche) {
+  return Boolean(NICHES[id].pausedReason);
+}
+
+/** Niches the pipeline may research, design and list. Birthday and stream stay paused. */
+export function activeNiches() {
+  return NICHE_LIST.filter((n) => !n.pausedReason);
+}
 
 export function seasonality(niche: Niche, date = new Date()) {
   const peaks = NICHES[niche].peakMonths;
