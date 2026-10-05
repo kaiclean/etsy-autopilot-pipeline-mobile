@@ -8,6 +8,7 @@ import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
+import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
 import { tryBuildFileManifest } from "@/lib/file-manifest";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
@@ -103,14 +104,16 @@ export const runListing: StageFn = async (ctx) => {
         digitalTargetMarginPct: automation.digitalTargetMarginPct,
         assumeOffsiteAds: automation.assumeOffsiteAds,
       });
+      const artworkUrl = await persistableImageUrl(design.imageUrl);
       const image = await listingImageForProduct({
         productType: product.type,
-        artworkUrl: design.imageUrl,
+        artworkUrl,
         preset: product.pod,
         niche: design.niche,
       });
-      const deliveryUrl = product.type === "digital" ? design.imageUrl : null;
-      const fileManifest = deliveryUrl ? tryBuildFileManifest(deliveryUrl, image.url) : null;
+      if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
+      const deliveryUrl = product.type === "digital" ? artworkUrl : null;
+      const fileManifest = deliveryUrl ? tryBuildFileManifest(design.imageUrl, image.url) : null;
       await db.insert(listings).values({
         designId: design.id,
         keywordId: design.keywordId,

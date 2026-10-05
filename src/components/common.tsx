@@ -89,7 +89,8 @@ export function NicheTag({ niche }: { niche: keyof typeof NICHES }) {
   );
 }
 
-export function Thumb({ src, alt, className }: { src: string; alt: string; className?: string }) {
+export function Thumb({ src, alt, className }: { src: string | null | undefined; alt: string; className?: string }) {
+  if (!src) return <div className={cn("rounded-xl bg-muted", className)} />;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={src} alt={alt} loading="lazy" className={cn("rounded-xl bg-muted object-cover", className)} />
