@@ -3,12 +3,13 @@ import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
-import { alignDeliveryCopy } from "@/lib/delivery";
+import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
-import { NICHES } from "@/lib/niches";
+import { tryBuildFileManifest } from "@/lib/file-manifest";
+import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
 import type { StageFn } from "./types";
@@ -38,8 +39,9 @@ export async function draftListing(opts: {
   llm?: LLMProvider;
 }) {
   const llm = opts.llm ?? getLLMProvider();
+  const keyword = leadPhrase(opts.keyword, opts.niche, opts.product.type);
   const copy = await llm.writeListing({
-    keyword: opts.keyword,
+    keyword,
     niche: opts.niche,
     productType: opts.product.type,
     podPreset: opts.product.pod,
@@ -85,6 +87,11 @@ export const runListing: StageFn = async (ctx) => {
   let created = 0;
   let invalid = 0;
   for (const { design, phrase } of pending) {
+    if (isNichePaused(design.niche)) {
+      await db.update(designs).set({ status: "discarded" }).where(eq(designs.id, design.id));
+      log(`Skipped design #${design.id}: ${NICHES[design.niche].pausedReason}`, "warn");
+      continue;
+    }
     const product = pickProduct(design.niche, ctx.random());
     try {
       const { draft, fees, issues, pod, llmCost, provider } = await draftListing({
@@ -96,6 +103,14 @@ export const runListing: StageFn = async (ctx) => {
         digitalTargetMarginPct: automation.digitalTargetMarginPct,
         assumeOffsiteAds: automation.assumeOffsiteAds,
       });
+      const image = await listingImageForProduct({
+        productType: product.type,
+        artworkUrl: design.imageUrl,
+        preset: product.pod,
+        niche: design.niche,
+      });
+      const deliveryUrl = product.type === "digital" ? design.imageUrl : null;
+      const fileManifest = deliveryUrl ? tryBuildFileManifest(deliveryUrl, image.url) : null;
       await db.insert(listings).values({
         designId: design.id,
         keywordId: design.keywordId,
@@ -105,14 +120,9 @@ export const runListing: StageFn = async (ctx) => {
         title: draft.title,
         tags: draft.tags,
         description: draft.description,
-        imageUrl: (
-          await listingImageForProduct({
-            productType: product.type,
-            artworkUrl: design.imageUrl,
-            preset: product.pod,
-            niche: design.niche,
-          })
-        ).url,
+        imageUrl: image.url,
+        deliveryUrl,
+        fileManifest,
         priceChf: draft.priceChf,
         podCostChf: pod,
         netChf: fees.netChf,

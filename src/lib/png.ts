@@ -143,10 +143,34 @@ export function podMockupPng(preset: "posterA3" | "mug" | "tshirt" | "sweatshirt
   });
 }
 
-/** Raster for our own `/api/placeholder` and `/api/mockup` URLs, so publish does not HTTP-fetch this server. */
+/**
+ * Small gallery preview. It is not the delivery PNG: different pixel size, and a stripe
+ * watermark so the bytes cannot be the file the buyer downloads.
+ */
+export function digitalPreviewPng(niche: string, src = "") {
+  let shift = 0;
+  for (const c of src) shift = (shift + c.charCodeAt(0)) % 80;
+  const accent = ACCENT[niche] ?? ACCENT.alpine;
+  const wash: RGB = [Math.min(255, accent[0] + 40), Math.min(255, accent[1] + 20), Math.min(255, accent[2] + 10)];
+  return encodePng(480, 640, (fill) => {
+    fill(0, 0, 480, 640, wash);
+    fill(36, 36, 408, 500, accent);
+    fill(36 + shift, 80, 140, 220, [248, 244, 236]);
+    for (let i = 0; i < 7; i++) fill(i * 80 - 20, 0, 14, 640, [160, 36, 36]);
+    fill(0, 560, 480, 80, [28, 28, 28]);
+  });
+}
+
+export function digitalPreviewUrl(artworkUrl: string, niche: string) {
+  return `/api/preview?niche=${encodeURIComponent(niche)}&src=${encodeURIComponent(artworkUrl)}`;
+}
+
+/** Raster for our own `/api/placeholder`, `/api/preview` and `/api/mockup` URLs, so publish does not HTTP-fetch this server. */
 export function localAssetPng(url: string): Buffer | null {
   const placeholder = placeholderPng(url);
   if (placeholder) return placeholder;
+  const preview = previewPng(url);
+  if (preview) return preview;
   let parsed: URL;
   try {
     parsed = new URL(url, "http://localhost");
@@ -156,6 +180,17 @@ export function localAssetPng(url: string): Buffer | null {
   const preset = parsed.pathname.match(/\/api\/mockup\/(posterA3|mug|tshirt|sweatshirt)/)?.[1];
   if (!preset) return null;
   return podMockupPng(preset as "posterA3" | "mug" | "tshirt" | "sweatshirt", parsed.searchParams.get("niche") ?? "alpine");
+}
+
+export function previewPng(url: string): Buffer | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url, "http://localhost");
+  } catch {
+    return null;
+  }
+  if (!parsed.pathname.includes("/api/preview")) return null;
+  return digitalPreviewPng(parsed.searchParams.get("niche") ?? "alpine", parsed.searchParams.get("src") ?? "");
 }
 
 /** Raster for `/api/placeholder/...` so publish does not HTTP-fetch this server through its own tunnel. */

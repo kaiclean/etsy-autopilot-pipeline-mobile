@@ -1,7 +1,7 @@
 import type { Niche, ProductType } from "@/db/schema";
 import { config } from "@/lib/config";
 import type { PodPreset } from "@/lib/fees";
-import { podMockupPng } from "@/lib/png";
+import { digitalPreviewUrl, podMockupPng } from "@/lib/png";
 
 export type MockupRequest = {
   artworkUrl: string;
@@ -14,7 +14,7 @@ export type MockupRequest = {
 export type MockupResult = {
   url: string;
   provider: string;
-  /** False only for digital listings, which keep the artwork as the gallery image. */
+  /** False when the URL is the raw artwork. Digital galleries use a preview instead. */
   mocked: boolean;
 };
 
@@ -82,7 +82,7 @@ export async function listingImageForProduct(opts: {
   productId?: string;
 }): Promise<MockupResult> {
   if (opts.productType !== "pod" || !opts.preset) {
-    return { url: opts.artworkUrl, provider: "artwork", mocked: false };
+    return { url: digitalPreviewUrl(opts.artworkUrl, String(opts.niche)), provider: "preview", mocked: true };
   }
   const req: MockupRequest = {
     artworkUrl: opts.artworkUrl,

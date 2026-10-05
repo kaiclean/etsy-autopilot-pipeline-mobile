@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { keywords } from "@/db/schema";
 import { config, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
+import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
@@ -44,6 +44,27 @@ export const runResearch: StageFn = async (ctx) => {
 
   let upserted = 0;
   for (const c of preferMeasuredDemand(candidates)) {
+    if (isNichePaused(c.niche)) {
+      await db
+        .insert(keywords)
+        .values({
+          phrase: c.phrase,
+          niche: c.niche,
+          source: c.source,
+          demandScore: c.demand,
+          competitionScore: c.competition,
+          seasonalityScore: seasonality(c.niche, ctx.now),
+          score: 0,
+          status: "rejected",
+          isDemo: isDemoMode(),
+        })
+        .onConflictDoUpdate({
+          target: keywords.phrase,
+          set: { status: "rejected", updatedAt: ctx.now },
+        });
+      log(`Paused niche “${c.phrase}” (${c.niche}); not selected`);
+      continue;
+    }
     const season = seasonality(c.niche, ctx.now);
     const measured = c.searchVolume != null;
     const trend = measured ? null : (trends.get(c.phrase) ?? null);
@@ -87,7 +108,7 @@ export const runResearch: StageFn = async (ctx) => {
   const top = await db
     .select({ id: keywords.id, phrase: keywords.phrase, score: keywords.score })
     .from(keywords)
-    .where(eq(keywords.status, "new"))
+    .where(and(eq(keywords.status, "new"), inArray(keywords.niche, activeNiches().map((n) => n.id))))
     .orderBy(desc(keywords.score))
     .limit(designsPerRun);
   if (top.length) {

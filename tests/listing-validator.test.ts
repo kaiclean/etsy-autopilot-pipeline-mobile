@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultDeliverable } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { ETSY_LIMITS, sanitizeDraft, validateListing, type ListingDraft } from "@/lib/listing-validator";
 
@@ -14,7 +15,7 @@ function draft(over: Partial<ListingDraft> = {}): ListingDraft {
     title: "Swiss Alps Wall Art Printable, Minimalist Mountain Poster, Alpine Decor",
     tags: [...TAGS],
     description: withDisclosures(
-      "Bring the calm of the Swiss Alps into your home with this minimalist printable. High resolution files in five ratios, ready to print at home or at a local print shop.",
+      "Bring the calm of the Swiss Alps into your home with this minimalist printable. One PNG for personal printing at home or at a local print shop.",
       productType,
     ),
     priceChf: 7.9,
@@ -86,6 +87,47 @@ describe("validateListing", () => {
 
   it("rejects prices below CHF 0.20", () => {
     expect(codes(draft({ priceChf: 0.1 }))).toContain("price_low");
+  });
+
+  it("rejects undeliverable promises in the title, tags and description for digital and POD", () => {
+    const promised = "Editable template bundle, set of 3, animated transparent SVG, commercial use, 300 DPI, 2:3";
+    for (const productType of ["digital", "pod"] as const) {
+      expect(codes(draft({ productType, title: promised }))).toContain("undeliverable_promise");
+      expect(codes(draft({ productType, tags: [...TAGS.slice(0, 12), "emote pack"] }))).toContain("undeliverable_promise");
+      expect(codes(draft({ productType, description: withDisclosures(promised.repeat(3), productType) }))).toContain("undeliverable_promise");
+    }
+    expect(codes(draft({ title: "Personalized ornament, webcam frame and stream alerts" }))).toContain("undeliverable_promise");
+    expect(codes(draft({ tags: [...TAGS.slice(0, 12), "evite digital"] }))).toContain("undeliverable_promise");
+  });
+
+  it("allows a promise word only when the deliverable supports it", () => {
+    const editable = draft({
+      title: "Editable Birthday Template",
+      deliverable: { ...defaultDeliverable("digital"), editable: true },
+    });
+    expect(codes(editable).filter((code) => code === "undeliverable_promise")).toEqual([]);
+  });
+
+  it("warns on empty praise, plural twins and a word repeated across tags", () => {
+    const praised = draft({ title: "Unique Gift Idea Alpine Print" });
+    const praise = validateListing(praised);
+    expect(praise.valid).toBe(true);
+    expect(praise.issues.map((i) => i.code)).toContain("empty_praise");
+
+    const twinTags = [...TAGS];
+    twinTags[8] = "hiking gifts";
+    const twins = draft({ tags: twinTags });
+    expect(codes(twins)).toContain("tag_plural_twin");
+    expect(validateListing(twins).valid).toBe(true);
+
+    const repeated = draft({
+      tags: [
+        "alpine wall", "alpine print", "alpine decor", "alpine gift", "nature scene", "scandi art",
+        "matterhorn", "travel poster", "cabin decor", "gallery print", "neutral tone", "hiking gift", "swiss lake",
+      ],
+    });
+    expect(codes(repeated)).toContain("tag_repeated_word");
+    expect(validateListing(repeated).valid).toBe(true);
   });
 });
 

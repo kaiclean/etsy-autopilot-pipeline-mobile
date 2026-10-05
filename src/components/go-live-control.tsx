@@ -41,7 +41,7 @@ export function GoLiveControl({ mode, envMode }: { mode: PublishMode; envMode: P
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {blocked
               ? "The dashboard choice is live, but host PUBLISH_MODE is dry-run, so Etsy and Printify write APIs stay off. Orders and analytics still use the connected shop. Set PUBLISH_MODE=live on the host to honor this choice, or return to dry-run."
-              : "The dashboard choice and host PUBLISH_MODE are both live. Approved listings can be sent to Etsy and Printify on the next publish run. New Etsy listings stay drafts unless you also set ETSY_ACTIVATE=true."}
+              : "The dashboard choice and host PUBLISH_MODE are both live. The next publish run can create Etsy drafts and Printify products. Nothing is activated from here: digital needs a verified file and a per-listing Activate click, and POD needs a recorded sample before Publish to Etsy."}
           </p>
         </div>
         <Button variant="secondary" className="h-10 rounded-xl" disabled={pending} onClick={() => apply("dry-run")}>

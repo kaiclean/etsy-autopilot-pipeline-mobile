@@ -1,5 +1,6 @@
 import type { Niche } from "@/db/schema";
-import { NICHE_LIST } from "@/lib/niches";
+import { keywordHasUndeliverablePromise } from "@/lib/delivery";
+import { activeNiches, isNichePaused, NICHE_LIST } from "@/lib/niches";
 
 export type KeywordCandidate = {
   phrase: string;
@@ -25,8 +26,10 @@ export interface KeywordSource {
 export const seedListSource: KeywordSource = {
   name: "seed-list",
   async collect() {
-    return NICHE_LIST.flatMap((n) =>
-      n.seeds.map((s) => ({ phrase: s.phrase, niche: n.id, source: "seed-list", demand: s.demand, competition: s.competition })),
+    return activeNiches().flatMap((n) =>
+      n.seeds
+        .filter((s) => !keywordHasUndeliverablePromise(s.phrase))
+        .map((s) => ({ phrase: s.phrase, niche: n.id, source: "seed-list", demand: s.demand, competition: s.competition })),
     );
   },
 };
@@ -44,18 +47,19 @@ export const envSeedSource: KeywordSource = {
         const [nichePart, rest] = entry.split(":");
         const [phrase, d, c] = (rest ?? "").split("|");
         const niche = nichePart as Niche;
-        if (!phrase || !NICHE_LIST.some((n) => n.id === niche)) return [];
-        return [{ phrase: phrase.trim().toLowerCase(), niche, source: "env-seeds", demand: Number(d ?? 0.5), competition: Number(c ?? 0.5) }];
+        const text = phrase?.trim().toLowerCase() ?? "";
+        if (!text || !NICHE_LIST.some((n) => n.id === niche) || isNichePaused(niche) || keywordHasUndeliverablePromise(text)) return [];
+        return [{ phrase: text, niche, source: "env-seeds", demand: Number(d ?? 0.5), competition: Number(c ?? 0.5) }];
       });
   },
 };
 
 const LONG_TAIL: Record<Niche, string[]> = {
-  alpine: ["set of 3", "for living room", "vintage style", "boho neutral", "gift for hiker"],
-  gothic: ["vintage", "for her", "oversized", "cottagecore", "fall 2026"],
+  alpine: ["for living room", "vintage style", "boho neutral", "gift for hiker", "muted tones"],
+  gothic: ["vintage", "for her", "botanical", "cottagecore", "autumn"],
   christmas: ["for grandma", "hygge", "vintage", "minimalist", "gift for mom"],
-  birthday: ["template", "for girls", "evite", "printable", "pastel"],
-  stream: ["pastel", "cozy", "retro", "minimal", "for vtubers"],
+  birthday: ["for girls", "pastel", "party art", "first year", "whimsical"],
+  stream: ["pastel", "cozy", "retro", "minimal", "neon scene"],
 };
 
 /**
@@ -66,15 +70,21 @@ const LONG_TAIL: Record<Niche, string[]> = {
 export const longTailSource: KeywordSource = {
   name: "long-tail",
   async collect() {
-    return NICHE_LIST.flatMap((n) =>
+    return activeNiches().flatMap((n) =>
       n.seeds.flatMap((s, i) =>
-        LONG_TAIL[n.id].map((mod, j) => ({
-          phrase: `${s.phrase} ${mod}`,
-          niche: n.id,
-          source: "long-tail",
-          demand: Math.round(s.demand * (0.72 + ((i + j) % 4) * 0.05) * 100) / 100,
-          competition: Math.round(s.competition * (0.55 + ((i * 3 + j) % 5) * 0.06) * 100) / 100,
-        })),
+        LONG_TAIL[n.id].flatMap((mod, j) => {
+          const phrase = `${s.phrase} ${mod}`;
+          if (keywordHasUndeliverablePromise(phrase)) return [];
+          return [
+            {
+              phrase,
+              niche: n.id,
+              source: "long-tail",
+              demand: Math.round(s.demand * (0.72 + ((i + j) % 4) * 0.05) * 100) / 100,
+              competition: Math.round(s.competition * (0.55 + ((i * 3 + j) % 5) * 0.06) * 100) / 100,
+            },
+          ];
+        }),
       ),
     );
   },

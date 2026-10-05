@@ -16,6 +16,13 @@ import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import type { PushPrefs } from "@/lib/push-prefs";
 import { getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
+import {
+  activateDigitalListing,
+  markDeliveryVerified,
+  publishPodListingToEtsy,
+  recordDeliveryManifest,
+  recordPodSample,
+} from "@/pipeline/human-publish";
 import { runFullPipeline, runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
 
@@ -240,6 +247,46 @@ export async function setPublishMode(mode: PublishMode, confirmation = "", under
   });
   revalidateAll();
   return { ok: true as const, publishMode: decision.mode };
+}
+
+export async function readDeliveryFile(id: number) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await recordDeliveryManifest(db, id);
+  revalidateAll();
+  return result;
+}
+
+export async function verifyDeliveryFile(id: number) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await markDeliveryVerified(db, id, "human");
+  revalidateAll();
+  return result;
+}
+
+export async function activateListing(id: number) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await activateDigitalListing(db, id);
+  revalidateAll();
+  return result;
+}
+
+export async function savePodSample(blueprintId: number, providerId: number, note?: string) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await recordPodSample(db, { blueprintId, providerId, note, actor: "human" });
+  revalidateAll();
+  return result;
+}
+
+export async function publishPodListing(id: number) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await publishPodListingToEtsy(db, id);
+  revalidateAll();
+  return result;
 }
 
 export async function saveAutomation(patch: Partial<AutomationSettings>) {

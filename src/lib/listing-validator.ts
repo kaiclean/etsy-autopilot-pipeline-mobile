@@ -1,4 +1,5 @@
 import type { ValidationIssue } from "@/db/schema";
+import { defaultDeliverable, promiseLabels, type DeliverableFacts } from "./delivery";
 import { requiredDisclosures } from "./disclosures";
 
 export const ETSY_LIMITS = {
@@ -44,7 +45,36 @@ export type ListingDraft = {
   description: string;
   priceChf: number;
   productType: "digital" | "pod";
+  /** Defaults to one opaque PNG (digital) or one physical blank (POD). */
+  deliverable?: DeliverableFacts;
 };
+
+/** Empty praise. Warnings only: they do not block approval. */
+const PRAISE_SOURCE =
+  "\\b(?:unique|stunning|beautiful|amazing|gorgeous|perfect|premium|awesome|incredible|wonderful|exquisite|breathtaking|luxurious|luxury|bestseller)s?\\b|\\bgift idea\\b";
+
+const TAG_STOP = new Set(["for", "the", "and", "with", "from", "your", "this", "that", "you"]);
+
+function praiseWords(text: string) {
+  return [...new Set((text.match(new RegExp(PRAISE_SOURCE, "gi")) ?? []).map((w) => w.toLowerCase()))];
+}
+
+function singularize(word: string) {
+  const w = word.toLowerCase();
+  if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
+  if (w.length > 4 && /(?:ches|shes|xes|zes|ses)$/.test(w)) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
+function tagStem(tag: string) {
+  return tag
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map(singularize)
+    .join(" ");
+}
 
 function findTrademarks(text: string) {
   const lower = text.toLowerCase();
@@ -151,6 +181,80 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
 
   if (!(d.priceChf >= ETSY_LIMITS.priceMinChf)) {
     push({ field: "price", severity: "error", code: "price_low", message: "Price must be at least CHF 0.20." });
+  }
+
+  const facts = d.deliverable ?? defaultDeliverable(d.productType);
+  const promiseOn = (field: ValidationIssue["field"], text: string) => {
+    const labels = promiseLabels(text, facts);
+    if (!labels.length) return;
+    push({
+      field,
+      severity: "error",
+      code: "undeliverable_promise",
+      message: `${field === "tags" ? "Tag" : field[0].toUpperCase() + field.slice(1)} promises ${labels.join(", ")} but the deliverable does not include it.`,
+    });
+  };
+  promiseOn("title", title);
+  for (const tag of tags) promiseOn("tags", tag);
+  promiseOn("description", description);
+
+  for (const [field, text] of [
+    ["title", title],
+    ["description", description],
+  ] as const) {
+    const words = praiseWords(text);
+    if (words.length) {
+      push({
+        field,
+        severity: "warning",
+        code: "empty_praise",
+        message: `Drop empty praise (${words.join(", ")}).`,
+      });
+    }
+  }
+  const praisedTags = tags.flatMap((tag) => praiseWords(tag));
+  if (praisedTags.length) {
+    push({
+      field: "tags",
+      severity: "warning",
+      code: "empty_praise",
+      message: `Drop empty praise in tags (${[...new Set(praisedTags)].join(", ")}).`,
+    });
+  }
+
+  const stems = new Map<string, string>();
+  for (const tag of tags) {
+    const exact = tag.trim().toLowerCase();
+    const stem = tagStem(exact);
+    const prior = stems.get(stem);
+    if (prior && prior !== exact) {
+      push({
+        field: "tags",
+        severity: "warning",
+        code: "tag_plural_twin",
+        message: `“${prior}” and “${exact}” are the same phrase with a plural. Keep one.`,
+      });
+    }
+    if (!prior) stems.set(stem, exact);
+  }
+
+  const wordTags = new Map<string, number>();
+  for (const tag of tags) {
+    const seenInTag = new Set<string>();
+    for (const word of tag.toLowerCase().split(/[^a-z0-9']+/)) {
+      if (word.length < 3 || TAG_STOP.has(word) || seenInTag.has(word)) continue;
+      seenInTag.add(word);
+      wordTags.set(word, (wordTags.get(word) ?? 0) + 1);
+    }
+  }
+  const repeated = [...wordTags.entries()].filter(([, n]) => n >= 4).map(([word, n]) => `${word} (${n})`);
+  if (repeated.length) {
+    push({
+      field: "tags",
+      severity: "warning",
+      code: "tag_repeated_word",
+      message: `The same word is in too many tags: ${repeated.join(", ")}.`,
+    });
   }
 
   return { valid: !issues.some((i) => i.severity === "error"), issues };

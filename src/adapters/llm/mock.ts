@@ -1,5 +1,5 @@
 import type { Niche } from "@/db/schema";
-import { DIGITAL_FILE_BLURB } from "@/lib/delivery";
+import { DIGITAL_FILE_BLURB, defaultDeliverable, leadPhrase, promiseLabels } from "@/lib/delivery";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
 const title = (s: string) => s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
@@ -41,22 +41,22 @@ const NICHE_COPY: Record<Niche, { hooks: string[]; tags: string[]; body: string 
     body: "A warm, hand-drawn holiday scene in pine green and candle red. Made for slow winter mornings, cozy evenings and thoughtful gifts under the tree.",
   },
   birthday: {
-    hooks: ["Editable Birthday Invitation Template", "Instant Download Party Invite", "Whimsical Kids Birthday Invite"],
+    hooks: ["Pastel Birthday Party Art", "Whimsical Birthday Illustration", "Soft Pastel Party Artwork"],
     tags: [
-      "birthday invitation", "editable invite", "kids party invite", "printable invite", "instant download",
-      "first birthday", "silly goose party", "girl birthday", "boy birthday", "party template",
-      "party invite file", "evite digital", "pastel invitation", "phone invitation", "diy invitation",
+      "birthday art", "party artwork", "kids party art", "pastel party", "birthday png",
+      "first birthday", "silly goose party", "girl birthday", "boy birthday", "party decor",
+      "birthday image", "pastel artwork", "kids birthday", "party print", "birthday graphic",
     ],
-    body: "A playful birthday invitation artwork in a pastel palette. The download is the single PNG described below, ready to print or share as an image.",
+    body: "A playful birthday illustration in a pastel palette. The download is the single PNG described below.",
   },
   stream: {
-    hooks: ["Neon Stream Overlay Package", "Cute Emote And Overlay Pack", "Pastel Streamer Asset Bundle"],
+    hooks: ["Neon Stream Artwork", "Purple Cyan Stream Art", "Pastel Stream Illustration"],
     tags: [
-      "stream overlay", "streamer package", "emote pack", "vtuber assets", "stream panels",
-      "neon overlay", "obs overlay", "gaming overlay", "webcam frame", "stream alerts",
-      "cute emotes", "streamer gift", "starting soon", "animated overlay", "kick overlay",
+      "stream art", "neon artwork", "purple cyan", "streamer decor", "gaming art",
+      "obs graphic", "neon scene", "stream image", "cyan artwork", "gamer gift",
+      "neon png", "streamer gift", "desk setup", "rgb art", "single image",
     ],
-    body: "A neon streaming graphic in purple and cyan. The download is one PNG you can place in OBS or Streamlabs as a single overlay image.",
+    body: "A neon graphic in purple and cyan. The download is one opaque PNG.",
   },
 };
 
@@ -82,23 +82,24 @@ export class MockLLMProvider implements LLMProvider {
     else if (/\bart\b/i.test(brief.keyword) && noun === PRODUCT_NOUN.posterA3) noun = "Poster Print";
     if (/\bprintable\b/i.test(brief.keyword) && noun === PRODUCT_NOUN.digital) noun = "Instant Digital Download";
     const hook = copy.hooks[brief.seed % copy.hooks.length];
-    const kw = title(brief.keyword);
-    const t = `${kw} ${noun}, ${hook}, Unique Gift Idea`;
+    const facts = defaultDeliverable(brief.productType);
+    const lead = leadPhrase(brief.keyword, brief.niche, brief.productType);
+    const kw = title(lead);
+    const t = `${kw} ${noun} | ${hook}`;
 
-    const kwTag = fitTag(brief.keyword.toLowerCase());
-    const pool = [kwTag, ...copy.tags];
+    const kwTag = fitTag(lead);
     const start = brief.seed % copy.tags.length;
     const rotated = [kwTag, ...copy.tags.slice(start), ...copy.tags.slice(0, start)];
     const tags: string[] = [];
-    for (const tag of rotated.length ? rotated : pool) {
-      if (tag.length <= 20 && !tags.includes(tag)) tags.push(tag);
+    for (const tag of rotated) {
+      if (tag.length <= 20 && !tags.includes(tag) && promiseLabels(tag, facts).length === 0) tags.push(tag);
       if (tags.length === 13) break;
     }
 
     const what =
       brief.productType === "digital"
         ? DIGITAL_FILE_BLURB
-        : "DETAILS\n• Premium print, made to order\n• Printed and shipped by our production partner\n• Colors may vary slightly between screens";
+        : "DETAILS\n• Made to order\n• Printed and shipped by our production partner\n• Colors may vary slightly between screens";
     return {
       title: t,
       tags,

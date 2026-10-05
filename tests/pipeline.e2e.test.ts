@@ -5,6 +5,7 @@ import { designs, events, keywords, listings, orders } from "@/db/schema";
 import { validateListing } from "@/lib/listing-validator";
 import { getSetting, setSetting } from "@/lib/settings";
 import { getAnalytics } from "@/lib/queries";
+import { publishPodListingToEtsy, recordPodSample } from "@/pipeline/human-publish";
 import { runStage } from "@/pipeline/runner";
 
 function seeded(seed: number) {
@@ -69,9 +70,28 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     expect(p.status).toBe("success");
     expect(p.summary).toContain("dry-run");
     const [published] = await db.select().from(listings).where(eq(listings.id, target.id));
-    expect(published.status).toBe("published");
     expect(published.publishMode).toBe("dry-run");
-    expect(published.etsyListingId).toMatch(/^dry-/);
+    if (published.productType === "pod") {
+      expect(published.status).toBe("pod_created");
+      expect(published.etsyListingId).toBeNull();
+      expect(published.podBlueprintId).toBeTruthy();
+      await recordPodSample(db, {
+        blueprintId: published.podBlueprintId!,
+        providerId: published.podPrintProviderId!,
+        actor: "kai",
+        note: "sample",
+      });
+      const sent = await publishPodListingToEtsy(db, published.id);
+      expect(sent.ok).toBe(true);
+    } else {
+      expect(published.status).toBe("published");
+      expect(published.activatedAt).toBeNull();
+      expect(published.etsyListingId).toMatch(/^dry-/);
+      expect(published.imageUrl).not.toBe(published.deliveryUrl);
+    }
+    const [afterPublish] = await db.select().from(listings).where(eq(listings.id, target.id));
+    expect(afterPublish.status).toBe("published");
+    expect(afterPublish.etsyListingId).toMatch(/^dry-/);
 
     const ordersBefore = await count(db, orders);
     const o = await runStage("orders", "manual", { db, random });

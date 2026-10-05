@@ -31,8 +31,11 @@ describe("POD mockups", () => {
     expect(pod.provider).toBe("template-mockup");
     const poster = await listingImageForProduct({ productType: "pod", artworkUrl: art, preset: "posterA3", niche: "gothic" });
     expect(poster.url).toContain("/api/mockup/posterA3");
-    const digital = await listingImageForProduct({ productType: "digital", artworkUrl: art, niche: "birthday" });
-    expect(digital).toEqual({ url: art, provider: "artwork", mocked: false });
+    const digital = await listingImageForProduct({ productType: "digital", artworkUrl: art, niche: "alpine" });
+    expect(digital.provider).toBe("preview");
+    expect(digital.mocked).toBe(true);
+    expect(digital.url).not.toBe(art);
+    expect(digital.url).toContain("/api/preview");
   });
 
   it("sends the design file to print, not the mockup", () => {
@@ -140,5 +143,20 @@ describe("digital delivery copy", () => {
     expect(body).not.toMatch(/2:3|canva|11x14/i);
     expect(body).toContain("One PNG of this artwork");
     expect(alignDeliveryCopy("Printed by our partner.", "pod")).toBe("Printed by our partner.");
+    expect(alignDeliveryCopy("A poster.\nCommercial use and a transparent SVG bundle.", "pod")).toBe("A poster.");
+  });
+
+  it("does not lead with a keyword that promises a file the shop does not make", async () => {
+    const copy = await new MockLLMProvider().writeListing({
+      keyword: "editable birthday invite",
+      niche: "birthday",
+      productType: "digital",
+      seed: 0,
+    });
+    expect(copy.title.toLowerCase().startsWith("birthday party art")).toBe(true);
+    expect(copy.title).not.toMatch(/unique gift idea|editable|template|evite/i);
+    expect(copy.tags[0]).toBe("birthday party art");
+    expect(copy.tags.join(" ")).not.toMatch(/editable|template|evite|pack|bundle/);
+    expect(copy.body).toContain("One PNG of this artwork");
   });
 });
