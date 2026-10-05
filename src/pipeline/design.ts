@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { costs, designs, keywords } from "@/db/schema";
+import { persistableImageUrl } from "@/lib/compact-image-url";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
@@ -68,12 +69,13 @@ export const runDesign: StageFn = async (ctx) => {
         aspectRatio: kw.niche === "stream" ? "16:9" : "2:3",
         label: kw.phrase,
       });
+      const imageUrl = await persistableImageUrl(img.url);
       await db.insert(designs).values({
         keywordId: kw.id,
         niche: kw.niche,
         prompt,
         provider: img.provider,
-        imageUrl: img.url,
+        imageUrl,
         costChf: img.costChf,
         isDemo: isDemoMode(),
       });
@@ -84,7 +86,6 @@ export const runDesign: StageFn = async (ctx) => {
       spentMonth += img.costChf;
       await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       made++;
-      if (img.url.startsWith("data:")) log(`“${kw.phrase}” kept as a data URL. Set S3 or BLOB_READ_WRITE_TOKEN to store the file.`, "warn");
       log(`Generated design for “${kw.phrase}”`);
     } catch (e) {
       log(`Generation failed for “${kw.phrase}”: ${(e as Error).message}`, "error");
