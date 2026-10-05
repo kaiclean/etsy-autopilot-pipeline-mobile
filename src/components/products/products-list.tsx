@@ -230,10 +230,10 @@ function HumanPublish({ l }: { l: Listing }) {
         {l.podPrintProviderId ? ` · provider ${l.podPrintProviderId}` : ""}
         {l.podPublishedAt ? " · sent to Etsy" : " · not sent to Etsy"}
       </p>
-      {!l.podBlueprintId || !l.podPrintProviderId ? (
-        <p className="text-muted-foreground">A sample can be recorded only after a Printify create stores the blueprint id and print provider id.</p>
-      ) : l.status === "publishing" ? (
+      {l.status === "publishing" ? (
         <p className="text-muted-foreground">Sent to Etsy. This listing stays here until the Etsy listing id arrives from Printify.</p>
+      ) : !l.podBlueprintId || !l.podPrintProviderId ? (
+        <p className="text-muted-foreground">A sample can be recorded only after a Printify create stores the blueprint id and print provider id.</p>
       ) : l.status !== "pod_created" ? (
         <p className="text-muted-foreground">Publish to Etsy is only for a Printify product that has not been sent yet.</p>
       ) : (
