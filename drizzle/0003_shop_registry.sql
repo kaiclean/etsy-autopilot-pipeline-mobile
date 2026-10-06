@@ -1,4 +1,4 @@
-CREATE TABLE "shops" (
+CREATE TABLE IF NOT EXISTS "shops" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" text NOT NULL,
 	"display_name" text NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE "shops" (
 	CONSTRAINT "shops_etsy_shop_id_unique" UNIQUE("etsy_shop_id")
 );
 --> statement-breakpoint
-CREATE TABLE "shop_connections" (
+CREATE TABLE IF NOT EXISTS "shop_connections" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"shop_id" uuid NOT NULL,
 	"provider" text NOT NULL,
@@ -30,16 +30,22 @@ CREATE TABLE "shop_connections" (
 	CONSTRAINT "shop_connections_shop_provider" UNIQUE("shop_id","provider")
 );
 --> statement-breakpoint
-CREATE TABLE "shop_automation" (
+CREATE TABLE IF NOT EXISTS "shop_automation" (
 	"shop_id" uuid PRIMARY KEY NOT NULL,
 	"automation" jsonb NOT NULL,
 	"stages" jsonb NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "shop_connections" ADD CONSTRAINT "shop_connections_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+DO $$ BEGIN
+	ALTER TABLE "shop_connections" ADD CONSTRAINT "shop_connections_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "shop_automation" ADD CONSTRAINT "shop_automation_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+DO $$ BEGIN
+	ALTER TABLE "shop_automation" ADD CONSTRAINT "shop_automation_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
 INSERT INTO "shops" ("slug", "display_name", "etsy_shop_name", "currency", "locale", "market_locale", "status", "publish_mode", "kill_switch")
 VALUES ('omnishop-ch', 'OmniShop CH', 'OmniShopByKaiArt', 'CHF', 'en', 'de-CH', 'dry-run', 'dry-run', false)
@@ -87,19 +93,33 @@ LANGUAGE sql STABLE AS $$
 	SELECT id FROM shops WHERE slug = 'omnishop-ch' LIMIT 1
 $$;
 --> statement-breakpoint
-ALTER TABLE "keywords" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "keywords" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "designs" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "designs" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "listings" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "listings" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "orders" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "job_runs" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "job_runs" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "events" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "events" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "costs" ADD COLUMN "shop_id" uuid;
+ALTER TABLE "costs" ADD COLUMN IF NOT EXISTS "shop_id" uuid;
+--> statement-breakpoint
+ALTER TABLE "keywords" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "designs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "listings" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "orders" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "job_runs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "events" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+--> statement-breakpoint
+ALTER TABLE "costs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
 --> statement-breakpoint
 UPDATE "keywords" SET "shop_id" = current_omnishop_id() WHERE "shop_id" IS NULL;
 --> statement-breakpoint
@@ -129,30 +149,37 @@ ALTER TABLE "events" ALTER COLUMN "shop_id" SET NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "costs" ALTER COLUMN "shop_id" SET NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "keywords" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "keywords" ADD CONSTRAINT "keywords_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "designs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "designs" ADD CONSTRAINT "designs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "listings" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "listings" ADD CONSTRAINT "listings_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "orders" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "orders" ADD CONSTRAINT "orders_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "job_runs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "job_runs" ADD CONSTRAINT "job_runs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "events" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
+DO $$ BEGIN
+	ALTER TABLE "events" ADD CONSTRAINT "events_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "costs" ALTER COLUMN "shop_id" SET DEFAULT current_omnishop_id();
---> statement-breakpoint
-ALTER TABLE "keywords" ADD CONSTRAINT "keywords_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "designs" ADD CONSTRAINT "designs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "listings" ADD CONSTRAINT "listings_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "job_runs" ADD CONSTRAINT "job_runs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "events" ADD CONSTRAINT "events_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "costs" ADD CONSTRAINT "costs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+DO $$ BEGIN
+	ALTER TABLE "costs" ADD CONSTRAINT "costs_shop_id_shops_id_fk" FOREIGN KEY ("shop_id") REFERENCES "public"."shops"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
