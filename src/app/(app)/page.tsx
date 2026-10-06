@@ -8,7 +8,8 @@ import { NextActions } from "@/components/home/next-actions";
 import { RunPipelineButton } from "@/components/run-button";
 import { chf, relTime, TZ } from "@/lib/format";
 import { buildNextActions, toStageSnapshots } from "@/lib/next-actions";
-import { getConnectionsData, getHomeData } from "@/lib/queries";
+import { AlertRail } from "@/components/alert-rail";
+import { getCockpitAlerts, getConnectionsData, getHomeData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 function greeting() {
@@ -17,7 +18,7 @@ function greeting() {
 }
 
 export default async function HomePage() {
-  const [data, connections] = await Promise.all([getHomeData(), getConnectionsData()]);
+  const [data, connections, alerts] = await Promise.all([getHomeData(), getConnectionsData(), getCockpitAlerts()]);
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
   const attention = buildNextActions({
@@ -46,6 +47,7 @@ export default async function HomePage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           <NextActions items={attention} />
+          <AlertRail alerts={alerts} />
           <ConnectionsStrip checks={connections.checks} />
           {!connections.etsyConnected && <EtsyConnectCta canConnect={connections.canConnectEtsy} />}
           <HeroKpis kpis={data.kpis} series={data.series} />

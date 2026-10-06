@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getDb, type DB } from "@/db";
-import { events, listings, orders, type Listing } from "@/db/schema";
+import { events, listings, orders, shops, type Listing } from "@/db/schema";
 import { calculateFees } from "@/lib/fees";
 import { externalEtsyIdFromProduct, ETSY_ID_WAIT_MS, resolvePodPublish } from "@/lib/pod-etsy-id";
 import { DEFAULT_PUSH_PREFS, pushEventEnabled } from "@/lib/push-prefs";
@@ -35,6 +35,7 @@ async function insertListing(db: DB, overrides: Partial<Listing> & Pick<Listing,
       netChf: src.netChf,
       marginPct: src.marginPct,
       status: overrides.status,
+      ...(overrides.shopId ? { shopId: overrides.shopId } : {}),
       etsyListingId: overrides.etsyListingId ?? null,
       printifyProductId: overrides.printifyProductId ?? null,
       podBlueprintId: overrides.podBlueprintId ?? null,
@@ -198,7 +199,7 @@ describe("POD Etsy id sync and unmatched receipts", () => {
         { receiptId: "receipt-known-1", etsyListingId: "111222333", buyerCountry: "DE", quantity: 1, totalChf: 40, createdAt: now },
       ],
       new Map([[known.etsyListingId!, known]]),
-      { offsite: () => false, log: (msg) => logs.push(msg) },
+      { offsite: () => false, log: (msg) => logs.push(msg), shopId: known.shopId },
     );
     expect(saved).toEqual({ inserted: 2, unmatched: 1 });
     expect(logs.join("\n")).toMatch(/saved as unmatched/);
@@ -214,6 +215,7 @@ describe("POD Etsy id sync and unmatched receipts", () => {
 
     const [pending] = await db.select().from(orders).where(eq(orders.etsyReceiptId, "receipt-unknown-1"));
     expect(pending.listingId).toBeNull();
+    expect(pending.shopId).toBe(known.shopId);
     expect(pending.matchStatus).toBe("unmatched");
     expect(pending.unmatchedEtsyListingId).toBe("1234567890");
     expect(pending.profitChf).toBe(0);
@@ -357,5 +359,97 @@ describe("POD Etsy id sync and unmatched receipts", () => {
     expect(done.status).toBe("published");
     expect(done.etsyListingId).toBe("777666555");
     await db.delete(orders).where(inArray(orders.etsyReceiptId, ["receipt-unknown-1", "receipt-known-1", "receipt-webhook-etsy"]));
+  });
+
+  it("keeps Etsy-id sync inside the shop that owns the listing and the receipt", async () => {
+    const db = await getDb();
+    const now = new Date();
+    const [home] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    expect(home?.id).toBeTruthy();
+    const [other] = await db
+      .insert(shops)
+      .values({ slug: "other-shop-etsy-sync", displayName: "Other shop" })
+      .returning();
+    const homeListing = await insertListing(db, {
+      shopId: home.id,
+      status: "publishing",
+      productType: "pod",
+      printifyProductId: "pfy-home-shop",
+      publishedAt: now,
+      podCostChf: 8,
+      priceChf: 40,
+    });
+    const otherListing = await insertListing(db, {
+      shopId: other.id,
+      status: "published",
+      productType: "pod",
+      printifyProductId: "pfy-other-shop",
+      etsyListingId: null,
+      publishedAt: now,
+    });
+    await db.insert(orders).values([
+      {
+        shopId: home.id,
+        etsyReceiptId: "receipt-home-shop",
+        listingId: null,
+        unmatchedEtsyListingId: "555000111",
+        matchStatus: "unmatched",
+        buyerCountry: "CH",
+        quantity: 1,
+        totalChf: 40,
+        feesChf: 1,
+        profitChf: 0,
+        fulfillmentStatus: "pending",
+        createdAt: now,
+      },
+      {
+        shopId: other.id,
+        etsyReceiptId: "receipt-other-shop",
+        listingId: null,
+        unmatchedEtsyListingId: "555000111",
+        matchStatus: "unmatched",
+        buyerCountry: "DE",
+        quantity: 1,
+        totalChf: 40,
+        feesChf: 1,
+        profitChf: 0,
+        fulfillmentStatus: "pending",
+        createdAt: now,
+      },
+    ]);
+
+    const seen: string[] = [];
+    const result = await syncAwaitingEtsyIds(db, {
+      now,
+      shopId: home.id,
+      lookup: async (ids) => {
+        seen.push(...ids);
+        return Object.fromEntries(ids.map((id) => [id, id === "pfy-home-shop" ? "555000111" : null]));
+      },
+    });
+    expect(result.linked).toBeGreaterThanOrEqual(1);
+    expect(seen).toContain("pfy-home-shop");
+    expect(seen).not.toContain("pfy-other-shop");
+
+    const [homeAfter] = await db.select().from(listings).where(eq(listings.id, homeListing.id));
+    const [otherAfter] = await db.select().from(listings).where(eq(listings.id, otherListing.id));
+    const [homeOrder] = await db.select().from(orders).where(eq(orders.etsyReceiptId, "receipt-home-shop"));
+    const [otherOrder] = await db.select().from(orders).where(eq(orders.etsyReceiptId, "receipt-other-shop"));
+    expect(homeAfter.status).toBe("published");
+    expect(homeAfter.etsyListingId).toBe("555000111");
+    expect(homeAfter.shopId).toBe(home.id);
+    expect(homeOrder.listingId).toBe(homeListing.id);
+    expect(homeOrder.matchStatus).toBe("matched");
+    expect(homeOrder.shopId).toBe(home.id);
+    expect(otherAfter.status).toBe("published");
+    expect(otherAfter.etsyListingId).toBeNull();
+    expect(otherAfter.shopId).toBe(other.id);
+    expect(otherOrder.matchStatus).toBe("unmatched");
+    expect(otherOrder.listingId).toBeNull();
+    expect(otherOrder.shopId).toBe(other.id);
+
+    await db.delete(orders).where(inArray(orders.etsyReceiptId, ["receipt-home-shop", "receipt-other-shop"]));
+    await db.delete(listings).where(inArray(listings.id, [homeListing.id, otherListing.id]));
+    await db.delete(shops).where(eq(shops.id, other.id));
   });
 });

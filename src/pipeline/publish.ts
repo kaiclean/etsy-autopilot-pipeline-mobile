@@ -3,7 +3,7 @@ import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, designs, listings } from "@/db/schema";
-import { config, isDemoMode, publicAppUrl } from "@/lib/config";
+import { config, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
@@ -134,10 +134,11 @@ export const runPublish: StageFn = async (ctx) => {
         })
         .where(eq(listings.id, l.id));
       await db.insert(costs).values({
+        shopId: ctx.shopId,
         kind: "listing_fee",
         amountChf: round2(FEES.listingFeeUsd * FEES.usdToChf * (1 + FEES.vatOnFeesRate)),
         note: `Listing fee #${l.id}${mode === "dry-run" ? " (dry-run, not charged)" : ""}`,
-        isDemo: isDemoMode(),
+        isDemo: ctx.demo,
       });
       ok++;
     } catch (e) {
@@ -162,10 +163,10 @@ export const runPublish: StageFn = async (ctx) => {
       body: etsy.mode === "dry-run" ? "Dry-run: nothing was sent to Etsy or Printify" : "Sent to Etsy",
       severity: "success",
       href: "/products",
-    });
+    }, ctx.demo);
   }
   if (failed) {
-    await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" });
+    await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" }, ctx.demo);
   }
   const summary = `Published ${ok}, failed ${failed} (${etsy.mode})`;
   if (failed > 0) throw new Error(summary);

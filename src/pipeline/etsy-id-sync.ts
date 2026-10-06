@@ -24,7 +24,7 @@ function waitingSince(row: Pick<Listing, "podPublishedAt" | "publishedAt" | "upd
  * POD rows that were sent to Etsy without an id are not fully published.
  * `pod_created` with no `podPublishedAt` is only a Printify product: leave it alone.
  */
-export async function reclassifyStuckPodListings(db: DB, now = new Date()) {
+export async function reclassifyStuckPodListings(db: DB, now = new Date(), shopId?: string) {
   const stuck = await db
     .select()
     .from(listings)
@@ -36,6 +36,7 @@ export async function reclassifyStuckPodListings(db: DB, now = new Date()) {
           eq(listings.status, "published"),
           and(eq(listings.status, "pod_created"), isNotNull(listings.podPublishedAt)),
         ),
+        shopId ? eq(listings.shopId, shopId) : undefined,
       ),
     );
   for (const row of stuck) {
@@ -54,14 +55,14 @@ export async function reclassifyStuckPodListings(db: DB, now = new Date()) {
 /** Attach saved receipts that were waiting on this Etsy listing id. Profit is filled in here. */
 export async function linkUnmatchedOrders(
   db: DB,
-  listing: Pick<Listing, "id" | "title" | "productType" | "podCostChf">,
+  listing: Pick<Listing, "id" | "shopId" | "title" | "productType" | "podCostChf">,
   etsyListingId: string,
   now: Date,
 ) {
   const pending = await db
     .select()
     .from(orders)
-    .where(and(eq(orders.unmatchedEtsyListingId, etsyListingId), eq(orders.matchStatus, "unmatched")));
+    .where(and(eq(orders.shopId, listing.shopId), eq(orders.unmatchedEtsyListingId, etsyListingId), eq(orders.matchStatus, "unmatched")));
   for (const order of pending) {
     const unit = order.quantity > 0 ? order.totalChf / order.quantity : order.totalChf;
     const fees = calculateFees({
@@ -92,6 +93,7 @@ export async function linkUnmatchedOrders(
       body: `${listing.title.slice(0, 70)} · Etsy ${etsyListingId}`,
       severity: "success",
       href: "/orders",
+      shopId: listing.shopId,
     });
   }
   return pending.length;
@@ -103,11 +105,14 @@ export async function linkUnmatchedOrders(
  */
 export async function syncAwaitingEtsyIds(
   db: DB,
-  opts: { now: Date; lookup: ExternalEtsyIdLookup; log?: LogFn },
+  opts: { now: Date; lookup: ExternalEtsyIdLookup; log?: LogFn; shopId?: string },
 ): Promise<EtsyIdSyncResult> {
   const log = opts.log ?? (() => {});
-  const reclassified = await reclassifyStuckPodListings(db, opts.now);
-  const awaiting = await db.select().from(listings).where(eq(listings.status, "publishing"));
+  const reclassified = await reclassifyStuckPodListings(db, opts.now, opts.shopId);
+  const awaiting = await db
+    .select()
+    .from(listings)
+    .where(and(eq(listings.status, "publishing"), opts.shopId ? eq(listings.shopId, opts.shopId) : undefined));
   const withProduct = awaiting.filter((row) => row.printifyProductId);
   let reads: Record<string, string | null> = {};
   if (withProduct.length) {
@@ -158,6 +163,7 @@ export async function syncAwaitingEtsyIds(
       body: `${labels} ${overdue.length === 1 ? "has" : "have"} been waiting more than 24 hours after Printify publish. Orders for ${overdue.length === 1 ? "it are" : "them are"} kept until the id arrives.`,
       severity: "warning",
       href: "/products",
+      shopId: opts.shopId,
     });
     await db.update(listings).set({ etsyIdWaitAlertedAt: opts.now, updatedAt: opts.now }).where(inArray(listings.id, overdue.map((row) => row.id)));
     alerted = overdue.length;
@@ -173,14 +179,14 @@ export async function syncAwaitingEtsyIds(
 /** Status-only pass, or the same poll the orders stage runs. `--fetch` is a Printify GET, not a write. */
 export async function backfillEtsyListingIds(
   db: DB,
-  opts: { now?: Date; fetchExternalIds?: boolean; lookup?: ExternalEtsyIdLookup; log?: LogFn } = {},
+  opts: { now?: Date; fetchExternalIds?: boolean; lookup?: ExternalEtsyIdLookup; log?: LogFn; shopId?: string } = {},
 ): Promise<EtsyIdSyncResult & { fetched: boolean }> {
   const now = opts.now ?? new Date();
   if (!opts.fetchExternalIds) {
-    const reclassified = await reclassifyStuckPodListings(db, now);
+    const reclassified = await reclassifyStuckPodListings(db, now, opts.shopId);
     return { reclassified, linked: 0, waiting: 0, alerted: 0, fetched: false };
   }
   if (!opts.lookup) throw new Error("PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID are required to fetch Etsy ids. The fetch is a GET of the Printify product and does not publish.");
-  const result = await syncAwaitingEtsyIds(db, { now, lookup: opts.lookup, log: opts.log });
+  const result = await syncAwaitingEtsyIds(db, { now, lookup: opts.lookup, log: opts.log, shopId: opts.shopId });
   return { ...result, fetched: true };
 }

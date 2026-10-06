@@ -26,8 +26,15 @@
     {
       "idx": 3,
       "version": "7",
-      "when": 1791194200000,
-      "tag": "0003_pod_etsy_id_sync",
+      "when": 1791291651763,
+      "tag": "0003_shop_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0004_pod_etsy_id_sync",
       "breakpoints": true
     }
   ]
