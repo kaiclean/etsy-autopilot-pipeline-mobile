@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx src/db/seed-cli.ts",
+    "db:clear-fake-orders": "tsx src/db/clear-fake-orders.ts",
+    "images:backfill": "tsx src/db/backfill-image-urls.ts",
     "vapid:generate": "node scripts/generate-vapid-keys.mjs"
   },
   "dependencies": {

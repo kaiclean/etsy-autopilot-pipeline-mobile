@@ -19,10 +19,11 @@ export class EtsyLiveClient implements EtsyAdapter {
   constructor(
     private tokens: EtsyTokens,
     private saveTokens: (t: EtsyTokens) => Promise<void>,
+    private shopIdOverride?: string,
   ) {}
 
   private get shopId() {
-    const id = config.etsy.shopId;
+    const id = this.shopIdOverride || config.etsy.shopId;
     if (!id) throw new Error("ETSY_SHOP_ID missing");
     return id;
   }

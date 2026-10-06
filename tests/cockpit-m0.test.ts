@@ -260,7 +260,5 @@ describe("catalog draft", () => {
     expect(panel).toContain("Mark reviewed by Kai");
     expect(panel).toContain("Open diff");
     expect(panel).not.toMatch(/Apply/);
-    const schema = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
-    expect(schema).not.toContain('pgTable("shops"');
   });
 });

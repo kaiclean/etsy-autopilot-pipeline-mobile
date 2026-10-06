@@ -1,27 +1,44 @@
 import { and, desc, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter, type PrintifyOrderStatus } from "@/adapters/printify";
-import { listings, orders } from "@/db/schema";
+import { listings, orders, shops } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
-import { emit } from "@/lib/events";
+import { emit, visible } from "@/lib/events";
 import { calculateFees } from "@/lib/fees";
+import { persistedOrderIsDemo, publishedListingsWhere, realOrderCursorWhere, receiptLookback, shouldSimulateReceipts } from "@/lib/real-orders";
 import type { StageFn } from "./types";
 
 export const runOrders: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const etsy = await getEtsyAdapter(db, ctx.random, "read");
   const published = await db
-    .select()
+    .select({
+      id: listings.id,
+      etsyListingId: listings.etsyListingId,
+      priceChf: listings.priceChf,
+      productType: listings.productType,
+      podCostChf: listings.podCostChf,
+      title: listings.title,
+    })
     .from(listings)
-    .where(and(eq(listings.status, "published"), isNotNull(listings.etsyListingId)));
+    .where(publishedListingsWhere(ctx.shopId));
   const byEtsyId = new Map(published.map((l) => [l.etsyListingId!, l]));
 
-  const [last] = await db.select({ createdAt: orders.createdAt }).from(orders).orderBy(desc(orders.createdAt)).limit(1);
-  const since = last?.createdAt ?? new Date(ctx.now.getTime() - 30 * 864e5);
+  const [shop] = await db
+    .select({ createdAt: shops.createdAt, etsyShopId: shops.etsyShopId })
+    .from(shops)
+    .where(eq(shops.id, ctx.shopId));
+  const [lastReal] = await db
+    .select({ createdAt: orders.createdAt })
+    .from(orders)
+    .where(realOrderCursorWhere(ctx.shopId))
+    .orderBy(desc(orders.createdAt))
+    .limit(1);
+  const since = lastReal?.createdAt ?? receiptLookback(ctx.now, shop?.createdAt ?? null);
   const receipts = await etsy.getReceipts({
     since,
     candidates: published.map((l) => ({ etsyListingId: l.etsyListingId!, priceChf: l.priceChf, productType: l.productType })),
-    simulateAtLeastOne: ctx.trigger !== "cron",
+    simulateAtLeastOne: shouldSimulateReceipts(etsy.mode, ctx.trigger),
   });
   log(`Etsy (${etsy.mode}) returned ${receipts.length} receipt line(s) since ${since.toISOString()}`);
 
@@ -43,35 +60,50 @@ export const runOrders: StageFn = async (ctx) => {
     }
     const offsite = etsy.mode === "dry-run" ? ctx.random() < 0.12 : false;
     const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: l.podCostChf, offsiteAds: offsite });
-    await db.insert(orders).values({
-      etsyReceiptId: r.receiptId,
-      listingId: l.id,
-      buyerCountry: r.buyerCountry,
-      quantity: r.quantity,
-      totalChf: fees.revenueChf,
-      feesChf: fees.totalEtsyFeesChf,
-      podCostChf: fees.podCostChf,
-      offsiteAdsChf: fees.offsiteAdsFeeChf,
-      profitChf: fees.netChf,
-      fulfillmentStatus: l.productType === "digital" ? "delivered_digital" : "pending",
-      podOrderId: l.productType === "pod" && etsy.mode === "dry-run" ? `dry-po-${r.receiptId}` : null,
-      isDemo: isDemoMode(),
-      createdAt: r.createdAt,
-    });
+    const persistDemo = persistedOrderIsDemo(isDemoMode(shop?.etsyShopId), etsy.mode);
+    const insertedRows = await db
+      .insert(orders)
+      .values({
+        shopId: ctx.shopId,
+        etsyReceiptId: r.receiptId,
+        listingId: l.id,
+        buyerCountry: r.buyerCountry,
+        quantity: r.quantity,
+        totalChf: fees.revenueChf,
+        feesChf: fees.totalEtsyFeesChf,
+        podCostChf: fees.podCostChf,
+        offsiteAdsChf: fees.offsiteAdsFeeChf,
+        profitChf: fees.netChf,
+        fulfillmentStatus: l.productType === "digital" ? "delivered_digital" : "pending",
+        podOrderId: l.productType === "pod" && etsy.mode === "dry-run" ? `dry-po-${r.receiptId}` : null,
+        isDemo: persistDemo,
+        createdAt: r.createdAt,
+      })
+      .onConflictDoNothing({ target: orders.etsyReceiptId })
+      .returning({ id: orders.id });
+    if (insertedRows.length === 0) continue;
     inserted++;
+    existing.add(r.receiptId);
     await emit(db, {
       type: "order.new",
       title: `New order · CHF ${fees.revenueChf.toFixed(2)}`,
       body: `${l.title.slice(0, 70)} → ${r.buyerCountry} · profit CHF ${fees.netChf.toFixed(2)}`,
       severity: "success",
       href: "/orders",
-    });
+    }, persistDemo);
   }
 
   const open = await db
     .select({ id: orders.id, podOrderId: orders.podOrderId, status: orders.fulfillmentStatus })
     .from(orders)
-    .where(and(isNotNull(orders.podOrderId), notInArray(orders.fulfillmentStatus, ["delivered", "delivered_digital"])));
+    .where(
+      and(
+        eq(orders.shopId, ctx.shopId),
+        isNotNull(orders.podOrderId),
+        notInArray(orders.fulfillmentStatus, ["delivered", "delivered_digital"]),
+        visible(orders.isDemo),
+      ),
+    );
   let advanced = 0;
   if (open.length) {
     const known = Object.fromEntries(open.map((o) => [o.podOrderId!, o.status as PrintifyOrderStatus]));
