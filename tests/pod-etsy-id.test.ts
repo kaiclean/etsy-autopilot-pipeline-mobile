@@ -6,6 +6,7 @@ import { calculateFees } from "@/lib/fees";
 import { externalEtsyIdFromProduct, ETSY_ID_WAIT_MS, resolvePodPublish } from "@/lib/pod-etsy-id";
 import { DEFAULT_PUSH_PREFS, pushEventEnabled } from "@/lib/push-prefs";
 import { ingestPrintifyWebhook } from "@/lib/printify-webhook";
+import { activateDigitalListing, publishPodListingToEtsy } from "@/pipeline/human-publish";
 import { saveReceipts } from "@/pipeline/orders";
 import { backfillEtsyListingIds, reclassifyStuckPodListings, syncAwaitingEtsyIds } from "@/pipeline/etsy-id-sync";
 import { runStage } from "@/pipeline/runner";
@@ -451,5 +452,36 @@ describe("POD Etsy id sync and unmatched receipts", () => {
     await db.delete(orders).where(inArray(orders.etsyReceiptId, ["receipt-home-shop", "receipt-other-shop"]));
     await db.delete(listings).where(inArray(listings.id, [homeListing.id, otherListing.id]));
     await db.delete(shops).where(eq(shops.id, other.id));
+  });
+
+  it("blocks Activate and Publish to Etsy when the price is under the floor", async () => {
+    const db = await getDb();
+    const digital = await insertListing(db, {
+      status: "published",
+      productType: "digital",
+      priceChf: 0.5,
+      podCostChf: 0,
+      etsyListingId: "1234500001",
+    });
+    const pod = await insertListing(db, {
+      status: "pod_created",
+      productType: "pod",
+      priceChf: 10,
+      podCostChf: 13,
+      printifyProductId: "pfy-floor",
+      podBlueprintId: 1,
+      podPrintProviderId: 2,
+    });
+    const activated = await activateDigitalListing(db, digital.id);
+    const published = await publishPodListingToEtsy(db, pod.id);
+    expect(activated.ok).toBe(false);
+    if (!activated.ok) expect(activated.error).toMatch(/cost plus fees/);
+    expect(published.ok).toBe(false);
+    if (!published.ok) expect(published.error).toMatch(/25%/);
+    const [digitalAfter] = await db.select().from(listings).where(eq(listings.id, digital.id));
+    const [podAfter] = await db.select().from(listings).where(eq(listings.id, pod.id));
+    expect(digitalAfter.activatedAt).toBeNull();
+    expect(podAfter.podPublishedAt).toBeNull();
+    expect(podAfter.status).toBe("pod_created");
   });
 });

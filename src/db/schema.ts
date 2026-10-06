@@ -44,7 +44,12 @@ export type FulfillmentStatus =
   | "pending"
   | "in_production"
   | "shipped"
-  | "delivered";
+  | "delivered"
+  | "cancelled";
+
+export type ProfitBasis = "estimated" | "reconciled";
+
+export type PodVariantPrice = { id: number; priceChf: number; costChf: number; title?: string };
 export type StageName =
   | "research"
   | "design"
@@ -179,6 +184,9 @@ export const listings = pgTable("listings", {
   podPublishedAt: timestamp("pod_published_at", { withTimezone: true }),
   priceChf: doublePrecision("price_chf").notNull(),
   podCostChf: doublePrecision("pod_cost_chf").notNull().default(0),
+  /** Where podCostChf came from: Printify quote or the labelled Printful fallback. */
+  podCostNote: text("pod_cost_note"),
+  podVariantPrices: jsonb("pod_variant_prices").$type<PodVariantPrice[]>(),
   netChf: doublePrecision("net_chf").notNull(),
   marginPct: doublePrecision("margin_pct").notNull(),
   validation: jsonb("validation").$type<ValidationIssue[]>().notNull().default([]),
@@ -216,7 +224,10 @@ export const orders = pgTable("orders", {
   feesChf: doublePrecision("fees_chf").notNull(),
   podCostChf: doublePrecision("pod_cost_chf").notNull().default(0),
   offsiteAdsChf: doublePrecision("offsite_ads_chf").notNull().default(0),
+  refundedChf: doublePrecision("refunded_chf").notNull().default(0),
   profitChf: doublePrecision("profit_chf").notNull(),
+  /** Reconciled only when Etsy ledger fees and, for POD, the Printify order cost were both applied. */
+  profitBasis: text("profit_basis").$type<ProfitBasis>().notNull().default("estimated"),
   fulfillmentStatus: text("fulfillment_status").$type<FulfillmentStatus>().notNull(),
   podOrderId: text("pod_order_id"),
   isDemo: boolean("is_demo").notNull().default(false),

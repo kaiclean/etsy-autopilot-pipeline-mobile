@@ -4,12 +4,13 @@ import { eq, inArray } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/db";
-import { listings, type StageName } from "@/db/schema";
+import { getDb, type DB } from "@/db";
+import { listings, type Listing, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
+import { calculateFees, MARGIN_TARGETS, priceFloorIssue } from "@/lib/fees";
+import { resolveUsdToChf } from "@/lib/fee-schedule";
 import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
@@ -60,16 +61,33 @@ function revalidateAll() {
 
 export type ListingEdit = { title: string; tags: string[]; priceChf: number; description?: string };
 
+async function pricingContext(db: DB) {
+  const [automation, feeFx] = await Promise.all([getSetting(db, "automation"), getSetting(db, "feeFx")]);
+  return { automation, usdToChf: resolveUsdToChf({ stored: feeFx?.usdToChf, storedAsOf: feeFx?.asOf }).rate };
+}
+
+function floorFor(listing: Pick<Listing, "priceChf" | "productType" | "podCostChf">, offsiteAds: boolean, usdToChf: number) {
+  return priceFloorIssue({
+    priceChf: listing.priceChf,
+    productType: listing.productType,
+    podCostChf: listing.podCostChf,
+    offsiteAds,
+    usdToChf,
+  });
+}
+
 export async function updateListing(id: number, edit: ListingEdit, approve = false) {
   await requireAuth();
   const db = await getDb();
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
   const next = { ...l, ...edit, description: edit.description ?? l.description };
-  const { valid, issues } = validateListing(next);
-  const automation = await getSetting(db, "automation");
-  const fees = calculateFees({ priceChf: next.priceChf, podCostChf: l.podCostChf, offsiteAds: automation.assumeOffsiteAds });
-  const canApprove = approve && valid;
+  const { valid, issues: textIssues } = validateListing(next);
+  const { automation, usdToChf } = await pricingContext(db);
+  const floor = floorFor({ ...l, priceChf: next.priceChf }, automation.assumeOffsiteAds, usdToChf);
+  const issues = floor ? [...textIssues, floor] : textIssues;
+  const fees = calculateFees({ priceChf: next.priceChf, podCostChf: l.podCostChf, offsiteAds: automation.assumeOffsiteAds, usdToChf });
+  const canApprove = approve && valid && !floor;
   await db
     .update(listings)
     .set({
@@ -85,7 +103,7 @@ export async function updateListing(id: number, edit: ListingEdit, approve = fal
     })
     .where(eq(listings.id, id));
   revalidateAll();
-  if (approve && !valid) return { ok: false as const, error: "Fix validation errors before approving", issues };
+  if (approve && (!valid || floor)) return { ok: false as const, error: floor?.message ?? "Fix validation errors before approving", issues };
   return { ok: true as const, issues };
 }
 
@@ -95,11 +113,14 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
   if (status === "approved") {
+    const { automation, usdToChf } = await pricingContext(db);
+    const floor = floorFor(l, automation.assumeOffsiteAds, usdToChf);
     const { valid, issues } = validateListing(l);
-    if (!valid) {
-      await db.update(listings).set({ validation: issues }).where(eq(listings.id, id));
+    const all = floor ? [...issues, floor] : issues;
+    if (!valid || floor) {
+      await db.update(listings).set({ validation: all }).where(eq(listings.id, id));
       revalidateAll();
-      return { ok: false as const, error: issues.find((i) => i.severity === "error")?.message ?? "Invalid listing" };
+      return { ok: false as const, error: floor?.message ?? all.find((i) => i.severity === "error")?.message ?? "Invalid listing" };
     }
   }
   await db
@@ -128,6 +149,7 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
   const unique = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 100);
   if (unique.length === 0) return { ok: false as const, error: "Select at least one listing" };
   const db = await getDb();
+  const { automation, usdToChf } = await pricingContext(db);
   const rows = await db.select().from(listings).where(inArray(listings.id, unique));
   const byId = new Map(rows.map((row) => [row.id, row]));
   const known = unique.flatMap((id) => {
@@ -136,18 +158,27 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
   });
   const missing = unique.filter((id) => !byId.has(id)).map((id) => ({ id, title: `#${id}`, error: "Listing not found" }));
   const plan = planBulkStatus(
-    known.map((row) => ({
-      id: row.id,
-      title: row.title,
-      hasErrors: status === "approved" && !validateListing(row).valid,
-    })),
+    known.map((row) => {
+      const text = validateListing(row);
+      const floor = status === "approved" ? floorFor(row, automation.assumeOffsiteAds, usdToChf) : null;
+      return {
+        id: row.id,
+        title: row.title,
+        hasErrors: status === "approved" && (!text.valid || Boolean(floor)),
+        error: floor?.message ?? text.issues.find((issue) => issue.severity === "error")?.message,
+      };
+    }),
     status,
   );
   for (const skip of plan.skipped) {
     const row = byId.get(skip.id);
     if (!row) continue;
-    const { issues } = validateListing(row);
-    await db.update(listings).set({ validation: issues, updatedAt: new Date() }).where(eq(listings.id, row.id));
+    const text = validateListing(row);
+    const floor = floorFor(row, automation.assumeOffsiteAds, usdToChf);
+    await db
+      .update(listings)
+      .set({ validation: floor ? [...text.issues, floor] : text.issues, updatedAt: new Date() })
+      .where(eq(listings.id, row.id));
   }
   if (plan.changed.length > 0) {
     await db
@@ -307,6 +338,10 @@ export async function saveAutomation(patch: Partial<AutomationSettings>) {
     clean.digitalTargetMarginPct = Math.min(MARGIN_TARGETS.digitalMax, Math.max(MARGIN_TARGETS.digitalMin, clean.digitalTargetMarginPct));
   }
   if (clean.designsPerRun !== undefined) clean.designsPerRun = Math.max(1, Math.min(20, Math.round(clean.designsPerRun)));
+  if (typeof clean.adsEnabled === "boolean") {
+    if (clean.adsEnabled && !a.adsEnabled) clean.adsEnabledAt = new Date().toISOString();
+    if (!clean.adsEnabled) clean.adsEnabledAt = null;
+  }
   await setSetting(db, "automation", { ...a, ...clean });
   revalidateAll();
   return { ok: true };

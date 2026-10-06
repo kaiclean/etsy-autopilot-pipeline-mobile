@@ -57,11 +57,11 @@ type NumKey = "dailyAiCapChf" | "monthlyAiBudgetChf" | "dailyAdsCapChf" | "podTa
 const FIELDS: { key: NumKey; label: string; hint: string; suffix: string; step: string; min?: number; max?: number }[] = [
   { key: "dailyAiCapChf", label: "Daily AI spend cap", hint: "Design stage stops when reached", suffix: "CHF", step: "0.5" },
   { key: "monthlyAiBudgetChf", label: "Monthly AI budget", hint: "Hard stop for image + text generation", suffix: "CHF", step: "1" },
-  { key: "dailyAdsCapChf", label: "Etsy Ads daily budget", hint: "Tracked here; set the same value in Etsy", suffix: "CHF", step: "0.01" },
+  { key: "dailyAdsCapChf", label: "Etsy Ads daily cap", hint: "Booked as a budget estimate, not measured spend. Set the same cap in Etsy.", suffix: "CHF", step: "0.01" },
   {
     key: "podTargetMarginPct",
     label: "POD target margin",
-    hint: "25–35% for mugs, posters, and apparel. Prices round down toward competitor CHF, not the niche cap.",
+    hint: "25–35%. Nothing, including a competitor anchor or the niche ceiling, can price below 25%.",
     suffix: "%",
     step: "1",
     min: 25,
@@ -70,7 +70,7 @@ const FIELDS: { key: NumKey; label: string; hint: string; suffix: string; step: 
   {
     key: "digitalTargetMarginPct",
     label: "Digital target margin",
-    hint: "Downloads stay at 75% or more. Niche floors still apply when the formula is lower.",
+    hint: "75–85% when fees allow it. Offsite Ads cannot reach 75%, so those prices use the top of the niche band.",
     suffix: "%",
     step: "1",
     min: 75,
@@ -113,14 +113,14 @@ export function BudgetsForm({ automation }: { automation: AutomationSettings }) 
       <label className="flex items-center gap-3 px-4 py-3">
         <div className="flex-1">
           <div className="text-sm font-medium">Etsy Ads running</div>
-          <div className="text-[11px] text-muted-foreground">Books the daily budget as a cost (no Ads API: manage in Etsy)</div>
+          <div className="text-[11px] text-muted-foreground">Books the daily cap as an estimate and fills missed days. No Ads API: manage the cap in Etsy.</div>
         </div>
         <Switch checked={adsEnabled} onCheckedChange={setAdsEnabled} />
       </label>
       <label className="flex items-center gap-3 px-4 py-3">
         <div className="flex-1">
           <div className="text-sm font-medium">Price for Offsite Ads</div>
-          <div className="text-[11px] text-muted-foreground">Include the 15% Offsite Ads fee in suggested prices</div>
+          <div className="text-[11px] text-muted-foreground">Include Offsite Ads (15%, or 12% above USD 10,000, capped at USD 100) plus Swiss VAT in suggested prices</div>
         </div>
         <Switch checked={offsite} onCheckedChange={setOffsite} />
       </label>

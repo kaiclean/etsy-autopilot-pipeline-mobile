@@ -1,4 +1,4 @@
-import type { EtsyAdapter, EtsyDraftInput, EtsyReceipt, ReceiptCandidate } from "./types";
+import type { EtsyAdapter, EtsyDraftInput, EtsyLedgerEntry, EtsyReceipt, ReceiptCandidate } from "./types";
 
 const COUNTRIES = ["US", "US", "US", "DE", "GB", "CH", "CA", "AU", "FR", "NL", "AT"];
 
@@ -43,6 +43,7 @@ export class EtsyDryRunAdapter implements EtsyAdapter {
       const qty = this.random() < 0.1 ? 2 : 1;
       return {
         receiptId: `dry-r-${Date.now().toString(36)}-${i}-${Math.floor(this.random() * 1e6)}`,
+        etsyReceiptId: `dry-r-${i}`,
         etsyListingId: c.etsyListingId,
         buyerCountry: COUNTRIES[Math.floor(this.random() * COUNTRIES.length)],
         quantity: qty,
@@ -50,6 +51,10 @@ export class EtsyDryRunAdapter implements EtsyAdapter {
         createdAt: new Date(),
       };
     });
+  }
+
+  async getLedgerEntries(): Promise<EtsyLedgerEntry[]> {
+    return [];
   }
 
   async getListingStats(current: { etsyListingId: string; views: number; favorites: number }[]) {

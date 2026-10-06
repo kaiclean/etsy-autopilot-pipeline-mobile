@@ -25,7 +25,17 @@ function vibrate(ms: number) {
   if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(ms);
 }
 
-export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { listings: Listing[]; offsiteAds: boolean; initialTriage?: QueueTriage }) {
+export function QueueStack({
+  listings,
+  offsiteAds,
+  usdToChf,
+  initialTriage = "all",
+}: {
+  listings: Listing[];
+  offsiteAds: boolean;
+  usdToChf?: number;
+  initialTriage?: QueueTriage;
+}) {
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Listing | null>(null);
   const [exit, setExit] = useState<{ id: number; dir: 1 | -1 } | null>(null);
@@ -418,6 +428,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
         listing={editing}
         open={Boolean(editing)}
         offsiteAds={offsiteAds}
+        usdToChf={usdToChf}
         onOpenChange={(o) => !o && setEditing(null)}
         onApproved={(id) => hide(id, true)}
       />

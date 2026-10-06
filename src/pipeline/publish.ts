@@ -5,9 +5,11 @@ import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, designs, listings } from "@/db/schema";
 import { config, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { FEES, round2, type PodPreset } from "@/lib/fees";
+import { listingFeeChf, priceFloorIssue, type PodPreset } from "@/lib/fees";
+import { resolveUsdToChf } from "@/lib/fee-schedule";
 import { validateListing } from "@/lib/listing-validator";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
+import { getSetting } from "@/lib/settings";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import type { StageFn } from "./types";
 
@@ -39,16 +41,26 @@ export const runPublish: StageFn = async (ctx) => {
 
   const etsy = await getEtsyAdapter(db, ctx.random);
   const printify = await getPrintifyAdapter({ db, random: ctx.random });
+  const [automation, feeFx] = await Promise.all([getSetting(db, "automation"), getSetting(db, "feeFx")]);
+  const fx = resolveUsdToChf({ stored: feeFx?.usdToChf, storedAsOf: feeFx?.asOf });
   log(`Etsy adapter: ${etsy.mode} · Printify adapter: ${printify.mode}`);
 
   let ok = 0;
   let failed = 0;
   for (const l of approved) {
     const check = validateListing(l);
-    if (!check.valid) {
+    const floor = priceFloorIssue({
+      priceChf: l.priceChf,
+      productType: l.productType,
+      podCostChf: l.podCostChf,
+      offsiteAds: automation.assumeOffsiteAds,
+      usdToChf: fx.rate,
+    });
+    const issues = floor ? [...check.issues, floor] : check.issues;
+    if (!check.valid || floor) {
       await db
         .update(listings)
-        .set({ status: "pending_approval", validation: check.issues, updatedAt: ctx.now })
+        .set({ status: "pending_approval", validation: issues, updatedAt: ctx.now })
         .where(eq(listings.id, l.id));
       log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
       failed++;
@@ -98,6 +110,7 @@ export const runPublish: StageFn = async (ctx) => {
         }
         // Create the Printify product only. publish.json is a per-listing human action.
         // etsyListingId stays null. Orders sync does not poll pod_created rows.
+        const variantPrices = Object.fromEntries((l.podVariantPrices ?? []).map((variant) => [variant.id, variant.priceChf]));
         const result = await printify.createAndPublish({
           title: l.title,
           description: l.description,
@@ -107,6 +120,9 @@ export const runPublish: StageFn = async (ctx) => {
           preset: podPreset(l.podProvider),
           existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
           publishToEtsy: false,
+          variantPricesChf: Object.keys(variantPrices).length > 0 ? variantPrices : undefined,
+          blueprintId: l.podBlueprintId ?? undefined,
+          printProviderId: l.podPrintProviderId ?? undefined,
         });
         const mockup = await fetchPrintifyMockupUrl(result.productId);
         if (mockup) {
@@ -136,7 +152,7 @@ export const runPublish: StageFn = async (ctx) => {
       await db.insert(costs).values({
         shopId: ctx.shopId,
         kind: "listing_fee",
-        amountChf: round2(FEES.listingFeeUsd * FEES.usdToChf * (1 + FEES.vatOnFeesRate)),
+        amountChf: listingFeeChf(fx.rate),
         note: `Listing fee #${l.id}${mode === "dry-run" ? " (dry-run, not charged)" : ""}`,
         isDemo: ctx.demo,
       });

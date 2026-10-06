@@ -15,8 +15,19 @@ export type PrintifyProductInput = {
    * When false, an existing product is not sent to publish.json.
    */
   publishToEtsy?: boolean;
+  /**
+   * Per-variant CHF prices. Printify prices are sent as cents.
+   * Assumption: the Printify shop currency is CHF, so those cents are CHF cents.
+   */
+  variantPricesChf?: Record<number, number>;
   blueprintId?: number;
   printProviderId?: number;
+};
+
+export type PrintifyOrderCost = {
+  costChf: number;
+  assumedChf: boolean;
+  currency: string | null;
 };
 
 export type PrintifyOrderStatus = "pending" | "in_production" | "shipped" | "delivered";
@@ -40,4 +51,6 @@ export interface PrintifyAdapter {
    */
   getExternalEtsyIds(productIds: string[]): Promise<Record<string, string | null>>;
   getOrderStatuses(podOrderIds: string[]): Promise<Record<string, PrintifyOrderStatus>>;
+  /** Read-only. Supplier blank + shipping from the Printify order, when the payload has them. */
+  getOrderCosts(podOrderIds: string[]): Promise<Record<string, PrintifyOrderCost | null>>;
 }

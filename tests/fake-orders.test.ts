@@ -255,7 +255,7 @@ describe("analytics ignores demo and dry-run orders", () => {
 });
 
 describe("receipt cursor ignores fake rows", () => {
-  it("starts from the newest real order for this shop", async () => {
+  it("ignores newer fake rows and still refreshes the last 30 days", async () => {
     const db = await memoryDb();
     const shop = await omnishop(db);
     const [other] = await db
@@ -299,7 +299,12 @@ describe("receipt cursor ignores fake rows", () => {
     etsyState.mode = "live";
     await runOrders(stageCtx(db, shop.id, { trigger: "manual" }));
     expect(etsyState.calls).toHaveLength(1);
-    expect(etsyState.calls[0].since.toISOString()).toBe(realAt.toISOString());
+    const refresh = new Date(NOW.getTime() - 30 * 864e5);
+    expect(refresh.getTime()).toBeLessThan(realAt.getTime());
+    expect(etsyState.calls[0].since.toISOString()).toBe(refresh.toISOString());
+    expect(etsyState.calls[0].since.toISOString()).not.toBe("2026-10-05T08:00:00.000Z");
+    expect(etsyState.calls[0].since.toISOString()).not.toBe("2026-10-04T08:00:00.000Z");
+    expect(etsyState.calls[0].since.toISOString()).not.toBe("2026-10-05T09:00:00.000Z");
     expect(etsyState.calls[0].simulateAtLeastOne).toBe(false);
     expect(etsyState.calls[0].candidateIds).toEqual(["445566"]);
   });

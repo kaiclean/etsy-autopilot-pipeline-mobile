@@ -10,6 +10,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
+import { operatingCostTotal } from "./economics";
 import { dashboardOrdersWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
@@ -101,7 +102,7 @@ export async function getHomeData() {
   }
   for (const x of c) {
     const b = byDay.get(dayKey(x.createdAt));
-    if (b && x.kind !== "listing_fee") b.costs += x.amountChf;
+    if (b) b.costs += x.amountChf;
   }
   for (const s of stats) {
     const b = byDay.get(s.date);
@@ -304,7 +305,8 @@ export async function getAnalytics() {
   const profitAfterFees = o.reduce((s, x) => s + x.profitChf, 0);
   const views = series.reduce((s, x) => s + x.views, 0);
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
-  const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads + costByKind.other;
+  const operatingCosts = operatingCostTotal(costByKind);
+  const reconciledOrders = o.filter((row) => row.profitBasis === "reconciled").length;
 
   return {
     series,
@@ -320,6 +322,8 @@ export async function getAnalytics() {
       podCosts: pod,
       operatingCosts,
       orders: o.length,
+      reconciledOrders,
+      estimatedOrders: o.length - reconciledOrders,
       views,
       favorites,
       conversion: views ? (o.length / views) * 100 : 0,

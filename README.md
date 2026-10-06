@@ -80,15 +80,17 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 
 ### Fee math (business plan §6)
 
-`src/lib/fees.ts` uses USD 0.20 listing fee (at 0.8278 CHF/USD), 6.5% transaction, 4% + CHF 0.50 processing, 8.1% VAT on those fees, and an optional 15% Offsite Ads fee. POD base and shipping cost are subtracted too. Rounding happens only at the output, so results reconcile with the plan:
+`src/lib/fee-schedule.ts` holds the Etsy CH rates (verified 2026-10-05) with source URLs. `src/lib/fees.ts` applies them: USD 0.20 listing fee, 6.5% transaction, 4% + CHF 0.50 processing, and 8.1% Swiss VAT on every Etsy fee including Offsite Ads. Offsite Ads are 15% (12% after USD 10,000 of sales) and capped at USD 100 per order. USD amounts use `USD_TO_CHF` or the 24 Sep 2026 reference rate 0.8278. Suggested prices assume a buyer outside Switzerland. A stale table (older than 90 days) is warned in the fee breakdown.
 
-- A digital download at CHF 8.00 nets **CHF 6.37** (79.7%), or **CHF 5.17** if the sale is attributed to Offsite Ads.
-- A POD A3 poster at CHF 29.00 (Printful USD 10.90 + 4.99) nets **CHF 11.84** (40.8%), or **CHF 7.49** with Offsite Ads.
+POD cost is a Printify variant blank plus CH or EU shipping when a read-only catalog quote is available. Otherwise the labelled fallback is the business-plan Printful blank plus US shipping. Printify prices are sent as CHF cents; the shop currency is flagged when Printify does not confirm CHF.
+
+- A digital download at CHF 8.00, buyer outside CH, still nets **CHF 6.37** (79.7%). With Offsite Ads, VAT is charged on that fee too, so the net is lower than the old CHF 5.17 example.
+- A POD price cannot sit under the 25% minimum. A competitor anchor or a niche ceiling that would break the floor is ignored. Digital prices cannot sit under cost plus fees. When Offsite Ads makes 75% unreachable, digital uses the top of the niche band.
 
 `suggestPrice()` prices in CHF (`.90` retail rounding). Margins are per product type, set in Settings:
 
-- **Print-on-demand** targets **30%** net (clamped to 25–35%). A competitor anchor in CHF (mug 19.90, A3 poster 24.90) wins when it is lower than the margin price and still clears print cost, so listings are not pinned to the niche ceiling.
-- **Digital downloads** target **75%** or more. Niche floors still apply. Offsite Ads makes 75% unreachable (fees approach ~26%), so those prices stay on the floor instead of the cap.
+- **Print-on-demand** targets **30%** net (clamped to 25–35%). The 25% line is a hard floor for suggestions, manual edits, and approval.
+- **Digital downloads** target **75%** or more. The hard floor is cost plus fees. Offsite Ads cannot reach 75% (variable fees including VAT are about 27.6%).
 
 Before this change a global 55% target, with Offsite Ads on, solved near CHF 54 (mug) and CHF 74 (poster) and then clamped to the band max: mugs CHF 49.90 and gothic posters CHF 44.90. At the 30% default, the same products land in the competitive bands (mug about CHF 15–25, poster about CHF 18–33). Covered in `tests/fees.test.ts`.
 

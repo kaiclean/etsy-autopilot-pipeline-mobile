@@ -3,9 +3,11 @@ import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
 import { externalEtsyIdFromProduct } from "@/lib/pod-etsy-id";
 import { localAssetPng } from "@/lib/png";
+import { activeUsdToChf } from "@/lib/fees";
+import { printifyOrderCostChf } from "@/lib/pod-cost";
 import { LIVE_PROVIDER_PIN_ERROR } from "@/lib/publish-gates";
 import type { CatalogChoice } from "./catalog";
-import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from "./types";
+import type { PrintifyAdapter, PrintifyOrderCost, PrintifyOrderStatus, PrintifyProductInput } from "./types";
 
 const API = "https://api.printify.com/v1";
 
@@ -109,10 +111,19 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         ...(externalEtsyId ? { externalEtsyId } : {}),
       };
     }
-    const choice = this.envChoice() ?? (input.preset ? await this.choiceFor(input.preset) : undefined);
+    const pricedIds = Object.keys(input.variantPricesChf ?? {})
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0);
+    const choice =
+      this.envChoice() ??
+      (input.blueprintId && input.printProviderId && pricedIds.length > 0
+        ? { blueprintId: input.blueprintId, printProviderId: input.printProviderId, variantIds: pricedIds }
+        : input.preset
+          ? await this.choiceFor(input.preset)
+          : undefined);
     if (!choice) throw new Error("POD listing is missing its Printify preset");
     const upload = await this.uploadDesign(input.imageUrl);
-    const priceCents = Math.round(input.priceChf * 100);
+    // Assumption: Printify shop currency is CHF, so variant price cents are CHF cents.
     const product = await this.request<{ id: string }>(`/shops/${shopId}/products.json`, {
       method: "POST",
       body: JSON.stringify({
@@ -121,7 +132,11 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         tags: input.tags,
         blueprint_id: choice.blueprintId,
         print_provider_id: choice.printProviderId,
-        variants: choice.variantIds.map((id) => ({ id, price: priceCents, is_enabled: true })),
+        variants: choice.variantIds.map((id) => ({
+          id,
+          price: Math.round((input.variantPricesChf?.[id] ?? input.priceChf) * 100),
+          is_enabled: true,
+        })),
         print_areas: [
           {
             variant_ids: choice.variantIds,
@@ -159,6 +174,20 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[printify] could not read external id for ${id}: ${message}`);
       }
+    }
+    return out;
+  }
+
+  async getOrderCosts(podOrderIds: string[]) {
+    const out: Record<string, PrintifyOrderCost | null> = {};
+    const fx = activeUsdToChf();
+    for (const id of podOrderIds) {
+      if (id.startsWith("dry-") || id.startsWith("demo-")) {
+        out[id] = null;
+        continue;
+      }
+      const order = await this.request<unknown>(`/shops/${config.printify.shopId}/orders/${id}.json`);
+      out[id] = printifyOrderCostChf(order, fx);
     }
     return out;
   }

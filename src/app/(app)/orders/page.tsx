@@ -62,7 +62,10 @@ export default async function OrdersPage() {
                 {o.matchStatus === "unmatched" ? (
                   <div className="text-[11px] text-warning">Profit pending</div>
                 ) : (
-                  <div className="tabular text-[11px] font-medium text-success">+{chf(o.profitChf).replace("CHF ", "")}</div>
+                  <>
+                    <div className="tabular text-[11px] font-medium text-success">+{chf(o.profitChf).replace("CHF ", "")}</div>
+                    <div className="text-[10px] text-muted-foreground">{o.profitBasis === "reconciled" ? "Reconciled" : "Estimated"}</div>
+                  </>
                 )}
                 {o.offsiteAdsChf > 0 && <div className="text-[10px] text-warning">Offsite Ads</div>}
               </div>

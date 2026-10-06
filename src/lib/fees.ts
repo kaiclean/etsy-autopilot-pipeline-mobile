@@ -1,24 +1,42 @@
+import type { ValidationIssue } from "@/db/schema";
+import {
+  FEE_SCHEDULE,
+  REFERENCE_USD_TO_CHF,
+  assumedBuyerTaxRate,
+  resolveUsdToChf,
+} from "@/lib/fee-schedule";
+
 /**
- * Etsy fee model for a Swiss seller listing in CHF (business plan §6).
- * Sources: etsy.com/legal/fees, Etsy Payments CH processing table, VAT on seller fees.
+ * Dated Etsy CH rates plus the reference USD→CHF rate.
+ * `calculateFees` uses `USD_TO_CHF` when set, otherwise this reference rate.
+ * Offsite Ads VAT, the 12% tier, and the USD 100 cap live in `FEE_SCHEDULE`.
  */
 export const FEES = {
-  usdToChf: 0.8278,
-  listingFeeUsd: 0.2,
-  transactionRate: 0.065,
-  processingRate: 0.04,
-  processingFixedChf: 0.5,
-  vatOnFeesRate: 0.081,
-  offsiteAdsRate: 0.15,
+  usdToChf: REFERENCE_USD_TO_CHF,
+  listingFeeUsd: FEE_SCHEDULE.listingFeeUsd,
+  transactionRate: FEE_SCHEDULE.transactionRate,
+  processingRate: FEE_SCHEDULE.processingRate,
+  processingFixedChf: FEE_SCHEDULE.processingFixedChf,
+  vatOnFeesRate: FEE_SCHEDULE.vatOnFeesRate,
+  offsiteAdsRate: FEE_SCHEDULE.offsiteAdsRate,
 } as const;
 
 export type FeeInput = {
   priceChf: number;
   shippingChf?: number;
-  /** POD base + shipping cost paid to the print partner, already in CHF. */
+  /** POD blank + shipping paid to the print partner, already in CHF. */
   podCostChf?: number;
   offsiteAds?: boolean;
   quantity?: number;
+  /**
+   * Destination VAT Etsy collects, as a fraction of seller revenue (item + shipping − discount).
+   * Processing is charged on the tax-inclusive total. Default 0 for suggested prices.
+   */
+  buyerTaxRate?: number;
+  /** Trailing 365-day sales in USD. At or above USD 10,000 the Offsite Ads rate is 12%. */
+  trailingSalesUsd?: number;
+  /** Per-call FX. Defaults to USD_TO_CHF, then the 24 Sep 2026 reference rate. */
+  usdToChf?: number;
 };
 
 export type FeeBreakdown = {
@@ -28,6 +46,8 @@ export type FeeBreakdown = {
   processingFeeChf: number;
   vatOnFeesChf: number;
   offsiteAdsFeeChf: number;
+  offsiteAdsRate: number;
+  offsiteAdsCapped: boolean;
   podCostChf: number;
   totalEtsyFeesChf: number;
   netChf: number;
@@ -36,26 +56,50 @@ export type FeeBreakdown = {
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-export function usdToChf(usd: number) {
-  return usd * FEES.usdToChf;
+export function activeUsdToChf(override?: number) {
+  if (override != null && Number.isFinite(override) && override > 0) return override;
+  return resolveUsdToChf().rate;
+}
+
+export function usdToChf(usd: number, rate = activeUsdToChf()) {
+  return usd * rate;
+}
+
+export function listingFeeChf(rate = activeUsdToChf()) {
+  return round2(usdToChf(FEE_SCHEDULE.listingFeeUsd, rate) * (1 + FEE_SCHEDULE.vatOnFeesRate));
+}
+
+export function offsiteAdsRateFor(trailingSalesUsd?: number) {
+  if (trailingSalesUsd != null && trailingSalesUsd >= FEE_SCHEDULE.offsiteAdsReducedAfterUsd) {
+    return FEE_SCHEDULE.offsiteAdsReducedRate;
+  }
+  return FEE_SCHEDULE.offsiteAdsRate;
 }
 
 /**
- * Full-precision math, rounded only at the output so line items reconcile with §6
- * (digital CHF 8.00 → net 6.37; POD poster CHF 29 → net 11.84).
- * Offsite Ads fee is applied without VAT to match the plan's worked example.
+ * Full-precision math, rounded only at the output.
+ * Swiss VAT applies to every Etsy fee, including Offsite Ads.
+ * The Offsite Ads fee is min(rate × revenue, USD 100 in CHF).
+ * Processing uses the tax-inclusive total when `buyerTaxRate` is set.
  */
 export function calculateFees(input: FeeInput): FeeBreakdown {
   const qty = input.quantity ?? 1;
+  const fx = activeUsdToChf(input.usdToChf);
   const price = input.priceChf * qty;
   const shipping = input.shippingChf ?? 0;
   const revenue = price + shipping;
+  const buyerTax = input.buyerTaxRate ?? 0;
+  const processingBase = revenue * (1 + buyerTax);
 
-  const listing = usdToChf(FEES.listingFeeUsd) * qty;
-  const transaction = revenue * FEES.transactionRate;
-  const processing = revenue * FEES.processingRate + FEES.processingFixedChf;
-  const vat = (listing + transaction + processing) * FEES.vatOnFeesRate;
-  const offsite = input.offsiteAds ? revenue * FEES.offsiteAdsRate : 0;
+  const listing = usdToChf(FEE_SCHEDULE.listingFeeUsd, fx) * qty;
+  const transaction = revenue * FEE_SCHEDULE.transactionRate;
+  const processing = processingBase * FEE_SCHEDULE.processingRate + FEE_SCHEDULE.processingFixedChf;
+  const offsiteRate = input.offsiteAds ? offsiteAdsRateFor(input.trailingSalesUsd) : 0;
+  const offsiteRaw = revenue * offsiteRate;
+  const offsiteCap = FEE_SCHEDULE.offsiteAdsCapUsd * fx;
+  const offsiteCapped = offsiteRate > 0 && offsiteRaw > offsiteCap;
+  const offsite = offsiteCapped ? offsiteCap : offsiteRaw;
+  const vat = (listing + transaction + processing + offsite) * FEE_SCHEDULE.vatOnFeesRate;
   const pod = (input.podCostChf ?? 0) * qty;
 
   const etsyFees = listing + transaction + processing + vat + offsite;
@@ -68,6 +112,8 @@ export function calculateFees(input: FeeInput): FeeBreakdown {
     processingFeeChf: round2(processing),
     vatOnFeesChf: round2(vat),
     offsiteAdsFeeChf: round2(offsite),
+    offsiteAdsRate: offsiteRate,
+    offsiteAdsCapped: offsiteCapped,
     podCostChf: round2(pod),
     totalEtsyFeesChf: round2(etsyFees),
     netChf: round2(net),
@@ -77,8 +123,7 @@ export function calculateFees(input: FeeInput): FeeBreakdown {
 
 /**
  * Per-type net margin targets for Designed by Kai (CHF).
- * POD stays in the competitive 25–35% band. Digital stays at or above 75%.
- * A single global 55% target is what pushed mugs and posters onto niche ceilings.
+ * POD stays in the competitive 25–35% band. Digital stays at or above 75% when fees allow it.
  */
 export const MARGIN_TARGETS = {
   podDefault: 30,
@@ -91,6 +136,20 @@ export const MARGIN_TARGETS = {
 
 export type PriceProductType = "digital" | "pod";
 
+export type PriceOpts = {
+  targetMarginPct: number;
+  podCostChf?: number;
+  offsiteAds?: boolean;
+  minChf?: number;
+  maxChf?: number;
+  /** Typical competitor retail in CHF. Not a scraped price. */
+  competitorChf?: number;
+  productType?: PriceProductType;
+  buyerTaxRate?: number;
+  trailingSalesUsd?: number;
+  usdToChf?: number;
+};
+
 /** Clamp a settings value into the band for that product type. */
 export function resolveTargetMargin(productType: PriceProductType, pct?: number) {
   if (productType === "pod") {
@@ -101,7 +160,7 @@ export function resolveTargetMargin(productType: PriceProductType, pct?: number)
   return Math.min(MARGIN_TARGETS.digitalMax, Math.max(MARGIN_TARGETS.digitalMin, n));
 }
 
-/** Rounds up to a "retail" CHF price ending in .90 (e.g. 7.90, 24.90). */
+/** Rounds up to a CHF price ending in .90 (e.g. 7.90, 24.90). */
 export function retailRound(p: number) {
   const candidate = Math.ceil(p + 0.1) - 0.1;
   return round2(candidate);
@@ -118,83 +177,158 @@ export function retailRoundDown(p: number) {
   return round2(whole - 1 + 0.9);
 }
 
-function marginEquation(opts: { targetMarginPct: number; podCostChf?: number; offsiteAds?: boolean }) {
+function feeContext(opts: PriceOpts) {
+  return {
+    podCostChf: opts.podCostChf,
+    offsiteAds: opts.offsiteAds,
+    buyerTaxRate: opts.buyerTaxRate ?? assumedBuyerTaxRate(),
+    trailingSalesUsd: opts.trailingSalesUsd,
+    usdToChf: opts.usdToChf,
+  };
+}
+
+function marginEquation(opts: PriceOpts, offsiteAsFixedChf = 0) {
   const m = opts.targetMarginPct / 100;
   const pod = opts.podCostChf ?? 0;
-  const vatMul = 1 + FEES.vatOnFeesRate;
-  const variableRate = (FEES.transactionRate + FEES.processingRate) * vatMul + (opts.offsiteAds ? FEES.offsiteAdsRate : 0);
-  const fixed = (usdToChf(FEES.listingFeeUsd) + FEES.processingFixedChf) * vatMul + pod;
-  const denom = 1 - variableRate - m;
-  return { fixed, denom };
+  const fx = activeUsdToChf(opts.usdToChf);
+  const vatMul = 1 + FEE_SCHEDULE.vatOnFeesRate;
+  const buyer = 1 + (opts.buyerTaxRate ?? assumedBuyerTaxRate());
+  const offsiteRate = offsiteAsFixedChf > 0 ? 0 : opts.offsiteAds ? offsiteAdsRateFor(opts.trailingSalesUsd) : 0;
+  const variableRate =
+    FEE_SCHEDULE.transactionRate * vatMul + FEE_SCHEDULE.processingRate * buyer * vatMul + offsiteRate * vatMul;
+  const fixed =
+    (usdToChf(FEE_SCHEDULE.listingFeeUsd, fx) + FEE_SCHEDULE.processingFixedChf) * vatMul + offsiteAsFixedChf * vatMul + pod;
+  return { fixed, denom: 1 - variableRate - m, offsiteRate, fx };
 }
 
 /** Smallest .90 price that reaches the target, or null when fees make it impossible. */
-export function marginPrice(opts: { targetMarginPct: number; podCostChf?: number; offsiteAds?: boolean }) {
-  const { fixed, denom } = marginEquation(opts);
-  if (denom <= 0) return null;
-  return retailRound(fixed / denom);
+export function marginPrice(opts: PriceOpts): number | null {
+  const solved = solveMargin(opts);
+  if (solved == null) return null;
+  return bumpToTarget(solved, opts);
 }
 
-function profitable(price: number, opts: { podCostChf?: number; offsiteAds?: boolean }) {
-  return calculateFees({ priceChf: price, podCostChf: opts.podCostChf, offsiteAds: opts.offsiteAds }).netChf > 0;
+function solveMargin(opts: PriceOpts): number | null {
+  const linear = marginEquation(opts);
+  if (linear.denom <= 0) return null;
+  let raw = linear.fixed / linear.denom;
+  if (opts.offsiteAds && linear.offsiteRate > 0) {
+    const cap = FEE_SCHEDULE.offsiteAdsCapUsd * linear.fx;
+    if (raw * linear.offsiteRate > cap) {
+      const capped = marginEquation(opts, cap);
+      if (capped.denom <= 0) return null;
+      raw = capped.fixed / capped.denom;
+    }
+  }
+  return raw;
+}
+
+function bumpToTarget(raw: number, opts: PriceOpts) {
+  let price = retailRound(raw);
+  const ctx = feeContext(opts);
+  for (let i = 0; i < 12; i++) {
+    const margin = calculateFees({ priceChf: price, ...ctx }).marginPct;
+    if (margin + 1e-6 >= opts.targetMarginPct) return price;
+    price = retailRound(price + 1);
+  }
+  return price;
+}
+
+function productOf(opts: PriceOpts): PriceProductType {
+  return opts.productType ?? ((opts.podCostChf ?? 0) > 0 ? "pod" : "digital");
+}
+
+/** POD: at least the 25% minimum. Digital: at least cost plus Etsy fees (net ≥ 0). */
+export function meetsPriceFloor(priceChf: number, opts: PriceOpts) {
+  if (!(priceChf > 0) || !Number.isFinite(priceChf)) return false;
+  const fees = calculateFees({ priceChf, ...feeContext(opts) });
+  if (productOf(opts) === "pod") return fees.marginPct + 1e-6 >= MARGIN_TARGETS.podMin;
+  return fees.netChf >= 0;
+}
+
+/** Lowest .90 price that clears the floor for this cost and fee assumption. */
+export function minimumRetailPrice(opts: Omit<PriceOpts, "targetMarginPct"> & { productType: PriceProductType }) {
+  const target = opts.productType === "pod" ? MARGIN_TARGETS.podMin : 0;
+  const raw = solveMargin({ ...opts, targetMarginPct: target });
+  let price = raw == null ? retailRound((opts.podCostChf ?? 0) + 1) : retailRound(Math.max(raw, 0.2));
+  for (let i = 0; i < 24 && !meetsPriceFloor(price, { ...opts, targetMarginPct: target }); i++) {
+    price = retailRound(price + 1);
+  }
+  return price;
+}
+
+export function priceFloorIssue(opts: {
+  priceChf: number;
+  productType: PriceProductType;
+  podCostChf?: number;
+  offsiteAds?: boolean;
+  buyerTaxRate?: number;
+  trailingSalesUsd?: number;
+  usdToChf?: number;
+}): ValidationIssue | null {
+  const priceOpts: PriceOpts = { ...opts, targetMarginPct: opts.productType === "pod" ? MARGIN_TARGETS.podMin : 0 };
+  if (meetsPriceFloor(opts.priceChf, priceOpts)) return null;
+  const floor = minimumRetailPrice({ ...opts, productType: opts.productType });
+  const fees = calculateFees({ priceChf: opts.priceChf, ...feeContext(priceOpts) });
+  if (opts.productType === "pod") {
+    return {
+      field: "price",
+      severity: "error",
+      code: "price_below_margin_floor",
+      message: `CHF ${opts.priceChf.toFixed(2)} keeps about ${fees.marginPct.toFixed(1)}% after fees and print cost. POD prices must stay at or above the ${MARGIN_TARGETS.podMin}% minimum (CHF ${floor.toFixed(2)} for this cost). Raise the price before approving.`,
+    };
+  }
+  return {
+    field: "price",
+    severity: "error",
+    code: "price_below_cost_floor",
+    message: `CHF ${opts.priceChf.toFixed(2)} is below Etsy fees (net CHF ${fees.netChf.toFixed(2)}). Digital prices must cover cost plus fees (CHF ${floor.toFixed(2)} or more). Raise the price before approving.`,
+  };
 }
 
 /**
  * CHF retail price for a listing.
  *
- * 1. Solve for the lowest `.90` price that hits `targetMarginPct` (retailRound up).
- * 2. When `competitorChf` is set and disagrees, round down toward that market price
- *    (`retailRoundDown`) if the result still clears POD cost. Digital prices are not
- *    pulled below the margin solution, so downloads stay at ≥75% when that is reachable.
- * 3. Niche `minChf` / `maxChf` are soft guards. Digital uses the floor when the formula
- *    undershoots it. POD is not lifted to a premium floor and is not pinned to the ceiling
- *    when a profitable competitor anchor sits inside the band.
- * 4. Digital + Offsite Ads cannot reach 75% (fees alone approach ~26%). That case stays
- *    on the niche floor instead of climbing to the cap.
+ * The floor is applied after the competitor anchor and the niche ceiling.
+ * POD cannot land below the 25% minimum. Digital cannot land below cost plus fees.
+ * A competitor anchor or a niche max that would break the floor is ignored.
+ * Digital + Offsite Ads cannot reach 75% (variable fees including VAT are about 27.6%,
+ * so the margin tops out near 72%). That case uses the top of the niche band, where
+ * the margin is closest to the target, instead of a hard-coded CHF 5.90.
  */
-export function suggestPrice(opts: {
-  targetMarginPct: number;
-  podCostChf?: number;
-  offsiteAds?: boolean;
-  minChf?: number;
-  maxChf?: number;
-  /** Typical competitor retail in CHF. Not a USD price. */
-  competitorChf?: number;
-  productType?: PriceProductType;
-}): number {
-  const productType: PriceProductType = opts.productType ?? ((opts.podCostChf ?? 0) > 0 ? "pod" : "digital");
+export function suggestPrice(opts: PriceOpts): number {
+  const productType = productOf(opts);
+  const floor = minimumRetailPrice({ ...opts, productType });
   const solved = marginPrice(opts);
-  const competitor = opts.competitorChf != null && opts.competitorChf > 0 ? retailRoundDown(opts.competitorChf) : undefined;
+  const competitor =
+    opts.competitorChf != null && opts.competitorChf > 0 ? retailRoundDown(opts.competitorChf) : undefined;
 
+  let price: number;
   if (solved == null) {
-    if (productType === "digital" && opts.offsiteAds) {
-      const floor = opts.minChf ?? competitor ?? 5.9;
-      const capped = opts.maxChf != null ? Math.min(floor, opts.maxChf) : floor;
-      return round2(capped);
+    if (!(productType === "digital" && opts.offsiteAds)) {
+      throw new Error("Target margin is unreachable with Etsy fees");
     }
-    throw new Error("Target margin is unreachable with Etsy fees");
+    price = opts.maxChf != null ? retailRoundDown(opts.maxChf) : (opts.minChf ?? floor);
+  } else {
+    price = solved;
+    if (productType === "pod" && competitor != null && competitor < price && meetsPriceFloor(competitor, opts)) {
+      price = competitor;
+    }
+    if (productType === "digital" && opts.minChf != null && price < opts.minChf) price = opts.minChf;
+    if (opts.maxChf != null && price > opts.maxChf) {
+      const capped = retailRoundDown(opts.maxChf);
+      if (meetsPriceFloor(capped, opts)) price = capped;
+    }
   }
 
-  let price = solved;
-  if (productType === "pod" && competitor != null && competitor < solved && profitable(competitor, opts)) {
-    price = competitor;
-  }
-
-  if (productType === "digital" && opts.minChf != null && price < opts.minChf) price = opts.minChf;
-  if (productType === "pod" && opts.minChf != null && price < opts.minChf && !profitable(price, opts)) price = opts.minChf;
-
-  if (opts.maxChf != null && price > opts.maxChf) {
-    if (competitor != null && competitor <= opts.maxChf && profitable(competitor, opts)) price = competitor;
-    else if (solved <= opts.maxChf) price = solved;
-    else price = opts.maxChf;
-  }
+  if (!meetsPriceFloor(price, opts) || price < floor) price = floor;
   return round2(price);
 }
 
 /**
- * Typical POD base costs from the plan (Printful Enhanced Matte A3 USD 10.90 + US shipping USD 4.99).
- * `marketAnchorChf` is the typical competitor retail in CHF (cozy mugs ~CHF 15–25, wall prints ~CHF 18–33).
- * It is a CHF anchor, not a converted USD shelf price.
+ * Fallback POD costs when Printify does not return a variant cost and CH/EU shipping.
+ * These are Printful blanks plus US shipping from the business plan, not a Printify quote.
+ * `marketAnchorChf` is a static competitor retail in CHF. It is not scraped from Etsy.
  */
 export const POD_PRESETS = {
   posterA3: { label: "Poster A3 (matte)", baseUsd: 10.9, shippingUsd: 4.99, marketAnchorChf: 24.9 },
@@ -205,9 +339,12 @@ export const POD_PRESETS = {
 
 export type PodPreset = keyof typeof POD_PRESETS;
 
-export function podCostChf(preset: PodPreset) {
+export const POD_FALLBACK_NOTE =
+  "Fallback estimate: Printful blank + US shipping from the business plan, converted to CHF. Not a Printify quote and not CH/EU shipping. Printify shop currency is assumed CHF.";
+
+export function podCostChf(preset: PodPreset, rate = activeUsdToChf()) {
   const p = POD_PRESETS[preset];
-  return round2(usdToChf(p.baseUsd + p.shippingUsd));
+  return round2(usdToChf(p.baseUsd + p.shippingUsd, rate));
 }
 
 export function productLabel(productType: "digital" | "pod", podProvider?: string | null) {

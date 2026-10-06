@@ -1,17 +1,22 @@
+import { feeScheduleStatus } from "@/lib/fee-schedule";
 import type { FeeBreakdown as FB } from "@/lib/fees";
 import { chf } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export function FeeBreakdown({ fees, className }: { fees: FB; className?: string }) {
+export function FeeBreakdown({ fees, className, costNote }: { fees: FB; className?: string; costNote?: string | null }) {
+  const stale = feeScheduleStatus().message;
+  const offsiteLabel = fees.offsiteAdsCapped
+    ? "Offsite Ads (USD 100 cap)"
+    : `Offsite Ads ${Math.round(fees.offsiteAdsRate * 100)}%`;
   const rows: [string, number, string?][] = [
     ["Price", fees.revenueChf],
     ["Listing fee (USD 0.20)", -fees.listingFeeChf],
     ["Transaction 6.5%", -fees.transactionFeeChf],
     ["Processing 4% + CHF 0.50", -fees.processingFeeChf],
-    ["VAT 8.1% on fees", -fees.vatOnFeesChf],
+    ["VAT 8.1% on fees, including Offsite Ads", -fees.vatOnFeesChf],
   ];
-  if (fees.offsiteAdsFeeChf) rows.push(["Offsite Ads 15%", -fees.offsiteAdsFeeChf]);
-  if (fees.podCostChf) rows.push(["POD base + shipping", -fees.podCostChf]);
+  if (fees.offsiteAdsFeeChf) rows.push([offsiteLabel, -fees.offsiteAdsFeeChf]);
+  if (fees.podCostChf) rows.push(["POD blank + shipping", -fees.podCostChf]);
   const good = fees.podCostChf > 0 ? fees.marginPct >= 25 : fees.marginPct >= 75;
   return (
     <div className={cn("rounded-xl border border-border bg-muted/30 p-3", className)}>
@@ -30,6 +35,11 @@ export function FeeBreakdown({ fees, className }: { fees: FB; className?: string
           <span className={cn("tabular text-xs font-semibold", good ? "text-success" : "text-warning")}>{fees.marginPct.toFixed(1)}%</span>
         </span>
       </div>
+      {costNote && <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{costNote}</p>}
+      {stale && <p className="mt-2 text-[11px] leading-snug text-warning">{stale}</p>}
+      <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+        Suggested prices assume a buyer outside Switzerland, so processing excludes destination VAT. Orders to CH use the tax on the receipt. Printify prices are sent as CHF cents.
+      </p>
     </div>
   );
 }

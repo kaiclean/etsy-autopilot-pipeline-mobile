@@ -10,7 +10,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Listing } from "@/db/schema";
-import { calculateFees } from "@/lib/fees";
+import { calculateFees, priceFloorIssue } from "@/lib/fees";
 import { ETSY_LIMITS, validateListing } from "@/lib/listing-validator";
 import { cn } from "@/lib/utils";
 
@@ -19,14 +19,15 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   offsiteAds?: boolean;
+  usdToChf?: number;
   onApproved?: (id: number) => void;
 };
 
-export function ListingEditor({ listing, open, onOpenChange, offsiteAds = false, onApproved }: Props) {
+export function ListingEditor({ listing, open, onOpenChange, offsiteAds = false, usdToChf, onApproved }: Props) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
       <DrawerContent className="md:mx-auto md:max-w-2xl">
-        {listing && <EditorBody key={listing.id} listing={listing} offsiteAds={offsiteAds} onDone={(approved) => {
+        {listing && <EditorBody key={listing.id} listing={listing} offsiteAds={offsiteAds} usdToChf={usdToChf} onDone={(approved) => {
           onOpenChange(false);
           if (approved) onApproved?.(listing.id);
         }} />}
@@ -35,7 +36,7 @@ export function ListingEditor({ listing, open, onOpenChange, offsiteAds = false,
   );
 }
 
-function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsiteAds: boolean; onDone: (approved: boolean) => void }) {
+function EditorBody({ listing, offsiteAds, usdToChf, onDone }: { listing: Listing; offsiteAds: boolean; usdToChf?: number; onDone: (approved: boolean) => void }) {
   const [title, setTitle] = useState(listing.title);
   const [tags, setTags] = useState<string[]>(listing.tags);
   const [newTag, setNewTag] = useState("");
@@ -45,13 +46,26 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
   const [pending, start] = useTransition();
 
   const priceNum = Number(price.replace(",", "."));
-  const { issues, valid } = useMemo(
+  const { issues: textIssues, valid: textValid } = useMemo(
     () => validateListing({ title, tags, description, priceChf: priceNum, productType: listing.productType }),
     [title, tags, description, priceNum, listing.productType],
   );
+  const floor = useMemo(
+    () =>
+      priceFloorIssue({
+        priceChf: priceNum,
+        productType: listing.productType,
+        podCostChf: listing.podCostChf,
+        offsiteAds,
+        usdToChf,
+      }),
+    [priceNum, listing.productType, listing.podCostChf, offsiteAds, usdToChf],
+  );
+  const issues = floor ? [...textIssues, floor] : textIssues;
+  const valid = textValid && !floor;
   const fees = useMemo(
-    () => calculateFees({ priceChf: Number.isFinite(priceNum) ? priceNum : 0, podCostChf: listing.podCostChf, offsiteAds }),
-    [priceNum, listing.podCostChf, offsiteAds],
+    () => calculateFees({ priceChf: Number.isFinite(priceNum) ? priceNum : 0, podCostChf: listing.podCostChf, offsiteAds, usdToChf }),
+    [priceNum, listing.podCostChf, offsiteAds, usdToChf],
   );
   const errors = issues.filter((i) => i.severity === "error");
 
@@ -123,7 +137,7 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
 
         <Field label="Price (CHF)">
           <Input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} className="tabular h-11 rounded-xl text-base" />
-          <FeeBreakdown fees={fees} className="mt-2" />
+          <FeeBreakdown fees={fees} costNote={listing.podCostNote} className="mt-2" />
         </Field>
 
         <div>

@@ -3,13 +3,12 @@ import { describeFetchError } from "@/lib/http-error";
 import { localAssetPng } from "@/lib/png";
 import type { EtsyTokens } from "@/lib/settings";
 import { refreshTokens } from "./oauth";
-import type { EtsyAdapter, EtsyDraftInput, EtsyReceipt } from "./types";
+import { collectPages } from "@/lib/pagination";
+import { mapReceipt } from "./receipts";
+import type { EtsyAdapter, EtsyDraftInput, EtsyLedgerEntry, EtsyReceipt } from "./types";
 
 const API = "https://openapi.etsy.com/v3/application";
 
-type RawMoney = { amount: number; divisor?: number };
-type RawTransaction = { transaction_id: number; listing_id: number; quantity?: number; price?: RawMoney };
-type RawReceipt = { receipt_id: number; country_iso?: string; created_timestamp: number; transactions?: RawTransaction[] };
 type RawListing = { listing_id: number; views?: number; num_favorers?: number };
 
 /** Live Etsy Open API v3 client. Token persistence is injected so refreshes are saved. */
@@ -114,24 +113,24 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   async getReceipts({ since }: { since: Date }): Promise<EtsyReceipt[]> {
     const minCreated = Math.floor(since.getTime() / 1000);
-    const json = await this.request<{ results: RawReceipt[] }>(
-      `/shops/${this.shopId}/receipts?min_created=${minCreated}&limit=100&was_paid=true`,
-    );
-    const out: EtsyReceipt[] = [];
-    for (const r of json.results ?? []) {
-      for (const t of r.transactions ?? []) {
-        const amount = (t.price?.amount ?? 0) / (t.price?.divisor ?? 100);
-        out.push({
-          receiptId: `${r.receipt_id}-${t.transaction_id}`,
-          etsyListingId: String(t.listing_id),
-          buyerCountry: r.country_iso ?? "??",
-          quantity: t.quantity ?? 1,
-          totalChf: amount * (t.quantity ?? 1),
-          createdAt: new Date(r.created_timestamp * 1000),
-        });
-      }
-    }
-    return out;
+    const pages = await collectPages(async (offset) => {
+      const json = await this.request<{ results?: unknown[] }>(
+        `/shops/${this.shopId}/receipts?min_created=${minCreated}&limit=100&offset=${offset}&was_paid=true`,
+      );
+      return json.results ?? [];
+    });
+    return pages.flatMap((row) => mapReceipt(row));
+  }
+
+  async getLedgerEntries({ since, until }: { since: Date; until: Date }): Promise<EtsyLedgerEntry[]> {
+    const minCreated = Math.floor(since.getTime() / 1000);
+    const maxCreated = Math.floor(until.getTime() / 1000);
+    return collectPages(async (offset) => {
+      const json = await this.request<{ results?: EtsyLedgerEntry[] }>(
+        `/shops/${this.shopId}/payment-account/ledger-entries?min_created=${minCreated}&max_created=${maxCreated}&limit=100&offset=${offset}`,
+      );
+      return json.results ?? [];
+    });
   }
 
   async getListingStats(current: { etsyListingId: string }[]) {
