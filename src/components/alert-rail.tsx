@@ -27,7 +27,7 @@ export function AlertRail({ alerts, heading = "Alerts" }: { alerts: CockpitAlert
           <div>
             <div className="text-sm font-semibold">No operational alerts</div>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              Cron auth, missing Etsy ids, the deploy pin, OAuth expiry, the kill switch, and the catalog draft are clear.
+              No alerts were found in the available stored data.
             </p>
           </div>
         </Panel>
@@ -49,6 +49,9 @@ export function AlertRail({ alerts, heading = "Alerts" }: { alerts: CockpitAlert
           ))}
         </Panel>
       )}
+      <p className="mt-2 text-xs text-muted-foreground">
+        Cron endpoint 401 responses are not stored as job runs. Check GitHub Actions logs and verify that CRON_SECRET matches Railway.
+      </p>
     </section>
   );
 }

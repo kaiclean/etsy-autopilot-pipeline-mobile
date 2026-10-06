@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { setCatalogDraftReviewed } from "@/app/actions";
 import { Panel, SectionTitle } from "@/components/common";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CATALOG_DRAFT_SUMMARY } from "@/lib/catalog-draft";
 
 export function CatalogDraftPanel({ reviewed }: { reviewed: boolean }) {
@@ -24,7 +24,7 @@ export function CatalogDraftPanel({ reviewed }: { reviewed: boolean }) {
       <SectionTitle>{CATALOG_DRAFT_SUMMARY.title}</SectionTitle>
       <Panel className="space-y-3 p-4">
         <div>
-          <div className="text-sm font-semibold">Pending Kai</div>
+          <div className="text-sm font-semibold">{reviewed ? "Reviewed by Kai" : "Pending Kai"}</div>
           <p className="mt-0.5 text-xs text-muted-foreground">Source: {CATALOG_DRAFT_SUMMARY.source}</p>
         </div>
         <ul className="flex flex-wrap gap-1.5">
@@ -38,10 +38,8 @@ export function CatalogDraftPanel({ reviewed }: { reviewed: boolean }) {
           This panel only records that Kai reviewed the draft. It does not apply titles, images, or exits on Etsy.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Link href="/catalog-draft">
-            <Button type="button" variant="secondary" className="h-9 rounded-xl px-3 text-xs">
-              Open diff
-            </Button>
+          <Link href="/catalog-draft" className={buttonVariants({ variant: "secondary", className: "h-9 rounded-xl px-3 text-xs" })}>
+            Open diff
           </Link>
           <Button
             type="button"
