@@ -5,6 +5,7 @@ import type { DB } from "@/db";
 import { designs, listings, podSamples } from "@/db/schema";
 import { config } from "@/lib/config";
 import { manifestIsComplete, tryBuildFileManifest } from "@/lib/file-manifest";
+import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
 import { absoluteUrl, podPreset } from "./publish";
 
@@ -121,21 +122,25 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
     blueprintId: l.podBlueprintId ?? undefined,
     printProviderId: l.podPrintProviderId ?? undefined,
   });
-  const etsyListingId = result.externalEtsyId ?? (printify.mode === "dry-run" ? `dry-etsy-${result.productId}` : l.etsyListingId);
-  const hasEtsyId = Boolean(etsyListingId);
+  const outcome = resolvePodPublish({
+    mode: printify.mode,
+    productId: result.productId,
+    externalEtsyId: result.externalEtsyId,
+    previousEtsyListingId: l.etsyListingId,
+  });
   await db
     .update(listings)
     .set({
       podPublishedAt: now,
       printifyProductId: result.productId,
-      etsyListingId,
-      // Live Printify returns the Etsy id later. Do not mark published while it is null.
-      status: hasEtsyId ? "published" : "pod_created",
+      etsyListingId: outcome.etsyListingId,
+      // Live Printify returns the Etsy id later. publishing is the wait state; pod_created is not polled.
+      status: outcome.status,
       publishMode: printify.mode,
-      publishError: hasEtsyId ? null : "Printify accepted the publish. The Etsy listing id is not back yet.",
-      publishedAt: hasEtsyId ? now : l.publishedAt,
+      publishError: null,
+      publishedAt: outcome.status === "published" ? (l.publishedAt ?? now) : l.publishedAt,
       updatedAt: now,
     })
     .where(eq(listings.id, listingId));
-  return { ok: true as const, etsyListingId };
+  return { ok: true as const, etsyListingId: outcome.etsyListingId, status: outcome.status };
 }

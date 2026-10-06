@@ -52,6 +52,7 @@ const LISTING_STYLE: Record<ListingStatus, { label: string; cls: string }> = {
   pending_approval: { label: "Awaiting approval", cls: "bg-warning/15 text-warning" },
   approved: { label: "Approved", cls: "bg-chart-4/15 text-chart-4" },
   pod_created: { label: "Printify only", cls: "bg-chart-4/15 text-chart-4" },
+  publishing: { label: "Awaiting Etsy id", cls: "bg-warning/15 text-warning" },
   published: { label: "On Etsy", cls: "bg-success/15 text-success" },
   rejected: { label: "Rejected", cls: "bg-muted text-muted-foreground" },
   failed: { label: "Failed", cls: "bg-destructive/15 text-destructive" },

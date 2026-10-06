@@ -24,6 +24,7 @@ const FILTERS = [
   { id: "all", label: "All" },
   { id: "published", label: "On Etsy" },
   { id: "pod_created", label: "Printify only" },
+  { id: "publishing", label: "Awaiting Etsy id" },
   { id: "pending_approval", label: "In review" },
   { id: "approved", label: "Approved" },
   { id: "rejected", label: "Rejected" },
@@ -43,12 +44,21 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
   }, [listings]);
   const rows = filterProducts(listings, { query, niche, status: filter, triage });
   const liveDrafts = listings.filter((l) => l.status === "published" && l.publishMode === "live").length;
+  const awaitingEtsyId = listings.filter((l) => l.status === "publishing").length;
   const invalid = listings.filter((l) => listingHasErrors(l.validation)).length;
 
   return (
     <>
-      {(liveDrafts > 0 || invalid > 0) && (
+      {(liveDrafts > 0 || awaitingEtsyId > 0 || invalid > 0) && (
         <div className="mb-4 space-y-2">
+          {awaitingEtsyId > 0 && (
+            <Panel className="flex gap-2 border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+              <TriangleAlert className="size-4 shrink-0" />
+              <span>
+                {awaitingEtsyId} print-on-demand listing{awaitingEtsyId === 1 ? "" : "s"} {awaitingEtsyId === 1 ? "was" : "were"} sent to Etsy and {awaitingEtsyId === 1 ? "is" : "are"} waiting for an Etsy listing id. Orders sync keeps checking, and those sales are saved until the id arrives.
+              </span>
+            </Panel>
+          )}
           {liveDrafts > 0 && (
             <Panel className="flex gap-2 border-warning/30 bg-warning/10 p-3 text-xs text-warning">
               <TriangleAlert className="size-4 shrink-0" />
@@ -125,6 +135,9 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
                 {titleImageMismatch(l) && <div className="mt-1 text-[11px] text-warning">Title/image mismatch · flag only</div>}
                 {listingHasErrors(l.validation) && (
                   <div className="mt-1 line-clamp-2 text-[11px] text-destructive">{l.validation.find((issue) => issue.severity === "error")?.message}</div>
+                )}
+                {l.status === "publishing" && (
+                  <div className="mt-1 text-[11px] text-warning">Waiting for the Etsy listing id from Printify.</div>
                 )}
                 {l.status === "published" && l.publishMode === "live" && (
                   <div className="mt-1 text-[11px] text-warning">Shop Manager: set How it’s made → AI tools, then activate.</div>
@@ -224,7 +237,9 @@ function HumanPublish({ l }: { l: Listing }) {
         {l.podPrintProviderId ? ` · provider ${l.podPrintProviderId}` : ""}
         {l.podPublishedAt ? " · sent to Etsy" : " · not sent to Etsy"}
       </p>
-      {!l.podBlueprintId || !l.podPrintProviderId ? (
+      {l.status === "publishing" ? (
+        <p className="text-muted-foreground">Sent to Etsy. This listing stays here until the Etsy listing id arrives from Printify.</p>
+      ) : !l.podBlueprintId || !l.podPrintProviderId ? (
         <p className="text-muted-foreground">A sample can be recorded only after a Printify create stores the blueprint id and print provider id.</p>
       ) : l.status !== "pod_created" ? (
         <p className="text-muted-foreground">Publish to Etsy is only for a Printify product that has not been sent yet.</p>
@@ -272,6 +287,7 @@ function Detail({ l }: { l: Listing }) {
             </div>
             <div>{l.productType === "digital" ? "Digital download · Etsy delivers automatically" : `${productLabel(l.productType, l.podProvider)} · Printify`}</div>
             {l.etsyListingId && <div className="font-mono">Etsy: {l.etsyListingId}</div>}
+            {l.status === "publishing" && <div>Etsy listing id has not arrived yet.</div>}
             {l.printifyProductId && <div className="font-mono">Printify: {l.printifyProductId}</div>}
             <div suppressHydrationWarning>Updated {relTime(l.updatedAt)}</div>
             {l.status === "published" && (
@@ -280,6 +296,12 @@ function Detail({ l }: { l: Listing }) {
           </div>
         </div>
 
+        {l.status === "publishing" && (
+          <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+            <TriangleAlert className="size-4 shrink-0" />
+            Printify accepted the publish to Etsy. This listing stays here until the Etsy listing id is read back or delivered by the Printify webhook. Sales for that id are kept on the Orders page.
+          </div>
+        )}
         {l.status === "published" && l.publishMode === "live" && !l.activatedAt && (
           <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
             <TriangleAlert className="size-4 shrink-0" />

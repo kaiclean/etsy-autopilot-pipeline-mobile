@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
 import { listings, orders, printifyEvents, type FulfillmentStatus } from "@/db/schema";
 import { config } from "@/lib/config";
+import { linkUnmatchedOrders } from "@/pipeline/etsy-id-sync";
 
 const REDACT = new Set(["email", "phone", "first_name", "last_name", "address1", "address2", "address_to"]);
 
@@ -178,9 +179,23 @@ export async function ingestPrintifyWebhook(
     const [listing] = await db.select().from(listings).where(eq(listings.printifyProductId, mapping.printifyProductId)).limit(1);
     if (listing) {
       listingId = listing.id;
-      if (shouldFillExternalId(listing.etsyListingId, mapping.etsyListingId)) {
-        await db.update(listings).set({ etsyListingId: mapping.etsyListingId, updatedAt: new Date() }).where(eq(listings.id, listing.id));
+      const incoming = mapping.etsyListingId;
+      const fill = shouldFillExternalId(listing.etsyListingId, incoming);
+      const awaitingId = listing.status === "publishing" || listing.status === "pod_created";
+      const now = new Date();
+      if (fill || (incoming && awaitingId && listing.etsyListingId === incoming)) {
+        await db
+          .update(listings)
+          .set({
+            etsyListingId: incoming,
+            ...(awaitingId && incoming ? { status: "published" as const, publishError: null, publishedAt: listing.publishedAt ?? now } : {}),
+            updatedAt: now,
+          })
+          .where(eq(listings.id, listing.id));
         listingUpdated = true;
+      }
+      if (incoming && (fill || listing.etsyListingId === incoming)) {
+        await linkUnmatchedOrders(db, listing, incoming, now);
       }
     }
   }

@@ -12,9 +12,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const params = await searchParams;
   const [listings, catalogDraft] = await Promise.all([getListings(), getDb().then((db) => getSetting(db, "catalogDraft"))]);
   const live = listings.filter((l) => l.status === "published").length;
+  const awaiting = listings.filter((l) => l.status === "publishing").length;
   return (
     <div className="space-y-6">
-      <PageHeader title="Products" subtitle={`${live} published · ${listings.length} total · badged by source`} />
+      <PageHeader
+        title="Products"
+        subtitle={`${live} published${awaiting ? ` · ${awaiting} awaiting Etsy id` : ""} · ${listings.length} total · badged by source`}
+      />
       <CatalogDraftPanel reviewed={catalogDraft.reviewedByKai} />
       <ProductsList listings={listings} initialTriage={parseQueueTriage(params.triage)} />
     </div>
