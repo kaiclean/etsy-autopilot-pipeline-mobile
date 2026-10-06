@@ -9,7 +9,7 @@ import { AlertRail } from "@/components/alert-rail";
 import { buildCockpitAlerts, countListingsMissingEtsyId, countMissingEtsyIds, cronRunIsUnauthorized, railwayDeploySha } from "@/lib/alerts";
 import { filterProducts, filterQueue, titleImageMismatch } from "@/lib/catalog-filters";
 import { CATALOG_DRAFT_SUMMARY } from "@/lib/catalog-draft";
-import { readCatalogDraftMarkdown } from "@/lib/catalog-draft-document";
+import { readCatalogDraftMarkdown } from "@/lib/catalog-draft-doc";
 import { buildShopIdentity } from "@/lib/shop-identity";
 import { getDb } from "@/db";
 import { costs, listings, settings } from "@/db/schema";
