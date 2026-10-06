@@ -30,6 +30,11 @@ export class PrintifyDryRunAdapter implements PrintifyAdapter {
     return { productId: `dry-pfy-${Date.now().toString(36)}${Math.floor(this.random() * 1e4)}`, blueprintId, printProviderId };
   }
 
+  /** Dry-run products have no sales channel. Callers mint a synthetic Etsy id instead. */
+  async getExternalEtsyIds(productIds: string[]) {
+    return Object.fromEntries(productIds.map((id) => [id, null]));
+  }
+
   /** Advances each simulated order one step with 60% probability per sync. */
   async getOrderStatuses(podOrderIds: string[]) {
     return Object.fromEntries(

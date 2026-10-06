@@ -19,6 +19,7 @@ export type ListingStatus =
   | "approved"
   | "rejected"
   | "pod_created"
+  | "publishing"
   | "published"
   | "failed";
 
@@ -35,6 +36,9 @@ export type FileManifest = {
   delivery: DeliveryFileRecord;
   preview?: DeliveryFileRecord;
 };
+
+/** Receipt linked to a pipeline listing, or kept until that Etsy id shows up. */
+export type OrderMatchStatus = "matched" | "unmatched";
 export type FulfillmentStatus =
   | "delivered_digital"
   | "pending"
@@ -184,6 +188,8 @@ export const listings = pgTable("listings", {
   printifyProductId: text("printify_product_id"),
   publishMode: text("publish_mode").$type<"dry-run" | "live">(),
   publishError: text("publish_error"),
+  /** Set once, when a POD row has waited >24h for an Etsy id, so the alert does not repeat. */
+  etsyIdWaitAlertedAt: timestamp("etsy_id_wait_alerted_at", { withTimezone: true }),
   views: integer("views").notNull().default(0),
   favorites: integer("favorites").notNull().default(0),
   isDemo: boolean("is_demo").notNull().default(false),
@@ -201,6 +207,9 @@ export const orders = pgTable("orders", {
     .references(() => shops.id),
   etsyReceiptId: text("etsy_receipt_id").notNull().unique(),
   listingId: integer("listing_id").references(() => listings.id),
+  /** Etsy listing id from the receipt when no pipeline row has that id yet. */
+  unmatchedEtsyListingId: text("unmatched_etsy_listing_id"),
+  matchStatus: text("match_status").$type<OrderMatchStatus>().notNull().default("matched"),
   buyerCountry: text("buyer_country").notNull(),
   quantity: integer("quantity").notNull().default(1),
   totalChf: doublePrecision("total_chf").notNull(),

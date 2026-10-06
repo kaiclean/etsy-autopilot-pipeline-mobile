@@ -26,6 +26,7 @@ export interface PrintifyAdapter {
   /**
    * Uploads the design and creates the Printify product.
    * Calls publish.json only when `publishToEtsy` is set (a per-listing human action).
+   * After that call, a live client may GET `external.id`. Create-only does not.
    */
   createAndPublish(input: PrintifyProductInput): Promise<{
     productId: string;
@@ -33,5 +34,10 @@ export interface PrintifyAdapter {
     blueprintId?: number;
     printProviderId?: number;
   }>;
+  /**
+   * Read-only. Maps a Printify product id to the Etsy listing id in `external.id`, or null
+   * when Printify has not written it yet. A missing key means that product could not be read.
+   */
+  getExternalEtsyIds(productIds: string[]): Promise<Record<string, string | null>>;
   getOrderStatuses(podOrderIds: string[]): Promise<Record<string, PrintifyOrderStatus>>;
 }

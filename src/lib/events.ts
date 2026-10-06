@@ -11,10 +11,17 @@ export type EmitInput = {
   body?: string;
   severity?: "info" | "success" | "warning" | "error";
   href?: string;
+  shopId?: string;
 };
 
 export async function emit(db: DB, e: EmitInput, demo = isDemoMode()) {
-  await db.insert(events).values({ ...e, severity: e.severity ?? "info", isDemo: demo });
+  const { shopId, ...rest } = e;
+  await db.insert(events).values({
+    ...rest,
+    ...(shopId ? { shopId } : {}),
+    severity: rest.severity ?? "info",
+    isDemo: demo,
+  });
   try {
     await dispatchEventPush(db, e);
   } catch (error) {

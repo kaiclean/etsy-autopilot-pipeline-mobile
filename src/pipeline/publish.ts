@@ -97,7 +97,7 @@ export const runPublish: StageFn = async (ctx) => {
           artwork = printArtworkUrl(artwork, design?.imageUrl);
         }
         // Create the Printify product only. publish.json is a per-listing human action.
-        // Live etsyListingId is left null here so the orders backfill can fill it later.
+        // etsyListingId stays null. Orders sync does not poll pod_created rows.
         const result = await printify.createAndPublish({
           title: l.title,
           description: l.description,
