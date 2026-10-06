@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@electric-sql/pglite", "google-trends-api", "web-push"],
   outputFileTracingIncludes: {
     "/**": ["./drizzle/**"],
+    "/catalog-draft": ["./docs/omnishop-catalog-diff-2026-10-05.md"],
   },
   async headers() {
     return [

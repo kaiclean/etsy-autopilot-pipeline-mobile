@@ -57,7 +57,7 @@ export function titleImageMismatch(listing: {
   if (!/\b(?:mug|sweatshirt)\b/i.test(listing.title)) return false;
   const tags = (listing.tags ?? []).join(" ");
   const productSaysPoster = /\bposter\b/i.test(`${listing.productType ?? ""} ${tags}`);
-  const mockupSaysPoster = /\bposter\b/i.test(`${listing.mockupMeta ?? ""} ${listing.imageUrl ?? ""} ${listing.description ?? ""}`);
+  const mockupSaysPoster = /\bposter(?:A3)?\b/i.test(`${listing.mockupMeta ?? ""} ${listing.imageUrl ?? ""}`);
   return productSaysPoster || mockupSaysPoster;
 }
 
