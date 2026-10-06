@@ -129,9 +129,9 @@ export function storageBackend(): "s3" | "blob" | "none" {
   return "none";
 }
 
-export function hasEtsyCredentials() {
+export function hasEtsyCredentials(shopId?: string | null) {
   const e = config.etsy;
-  return Boolean(e.apiKey && e.sharedSecret && e.shopId);
+  return Boolean(e.apiKey && e.sharedSecret && (shopId?.trim() || e.shopId));
 }
 
 export function hasPrintifyCredentials() {
@@ -140,10 +140,10 @@ export function hasPrintifyCredentials() {
 }
 
 /** Demo mode = seeded demo rows visible + mock adapters. Switches off once Etsy creds exist. */
-export function isDemoMode() {
+export function isDemoMode(shopId?: string | null) {
   if (env("DEMO_MODE") === "true") return true;
   if (env("DEMO_MODE") === "false") return false;
-  return !hasEtsyCredentials();
+  return !hasEtsyCredentials(shopId);
 }
 
 export type IntegrationStatus = {

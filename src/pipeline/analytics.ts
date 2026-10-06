@@ -1,7 +1,6 @@
 import { and, eq, gte, isNotNull, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
-import { isDemoMode } from "@/lib/config";
 import { dayKey } from "@/lib/format";
 import { getSetting } from "@/lib/settings";
 import type { StageFn } from "./types";
@@ -37,7 +36,7 @@ export const runAnalytics: StageFn = async (ctx) => {
   }
 
   const today = dayKey(ctx.now);
-  const demo = isDemoMode();
+  const demo = ctx.demo;
   const [row] = await db
     .select()
     .from(dailyStats)
@@ -57,7 +56,7 @@ export const runAnalytics: StageFn = async (ctx) => {
     const note = `Etsy Ads budget ${today}`;
     const [already] = await db.select({ id: costs.id }).from(costs).where(and(eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
       log(`Booked Etsy Ads daily budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (set in Etsy UI; no Ads API)`);
     }
   }

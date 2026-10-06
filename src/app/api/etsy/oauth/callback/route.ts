@@ -3,7 +3,7 @@ import { exchangeCode } from "@/adapters/etsy/oauth";
 import { getDb } from "@/db";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { setSetting } from "@/lib/settings";
+import { resolveActiveShop, writeEtsyTokens } from "@/lib/shops";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
     const redirectUri = config.etsy.redirectUri ?? new URL("/api/etsy/oauth/callback", req.url).toString();
     const tokens = await exchangeCode({ code, verifier, redirectUri });
     const db = await getDb();
-    await setSetting(db, "etsyTokens", tokens);
+    const shop = await resolveActiveShop(db);
+    await writeEtsyTokens(db, shop.id, tokens);
     await emit(db, { type: "etsy.connected", title: "Etsy shop connected", body: `User ${tokens.userId}`, severity: "success", href: "/settings" });
     return back("connected");
   } catch {

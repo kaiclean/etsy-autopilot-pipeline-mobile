@@ -2,7 +2,6 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { costs, designs, keywords } from "@/db/schema";
 import { persistableImageUrl } from "@/lib/compact-image-url";
-import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
@@ -71,16 +70,17 @@ export const runDesign: StageFn = async (ctx) => {
       });
       const imageUrl = await persistableImageUrl(img.url);
       await db.insert(designs).values({
+        shopId: ctx.shopId,
         keywordId: kw.id,
         niche: kw.niche,
         prompt,
         provider: img.provider,
         imageUrl,
         costChf: img.costChf,
-        isDemo: isDemoMode(),
+        isDemo: ctx.demo,
       });
       if (img.costChf > 0) {
-        await db.insert(costs).values({ kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: isDemoMode() });
+        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: ctx.demo });
       }
       spentToday += img.costChf;
       spentMonth += img.costChf;
@@ -92,7 +92,7 @@ export const runDesign: StageFn = async (ctx) => {
     }
   }
   if (made) {
-    await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" });
+    await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" }, ctx.demo);
   }
   return `Generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
 };

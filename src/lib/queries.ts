@@ -14,6 +14,7 @@ import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, railwayDeploySha } from "./alerts";
 import { buildShopIdentity } from "./shop-identity";
+import { resolveRequestShop } from "./shops";
 import { getSetting } from "./settings";
 
 const DAY = 864e5;
@@ -24,19 +25,27 @@ function lastNDays(n: number, now = new Date()) {
 
 export async function getShellData() {
   const db = await getDb();
-  const [pending, automation] = await Promise.all([
+  const [pending, automation, shop] = await Promise.all([
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
     getSetting(db, "automation"),
+    resolveRequestShop(db).catch(() => null),
   ]);
-  const demo = isDemoMode();
+  const demo = isDemoMode(shop?.etsyShopId ?? undefined);
   const publishMode = effectivePublishMode(automation.publishMode);
+  const killSwitch = automation.killSwitch || Boolean(shop?.killSwitch);
   return {
     pendingCount: pending.length,
     demo,
-    killSwitch: automation.killSwitch,
+    killSwitch,
     publishMode,
     dryRunNotice: dryRunNotice({ publishMode, demo }),
-    identity: buildShopIdentity({ publishMode, killSwitch: automation.killSwitch }),
+    identity: buildShopIdentity({
+      publishMode,
+      killSwitch,
+      displayName: shop?.displayName,
+      handle: shop?.etsyShopName ?? undefined,
+      etsyShopId: shop?.etsyShopId,
+    }),
   };
 }
 
@@ -319,6 +328,7 @@ export async function getAnalytics() {
 
 export async function getConnectionsData() {
   const db = await getDb();
+  const shop = await resolveRequestShop(db).catch(() => null);
   const [tokens, automation, stages, lastRuns, eventCount, recentEvents] = await Promise.all([
     getSetting(db, "etsyTokens"),
     getSetting(db, "automation"),
@@ -341,10 +351,10 @@ export async function getConnectionsData() {
   const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
   return {
-    checks: connectionHealth({ etsyConnected, publishMode, accessExpired }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId }),
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
-    etsyKeysReady: hasEtsyCredentials(),
+    etsyKeysReady: hasEtsyCredentials(shop?.etsyShopId),
     printifyConfigured: hasPrintifyCredentials(),
     webhookSecretSet: Boolean(config.printify.webhookSecret),
     printifyEventCount: Number(eventCount[0]?.total ?? 0),
@@ -354,7 +364,7 @@ export async function getConnectionsData() {
     killSwitch: automation.killSwitch,
     publishMode,
     envPublishMode: config.publishMode,
-    demo: isDemoMode(),
+    demo: isDemoMode(shop?.etsyShopId),
     presence: setupPresence(),
   };
 }
