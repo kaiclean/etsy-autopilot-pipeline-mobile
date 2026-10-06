@@ -1,7 +1,8 @@
-import { and, eq, gte, isNotNull, like, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
+import { analyticsOrdersWhere, publishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import type { StageFn } from "./types";
 
@@ -16,7 +17,7 @@ export const runAnalytics: StageFn = async (ctx) => {
       favorites: listings.favorites,
     })
     .from(listings)
-    .where(and(eq(listings.status, "published"), isNotNull(listings.etsyListingId)));
+    .where(publishedListingsWhere(ctx.shopId));
 
   const stats = await etsy.getListingStats(
     published.map((l) => ({ etsyListingId: l.etsyListingId!, views: l.views, favorites: l.favorites })),
@@ -54,7 +55,10 @@ export const runAnalytics: StageFn = async (ctx) => {
   const automation = await getSetting(db, "automation");
   if (automation.adsEnabled && automation.dailyAdsCapChf > 0) {
     const note = `Etsy Ads budget ${today}`;
-    const [already] = await db.select({ id: costs.id }).from(costs).where(and(eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
+    const [already] = await db
+      .select({ id: costs.id })
+      .from(costs)
+      .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
     if (!already) {
       await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
       log(`Booked Etsy Ads daily budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (set in Etsy UI; no Ads API)`);
@@ -69,6 +73,6 @@ export const runAnalytics: StageFn = async (ctx) => {
       n: sql<number>`count(*)::int`,
     })
     .from(orders)
-    .where(gte(orders.createdAt, since));
+    .where(analyticsOrdersWhere(ctx.shopId, since));
   return `30d: ${agg.n} orders, revenue CHF ${Number(agg.revenue).toFixed(2)}, profit after fees CHF ${Number(agg.profit).toFixed(2)} · +${dViews} views`;
 };
