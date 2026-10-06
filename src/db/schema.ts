@@ -47,7 +47,8 @@ export type StageName =
   | "listing"
   | "publish"
   | "orders"
-  | "analytics";
+  | "analytics"
+  | "maintenance";
 
 export type LogLine = { t: string; level: "info" | "warn" | "error"; msg: string };
 

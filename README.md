@@ -37,7 +37,7 @@ Try the whole loop:
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run db:generate` | Generate a new SQL migration after editing `src/db/schema.ts` |
 | `npm run db:seed` | Wipe and reseed **demo** rows only (`is_demo = true`) |
-| `npm run images:backfill` | Upload inline `data:` images to the configured S3/Blob bucket and rewrite `image_url`. `--dry-run` only counts them |
+| `npm run images:backfill` | Upload inline `data:` images to the configured S3/Blob bucket and rewrite `image_url`. `--dry-run` only counts them. The maintenance cron rewrites at most 10 rows per run when S3 is configured |
 
 To reset local data completely, stop the server and `rm -rf .data`.
 
@@ -138,7 +138,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 2. **Import the repository** in Vercel. The Next.js framework preset is detected and no build settings need to change.
 3. **Add environment variables:** `DASHBOARD_PASSWORD`, `AUTH_SECRET`, `CRON_SECRET`, and `APP_URL=https://<your-domain>`. Add the provider keys when you have them.
 4. **Deploy.** On the first request the app runs the migrations in `./drizzle` against Neon. If Etsy keys are missing or `DEMO_MODE=true`, it also seeds demo data.
-5. **Cron.** `vercel.json` schedules each stage once a day (UTC), which works on the Hobby plan. On Pro you can tighten it, for example `orders` every 30 minutes (`*/30 * * * *`) and `publish` every 2 hours. Keep `DEFAULT_STAGES` in `src/lib/settings.ts` in sync so the dashboard shows the right schedule. Railway has no built-in cron. `.github/workflows/autopilot-cron.yml` hits the same UTC times from the default branch. After merge, set GitHub repository secrets once: `CRON_SECRET` (the same value as Railway) and optional `AUTOPILOT_URL` (defaults to `https://etsy-autopilot-production-8b9f.up.railway.app`). Do not commit either value. You can also call `GET /api/cron/<stage>` yourself with `Authorization: Bearer $CRON_SECRET`. Schedules do not change the dry-run publish choice.
+5. **Cron.** `vercel.json` schedules each stage once a day (UTC), which works on the Hobby plan. On Pro you can tighten it, for example `orders` every 30 minutes (`*/30 * * * *`) and `publish` every 2 hours. Keep `DEFAULT_STAGES` in `src/lib/settings.ts` in sync so the dashboard shows the right schedule. Railway has no built-in cron. `.github/workflows/autopilot-cron.yml` hits the same UTC times from the default branch. After merge, set GitHub repository secrets once: `CRON_SECRET` (the same value as Railway) and optional `AUTOPILOT_URL` (defaults to `https://etsy-autopilot-production-8b9f.up.railway.app`). Do not commit either value. You can also call `GET /api/cron/<stage>` yourself with `Authorization: Bearer $CRON_SECRET`. `maintenance` runs daily at 04:17 UTC and also at the end of the orders cron. It registers missing Printify webhooks, rewrites up to 10 inline images when S3 is set, and deletes fake orders while demo mode is off. Schedules do not change the dry-run publish choice.
 6. **Install on your phone.** Open the URL in Safari (iOS), tap Share → **Add to Home Screen**, then enable notifications in Settings. On Android, Chrome shows "Install app".
 
 > Without `DATABASE_URL`, Vercel falls back to PGlite in `/tmp`. That is fine for a preview but gets wiped on every cold start. Use Neon for anything real.
@@ -170,7 +170,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
    - `GET /v1/catalog/blueprints/{id}/print_providers/{pid}/variants.json` → comma-separated `PRINTIFY_VARIANT_IDS`.
 5. In Etsy, set Printify as a **production partner** (Shop Manager → Settings → Production partners) with the correct ship-from location.
    The publish run **creates** the Printify product and stops. It does not call Printify `publish.json`. Publishing that product to Etsy is a per-listing button. It stays blocked until you record a physical sample for that blueprint id + print provider id (Products → the listing → Record sample). Live creation does not auto-pick a provider: `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID` and `PRINTIFY_VARIANT_IDS` are required, and they are the only blueprint that live products use. Order a sample of that pair before you record it.
-6. Point webhooks at `POST https://<your-domain>/api/webhooks/printify`. Create one webhook per topic (`order:created`, `order:updated`, `order:sent-to-production`, `order:shipment:created`, `order:shipment:delivered`, `product:publish:started`) with the same URL and `"secret": "<PRINTIFY_WEBHOOK_SECRET>"`. Printify signs the raw body as `sha256=<hmac>` in `x-pfy-signature`. The handler stores the event once, strips buyer contact fields, and when the ids match a local row it records the Etsy listing id and Printify order id. It does not call Printify or Etsy, so it is safe while `PUBLISH_MODE=dry-run`. Production rejects unsigned deliveries.
+6. Point webhooks at `POST https://<your-domain>/api/webhooks/printify`. Topics: `order:created`, `order:updated`, `order:sent-to-production`, `order:shipment:created`, `order:shipment:delivered`, `product:publish:started`, `product:publish:succeeded`. The daily maintenance cron registers any topic that is not already aimed at that URL, using `PRINTIFY_WEBHOOK_SECRET` as the webhook `secret`. It skips that step in dry-run or demo mode, and when the Printify env vars are missing. Printify signs the raw body as `sha256=<hmac>` in `x-pfy-signature`. The handler stores the event once, strips buyer contact fields, and when the ids match a local row it records the Etsy listing id and Printify order id. It does not call Printify or Etsy, so it is safe while `PUBLISH_MODE=dry-run`. Production rejects unsigned deliveries.
 
 ### Web Push
 
@@ -197,7 +197,7 @@ npm run images:backfill -- --dry-run   # counts rows and bytes, no uploads
 npm run images:backfill                # uploads via the existing S3 or Blob env, then updates image_url
 ```
 
-The script reads `DATABASE_URL` and the storage variables above. It does not add new secrets. Each image is loaded on its own, in chunks, so the backfill itself stays under the 64 MB cap. The same bytes are uploaded once. A gallery that was the same data URL as its delivery file is saved as `/api/preview?…&src=<stored url>` so the preview and the buyer file stay different. Run it against production from a shell that already has the Railway (or local) environment, for example `railway run npm run images:backfill`.
+The script reads `DATABASE_URL` and the storage variables above. It does not add new secrets. Each image is loaded on its own, in chunks, so the backfill itself stays under the 64 MB cap. The same bytes are uploaded once. A gallery that was the same data URL as its delivery file is saved as `/api/preview?…&src=<stored url>` so the preview and the buyer file stay different. `/api/cron/maintenance` rewrites at most 10 of those rows per run when S3 is configured, so the work happens on Railway without copying secrets out. The CLI still processes every row when you already have the environment locally.
 
 ### Higgsfield / OpenAI / Replicate
 

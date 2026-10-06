@@ -8,6 +8,7 @@ import { resolveActiveShop } from "@/lib/shops";
 import { runAnalytics } from "./analytics";
 import { runDesign } from "./design";
 import { runListing } from "./listing";
+import { runMaintenance } from "./maintenance";
 import { runOrders } from "./orders";
 import { runPublish } from "./publish";
 import { runResearch } from "./research";
@@ -20,6 +21,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   publish: runPublish,
   orders: runOrders,
   analytics: runAnalytics,
+  maintenance: runMaintenance,
 };
 
 export type RunOptions = { db?: DB; random?: () => number; now?: Date };
@@ -64,8 +66,19 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
     log: (msg, level = "info") => logs.push({ t: new Date().toISOString(), level, msg }),
   };
   const label = STAGES.find((s) => s.id === stage)!.label;
+  const afterOrders = async () => {
+    if (stage !== "orders" || trigger !== "cron") return;
+    try {
+      const maintenance = await runStage("maintenance", "cron", opts);
+      ctx.log(`maintenance ${maintenance.status}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "maintenance failed";
+      ctx.log(`maintenance failed: ${message.slice(0, 200)}`, "error");
+    }
+  };
   try {
     const summary = await STAGE_FNS[stage](ctx);
+    await afterOrders();
     const [done] = await db
       .update(jobRuns)
       .set({ status: "success", summary, logs, finishedAt: new Date() })
@@ -76,6 +89,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
   } catch (e) {
     const msg = (e as Error).message;
     logs.push({ t: new Date().toISOString(), level: "error", msg });
+    await afterOrders();
     const [done] = await db
       .update(jobRuns)
       .set({ status: "failed", summary: msg, logs, finishedAt: new Date() })

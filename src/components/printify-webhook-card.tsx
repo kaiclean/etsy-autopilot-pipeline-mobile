@@ -7,10 +7,12 @@ export function PrintifyWebhookCard({
   origin,
   secretSet,
   events,
+  registered,
 }: {
   origin: string | undefined;
   secretSet: boolean;
   events: PrintifyEventLogRow[];
+  registered?: number | null;
 }) {
   const url = printifyCallbackUrl(origin);
   const topics = PRINTIFY_WEBHOOK_TOPICS.join("\n");
@@ -28,11 +30,12 @@ export function PrintifyWebhookCard({
       </SectionTitle>
       <Panel className="space-y-3 p-4">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          In Printify, create one webhook per topic with this callback. The handler stores the event and does not publish listings, so it is safe while dry-run is on.
+          The maintenance cron registers any missing topic to this callback. The handler stores the event and does not publish listings, so it is safe while dry-run is on.
           {origin
             ? " The URL is the APP_URL origin plus the webhook path."
             : " APP_URL is unset, so only the path is shown. Set APP_URL to the public https origin before registering."}
         </p>
+        {registered != null ? <p className="text-xs font-medium">Webhooks: {registered} registered</p> : null}
         <div>
           <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Callback URL</div>
           <code className="mt-1 block overflow-x-auto rounded-xl bg-muted px-3 py-2 text-xs">{url}</code>

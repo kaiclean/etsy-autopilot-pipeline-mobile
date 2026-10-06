@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { parseMaintenanceSummary } from "@/pipeline/maintenance";
 import { runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
 
@@ -16,5 +17,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ stage: string }
   const { stage } = await ctx.params;
   if (!isStage(stage)) return NextResponse.json({ error: "unknown stage" }, { status: 404 });
   const run = await runStage(stage, "cron");
-  return NextResponse.json({ stage, status: run.status, summary: run.summary });
+  const summary = stage === "maintenance" ? parseMaintenanceSummary(run.summary) : run.summary;
+  return NextResponse.json({ stage, status: run.status, summary });
 }

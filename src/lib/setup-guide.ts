@@ -76,7 +76,7 @@ export const SETUP_STEPS: SetupStep[] = [
     bullets: [
       "Printify → My profile → Connections → generate a token → PRINTIFY_API_TOKEN.",
       "GET https://api.printify.com/v1/shops.json and copy the Etsy-connected shop id into PRINTIFY_SHOP_ID.",
-      "Register one webhook per topic to POST /api/webhooks/printify with PRINTIFY_WEBHOOK_SECRET. The handler does not publish listings.",
+      "The maintenance cron registers one webhook per topic to POST /api/webhooks/printify with PRINTIFY_WEBHOOK_SECRET. The handler does not publish listings.",
       "In Etsy, add Printify as a production partner before live POD orders.",
     ],
   },

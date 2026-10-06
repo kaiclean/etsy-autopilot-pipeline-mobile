@@ -5,6 +5,7 @@ import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url"
 import { STAGES } from "@/pipeline/types";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
 import { printifyEventLog } from "./ops-copy";
+import { registeredWebhookCount } from "./printify-webhooks";
 import { connectionHealth } from "./health";
 import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
@@ -351,8 +352,10 @@ export async function getConnectionsData() {
   const etsyConnected = Boolean(tokens?.accessToken);
   const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
+  const webhooksRegistered = registeredWebhookCount(lastRuns.find((stage) => stage.id === "maintenance")?.run?.summary);
   return {
-    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId, webhooksRegistered }),
+    webhooksRegistered,
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),
     etsyKeysReady: hasEtsyCredentials(shop?.etsyShopId),

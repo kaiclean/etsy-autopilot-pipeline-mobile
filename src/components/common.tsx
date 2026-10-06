@@ -6,6 +6,7 @@ import {
   PenLine,
   Receipt,
   Send,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import type { FulfillmentStatus, ListingStatus, StageName } from "@/db/schema";
@@ -19,6 +20,7 @@ export const STAGE_ICONS: Record<StageName, LucideIcon> = {
   publish: Send,
   orders: Receipt,
   analytics: BarChart3Icon,
+  maintenance: Wrench,
 };
 
 export const AdsIcon = Megaphone;

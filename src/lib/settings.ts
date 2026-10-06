@@ -70,6 +70,7 @@ export const DEFAULT_STAGES: StageSettings = {
   publish: { paused: false, cron: "0 7 * * *" },
   orders: { paused: false, cron: "0 8 * * *" },
   analytics: { paused: false, cron: "0 3 * * *" },
+  maintenance: { paused: false, cron: "17 4 * * *" },
 };
 
 type SettingMap = {

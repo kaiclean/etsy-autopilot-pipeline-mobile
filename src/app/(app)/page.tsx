@@ -84,7 +84,7 @@ export default async function HomePage() {
             >
               Pipeline health {failing ? <span className="ml-1 text-destructive normal-case">· {failing} failing</span> : null}
             </SectionTitle>
-            <div className="no-scrollbar -mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:grid-cols-3 md:px-0 xl:grid-cols-6">
+            <div className="no-scrollbar -mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:grid-cols-3 md:px-0 xl:grid-cols-7">
               {data.lastRuns.map((s) => {
                 const Icon = STAGE_ICONS[s.id];
                 const st = s.run?.status;

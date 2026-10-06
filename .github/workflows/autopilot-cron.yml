@@ -10,6 +10,7 @@ name: Autopilot cron
 on:
   schedule:
     - cron: "0 3 * * *" # analytics
+    - cron: "17 4 * * *" # maintenance
     - cron: "0 5 * * 1" # research, Monday
     - cron: "0 6 * * *" # design
     - cron: "30 6 * * *" # listing
@@ -28,6 +29,7 @@ on:
           - listing
           - publish
           - orders
+          - maintenance
 
 permissions: {}
 
@@ -139,3 +141,21 @@ jobs:
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
           curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/orders"
+
+  maintenance:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'maintenance' || github.event.schedule == '17 4 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run maintenance
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/maintenance"

@@ -29,7 +29,12 @@ export default async function ConnectionsPage() {
       <DeployPinBadge sha={railwayDeploySha()} />
       <GoLiveControl mode={data.publishMode} envMode={data.envPublishMode} />
       <ConnectionsPanel checks={data.checks} etsyConnected={data.etsyConnected} canConnectEtsy={data.canConnectEtsy} />
-      <PrintifyWebhookCard origin={publicAppOrigin()} secretSet={data.webhookSecretSet} events={data.printifyEvents} />
+      <PrintifyWebhookCard
+        origin={publicAppOrigin()}
+        secretSet={data.webhookSecretSet}
+        events={data.printifyEvents}
+        registered={data.webhooksRegistered}
+      />
       <CronOpsPanel stages={toStageSnapshots(data.lastRuns, data.stages)} origin={publicAppOrigin()} />
       <SetupGuide
         presence={data.presence}

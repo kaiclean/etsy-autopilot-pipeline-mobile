@@ -9,7 +9,7 @@ import { buildPrompt } from "@/pipeline/design";
 import { draftListing, pickProduct } from "@/pipeline/listing";
 import { listingImageForProduct } from "@/pipeline/mockup";
 import type { DB } from "./index";
-import { costs, dailyStats, designs, events, jobRuns, keywords, listings, orders, type ListingStatus } from "./schema";
+import { costs, dailyStats, designs, events, jobRuns, keywords, listings, orders, type ListingStatus, type StageName } from "./schema";
 
 function mulberry32(seed: number) {
   let a = seed;
@@ -238,11 +238,16 @@ export async function seedDemo(db: DB, now = new Date()) {
     ["publish", "Published 2, failed 0 (dry-run)", 1.7],
     ["orders", "2 new order(s), 1 fulfillment update(s)", 0.4],
     ["analytics", "30d: 58 orders, revenue CHF 1,084 · +112 views", 5],
+    [
+      "maintenance",
+      '{"webhooks":{"existing":0,"created":0,"skipped":7,"reason":"demo mode"},"images":{"rewritten":0,"remaining":0,"reason":null},"fakeRows":{"orders":0,"costs":0,"daily_stats":0,"job_runs":0,"events":0,"reason":"demo mode"}}',
+      0.2,
+    ],
   ];
   for (const [stage, summary, hoursAgo] of runSummaries) {
     const startedAt = ago(0, hoursAgo);
     await db.insert(jobRuns).values({
-      stage: stage as "research",
+      stage: stage as StageName,
       status: "success",
       trigger: "cron",
       summary,

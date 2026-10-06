@@ -8,6 +8,39 @@ import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from 
 
 const API = "https://api.printify.com/v1";
 
+export type PrintifyWebhookRef = { topic: string; url: string };
+
+function webhookRows(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  const rec = payload as Record<string, unknown>;
+  if (Array.isArray(rec.data)) return rec.data;
+  if (Array.isArray(rec.webhooks)) return rec.webhooks;
+  return [];
+}
+
+/** Topic and URL only. Printify includes `secret` on webhook rows; it is dropped here. */
+export function toPrintifyWebhookRefs(payload: unknown): PrintifyWebhookRef[] {
+  const refs: PrintifyWebhookRef[] = [];
+  for (const row of webhookRows(payload)) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as Record<string, unknown>;
+    const topic = typeof rec.topic === "string" ? rec.topic.trim() : "";
+    const url = typeof rec.url === "string" ? rec.url.trim() : "";
+    if (!topic || !url) continue;
+    refs.push({ topic, url });
+  }
+  return refs;
+}
+
+function redactPrintifyError(error: unknown, secrets: Array<string | undefined>) {
+  let message = error instanceof Error ? error.message : "Printify request failed";
+  for (const secret of secrets) {
+    if (secret) message = message.split(secret).join("[redacted]");
+  }
+  return new Error(message);
+}
+
 export class PrintifyPublishError extends Error {
   constructor(
     message: string,
@@ -122,6 +155,31 @@ export class PrintifyLiveClient implements PrintifyAdapter {
       }
     }
     return { productId: product.id, blueprintId: choice.blueprintId, printProviderId: choice.printProviderId };
+  }
+
+  async listWebhooks(): Promise<PrintifyWebhookRef[]> {
+    const shopId = config.printify.shopId;
+    if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
+    try {
+      const payload = await this.request<unknown>(`/shops/${shopId}/webhooks.json`);
+      return toPrintifyWebhookRefs(payload);
+    } catch (error) {
+      throw redactPrintifyError(error, [config.printify.token, config.printify.webhookSecret]);
+    }
+  }
+
+  async createWebhook(input: { topic: string; url: string; secret: string }) {
+    const shopId = config.printify.shopId;
+    if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
+    try {
+      const created = await this.request<{ id?: string; topic?: string }>(`/shops/${shopId}/webhooks.json`, {
+        method: "POST",
+        body: JSON.stringify({ topic: input.topic, url: input.url, secret: input.secret }),
+      });
+      return { id: created?.id, topic: created?.topic ?? input.topic };
+    } catch (error) {
+      throw redactPrintifyError(error, [input.secret, config.printify.token]);
+    }
   }
 
   async getOrderStatuses(podOrderIds: string[]) {

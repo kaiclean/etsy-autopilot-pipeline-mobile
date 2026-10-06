@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import type { DB } from "@/db";
 import { designs, listings } from "@/db/schema";
@@ -18,8 +18,13 @@ export type ImageBackfillReport = {
   updatedDesigns: number;
   skipped: number;
   failed: number;
+  /** Inline rows still stored after this call, including rows past the batch limit. */
+  remaining: number;
   errors: string[];
 };
+
+/** Rows a cron request rewrites. The CLI omits the limit and processes every row. */
+export const IMAGE_BACKFILL_BATCH_LIMIT = 10;
 
 type Upload = (dataUrl: string) => Promise<string>;
 
@@ -69,7 +74,11 @@ async function countInline(db: DB, table: typeof listings | typeof designs, colu
  * Upload inline `image_url` / `delivery_url` values through the caller’s storage
  * function and replace them with the stored URL. Rows are read one at a time.
  */
-export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: { dryRun?: boolean } = {}): Promise<ImageBackfillReport> {
+export async function backfillInlineImages(
+  db: DB,
+  uploadDataUrl: Upload,
+  opts: { dryRun?: boolean; limit?: number } = {},
+): Promise<ImageBackfillReport> {
   const dryRun = Boolean(opts.dryRun);
   const [listingImages, listingDelivery, designImages] = await Promise.all([
     countInline(db, listings, listings.imageUrl),
@@ -79,8 +88,13 @@ export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: 
   const listingIds = await db
     .select({ id: listings.id })
     .from(listings)
-    .where(sql`${inlineImagePredicate(listings.imageUrl)} OR ${inlineImagePredicate(listings.deliveryUrl)}`);
-  const designIds = await db.select({ id: designs.id }).from(designs).where(inlineImagePredicate(designs.imageUrl));
+    .where(sql`${inlineImagePredicate(listings.imageUrl)} OR ${inlineImagePredicate(listings.deliveryUrl)}`)
+    .orderBy(asc(listings.id));
+  const designIds = await db
+    .select({ id: designs.id })
+    .from(designs)
+    .where(inlineImagePredicate(designs.imageUrl))
+    .orderBy(asc(designs.id));
 
   const report: ImageBackfillReport = {
     dryRun,
@@ -93,9 +107,14 @@ export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: 
     updatedDesigns: 0,
     skipped: 0,
     failed: 0,
+    remaining: listingIds.length + designIds.length,
     errors: [],
   };
   if (dryRun) return report;
+
+  const budget = opts.limit == null || !Number.isFinite(opts.limit) ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(opts.limit));
+  const listingBatch = listingIds.slice(0, budget);
+  const designBatch = designIds.slice(0, Math.max(0, budget - listingBatch.length));
 
   const cache = new Map<string, string>();
   const store = async (dataUrl: string) => {
@@ -111,7 +130,7 @@ export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: 
     return stored;
   };
 
-  for (const { id } of listingIds) {
+  for (const { id } of listingBatch) {
     try {
       const imageUrl = (await readTextColumn(db, listings, listings.imageUrl, id)) ?? "";
       const deliveryUrl = await readTextColumn(db, listings, listings.deliveryUrl, id);
@@ -150,7 +169,7 @@ export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: 
     }
   }
 
-  for (const { id } of designIds) {
+  for (const { id } of designBatch) {
     try {
       const imageUrl = (await readTextColumn(db, designs, designs.imageUrl, id)) ?? "";
       const dataUrl = extractInlineDataUrl(imageUrl);
@@ -171,5 +190,6 @@ export async function backfillInlineImages(db: DB, uploadDataUrl: Upload, opts: 
     }
   }
 
+  report.remaining = listingIds.length + designIds.length - report.updatedListings - report.updatedDesigns;
   return report;
 }

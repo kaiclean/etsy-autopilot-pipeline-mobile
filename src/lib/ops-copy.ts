@@ -6,10 +6,11 @@ export const PRINTIFY_WEBHOOK_TOPICS = [
   "order:shipment:created",
   "order:shipment:delivered",
   "product:publish:started",
+  "product:publish:succeeded",
 ] as const;
 
 /** Stage paths an external scheduler should hit. Matches the default schedules. */
-export const CRON_STAGE_PATHS = ["research", "design", "listing", "publish", "orders", "analytics"] as const;
+export const CRON_STAGE_PATHS = ["research", "design", "listing", "publish", "orders", "analytics", "maintenance"] as const;
 
 /** Callback path, or the absolute URL when APP_URL's origin is known. No secrets. */
 export function printifyCallbackUrl(origin: string | undefined) {

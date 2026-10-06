@@ -6,6 +6,7 @@
     { "path": "/api/cron/listing", "schedule": "30 6 * * *" },
     { "path": "/api/cron/publish", "schedule": "0 7 * * *" },
     { "path": "/api/cron/orders", "schedule": "0 8 * * *" },
-    { "path": "/api/cron/analytics", "schedule": "0 3 * * *" }
+    { "path": "/api/cron/analytics", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/maintenance", "schedule": "17 4 * * *" }
   ]
 }

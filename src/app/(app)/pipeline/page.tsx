@@ -13,7 +13,7 @@ export default async function PipelinePage() {
     <div className="space-y-6">
       <PageHeader
         title="Pipeline"
-        subtitle="Six stages, run on schedule or on demand. The approval queue sits between Listing and Publish."
+        subtitle="Stages run on schedule or on demand. The approval queue sits between Listing and Publish."
         action={<RunPipelineButton compact disabled={automation.killSwitch} />}
       />
 
