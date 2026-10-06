@@ -80,7 +80,12 @@ export const runAnalytics: StageFn = async (ctx) => {
       });
       const { shopRenewals } = summarizeLedger(normalized);
       const existingNotes = new Set(
-        (await db.select({ note: costs.note }).from(costs).where(eq(costs.kind, "listing_fee"))).map((row) => row.note),
+        (
+          await db
+            .select({ note: costs.note })
+            .from(costs)
+            .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "listing_fee")))
+        ).map((row) => row.note),
       );
       let renewals = 0;
       for (const renewal of shopRenewals) {

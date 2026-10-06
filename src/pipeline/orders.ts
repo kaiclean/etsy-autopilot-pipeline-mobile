@@ -169,7 +169,9 @@ export const runOrders: StageFn = async (ctx) => {
     .where(realOrderCursorWhere(ctx.shopId))
     .orderBy(desc(orders.createdAt))
     .limit(1);
-  const since = lastReal?.createdAt ?? receiptLookback(ctx.now, shop?.createdAt ?? null);
+  const cursor = lastReal?.createdAt ?? receiptLookback(ctx.now, shop?.createdAt ?? null);
+  const refresh = new Date(ctx.now.getTime() - 30 * 864e5);
+  const since = cursor.getTime() < refresh.getTime() ? cursor : refresh;
   const receipts = await etsy.getReceipts({
     since,
     candidates: published.map((l) => ({ etsyListingId: l.etsyListingId!, priceChf: l.priceChf, productType: l.productType })),
