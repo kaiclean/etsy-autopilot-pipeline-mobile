@@ -10,6 +10,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
+import { dashboardOrdersWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, railwayDeploySha } from "./alerts";
@@ -74,7 +75,7 @@ async function loadWindow(days: number) {
   const db = await getDb();
   const since = new Date(Date.now() - days * DAY);
   const [o, c, s] = await Promise.all([
-    db.select().from(orders).where(and(gte(orders.createdAt, since), visible(orders.isDemo))),
+    db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere())),
     db.select().from(costs).where(and(gte(costs.createdAt, since), visible(costs.isDemo))),
     db.select().from(dailyStats).where(visible(dailyStats.isDemo)),
   ]);
@@ -195,7 +196,7 @@ export function ordersListQuery(db: DB) {
     })
     .from(orders)
     .leftJoin(listings, eq(orders.listingId, listings.id))
-    .where(visible(orders.isDemo))
+    .where(dashboardOrdersWhere())
     .orderBy(desc(orders.createdAt))
     .limit(300);
 }
