@@ -10,7 +10,14 @@ export const runOrders: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const etsy = await getEtsyAdapter(db, ctx.random, "read");
   const published = await db
-    .select()
+    .select({
+      id: listings.id,
+      etsyListingId: listings.etsyListingId,
+      priceChf: listings.priceChf,
+      productType: listings.productType,
+      podCostChf: listings.podCostChf,
+      title: listings.title,
+    })
     .from(listings)
     .where(and(eq(listings.status, "published"), isNotNull(listings.etsyListingId)));
   const byEtsyId = new Map(published.map((l) => [l.etsyListingId!, l]));

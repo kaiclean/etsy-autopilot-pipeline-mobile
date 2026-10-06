@@ -161,8 +161,17 @@ export function digitalPreviewPng(niche: string, src = "") {
   });
 }
 
+function canEmbedPreviewSrc(url: string) {
+  if (!url || url.length > 2048) return false;
+  if (url.startsWith("data:") || url.includes("data:") || /data%3a/i.test(url)) return false;
+  return true;
+}
+
+/** Gallery path. Inline artwork is omitted so `src` cannot carry a base64 payload. */
 export function digitalPreviewUrl(artworkUrl: string, niche: string) {
-  return `/api/preview?niche=${encodeURIComponent(niche)}&src=${encodeURIComponent(artworkUrl)}`;
+  const params = new URLSearchParams({ niche });
+  if (canEmbedPreviewSrc(artworkUrl)) params.set("src", artworkUrl);
+  return `/api/preview?${params.toString()}`;
 }
 
 /** Raster for our own `/api/placeholder`, `/api/preview` and `/api/mockup` URLs, so publish does not HTTP-fetch this server. */

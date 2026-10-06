@@ -1,6 +1,7 @@
-import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, asc, count, desc, eq, getTableColumns, gte, inArray, sql } from "drizzle-orm";
+import { getDb, type DB } from "@/db";
 import { costs, dailyStats, events, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
 import { printifyEventLog } from "./ops-copy";
@@ -133,7 +134,11 @@ export async function getHomeData() {
   const [lastRuns, feed, pending, liveCount] = await Promise.all([
     getLastRuns(),
     db.select().from(events).where(visible(events.isDemo)).orderBy(desc(events.id)).limit(20),
-    db.select().from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))).orderBy(asc(listings.createdAt)),
+    db
+      .select({ id: listings.id, imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche) })
+      .from(listings)
+      .where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo)))
+      .orderBy(asc(listings.createdAt)),
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "published"), visible(listings.isDemo))),
   ]);
   const automation = await getSetting(db, "automation");
@@ -170,10 +175,49 @@ export async function getPipelineData() {
   return { stages: byStage, automation, keywords: kw };
 }
 
+/** List views never project a raw base64 `image_url` or `delivery_url`. */
+function listingDisplayColumns() {
+  return {
+    ...getTableColumns(listings),
+    imageUrl: sql<string>`coalesce(${displayImageUrlSql(listings.imageUrl, listings.niche)}, '')`,
+    deliveryUrl: compactImageUrlSql(listings.deliveryUrl),
+  };
+}
+
+export function ordersListQuery(db: DB) {
+  return db
+    .select({
+      order: orders,
+      title: listings.title,
+      imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
+      productType: listings.productType,
+      niche: listings.niche,
+    })
+    .from(orders)
+    .leftJoin(listings, eq(orders.listingId, listings.id))
+    .where(visible(orders.isDemo))
+    .orderBy(desc(orders.createdAt))
+    .limit(300);
+}
+
+export function analyticsListingsQuery(db: DB) {
+  return db
+    .select({
+      id: listings.id,
+      status: listings.status,
+      niche: listings.niche,
+      views: listings.views,
+      title: listings.title,
+      imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
+    })
+    .from(listings)
+    .where(visible(listings.isDemo));
+}
+
 export async function getQueue() {
   const db = await getDb();
   return db
-    .select()
+    .select(listingDisplayColumns())
     .from(listings)
     .where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo)))
     .orderBy(asc(listings.createdAt));
@@ -181,18 +225,12 @@ export async function getQueue() {
 
 export async function getListings() {
   const db = await getDb();
-  return db.select().from(listings).where(visible(listings.isDemo)).orderBy(desc(listings.updatedAt));
+  return db.select(listingDisplayColumns()).from(listings).where(visible(listings.isDemo)).orderBy(desc(listings.updatedAt));
 }
 
 export async function getOrders() {
   const db = await getDb();
-  const rows = await db
-    .select({ order: orders, title: listings.title, imageUrl: listings.imageUrl, productType: listings.productType, niche: listings.niche })
-    .from(orders)
-    .leftJoin(listings, eq(orders.listingId, listings.id))
-    .where(visible(orders.isDemo))
-    .orderBy(desc(orders.createdAt))
-    .limit(300);
+  const rows = await ordersListQuery(db);
   const since = Date.now() - 30 * DAY;
   const recent = rows.filter((r) => r.order.createdAt.getTime() >= since);
   const summary = {
@@ -207,7 +245,7 @@ export async function getOrders() {
 export async function getAnalytics() {
   const db = await getDb();
   const { orders: o, costs: c, stats } = await loadWindow(30);
-  const allListings = await db.select().from(listings).where(visible(listings.isDemo));
+  const allListings = await analyticsListingsQuery(db);
   const listingById = new Map(allListings.map((l) => [l.id, l]));
   const days = lastNDays(30);
 
@@ -251,7 +289,7 @@ export async function getAnalytics() {
     n.revenue += x.totalChf;
     n.profit += x.profitChf;
     n.orders += 1;
-    const p = products.get(l.id) ?? { id: l.id, title: l.title, imageUrl: l.imageUrl, niche: l.niche, orders: 0, revenue: 0, profit: 0, views: l.views };
+    const p = products.get(l.id) ?? { id: l.id, title: l.title, imageUrl: l.imageUrl ?? "", niche: l.niche, orders: 0, revenue: 0, profit: 0, views: l.views };
     p.orders += 1;
     p.revenue += x.totalChf;
     p.profit += x.profitChf;

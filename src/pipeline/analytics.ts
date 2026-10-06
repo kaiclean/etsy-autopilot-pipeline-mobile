@@ -9,7 +9,12 @@ export const runAnalytics: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const etsy = await getEtsyAdapter(db, ctx.random, "read");
   const published = await db
-    .select()
+    .select({
+      id: listings.id,
+      etsyListingId: listings.etsyListingId,
+      views: listings.views,
+      favorites: listings.favorites,
+    })
     .from(listings)
     .where(and(eq(listings.status, "published"), isNotNull(listings.etsyListingId)));
 
