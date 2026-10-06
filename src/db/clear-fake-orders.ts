@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { DB } from "@/db";
 import { costs, dailyStats, events, jobRuns, orders } from "@/db/schema";
+import { isDemoMode } from "@/lib/config";
 import { removableOrderWhere } from "@/lib/real-orders";
 
 export type ClearCounts = {
@@ -77,6 +78,23 @@ export async function clearFakeOrders(db: DB, opts: { dryRun: boolean }): Promis
     await deleteFakeRows(tx);
   });
   return counts;
+}
+
+function fakeRowTotal(counts: ClearCounts) {
+  return counts.orders + counts.costs + counts.dailyStats + counts.jobRuns + counts.events;
+}
+
+/**
+ * Delete seed and dry-run rows only when some exist.
+ * Refuses while DEMO_MODE=true, and while demo mode is on for any other reason.
+ * A second call after a successful delete returns zeros.
+ */
+export async function cleanupFakeOrdersIfPresent(db: DB): Promise<ClearCounts> {
+  assertFakeOrderCleanupAllowed();
+  if (isDemoMode()) throw new Error("Refusing to clear fake orders while demo mode is on");
+  const pending = await countFakeRows(db);
+  if (fakeRowTotal(pending) === 0) return pending;
+  return clearFakeOrders(db, { dryRun: false });
 }
 
 export function formatClearCounts(counts: ClearCounts) {

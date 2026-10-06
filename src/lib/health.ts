@@ -98,9 +98,10 @@ function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpir
   };
 }
 
-function printifyCheck(): HealthCheck {
+function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
   const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS", "PRINTIFY_WEBHOOK_SECRET"];
   const p = config.printify;
+  const registered = webhooksRegistered == null ? "" : ` Webhooks: ${webhooksRegistered} registered.`;
   if (hasPrintifyCredentials()) {
     const blueprint = p.blueprintId ? `Blueprint ${p.blueprintId} is set.` : "Blueprint is chosen from the Printify catalog when a listing publishes.";
     return {
@@ -108,7 +109,7 @@ function printifyCheck(): HealthCheck {
       name: "Printify API",
       level: "green",
       label: "Ready",
-      detail: `API token and shop id are set. ${blueprint} The token is hidden. ${webhookNote(p.webhookSecret)}`,
+      detail: `API token and shop id are set. ${blueprint} The token is hidden. ${webhookNote(p.webhookSecret)}${registered}`,
       envVars,
     };
   }
@@ -118,7 +119,7 @@ function printifyCheck(): HealthCheck {
       name: "Printify API",
       level: "yellow",
       label: "Incomplete",
-      detail: `Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then. ${webhookNote(p.webhookSecret)}`,
+      detail: `Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then. ${webhookNote(p.webhookSecret)}${registered}`,
       envVars,
     };
   }
@@ -127,7 +128,7 @@ function printifyCheck(): HealthCheck {
     name: "Printify API",
     level: "yellow",
     label: "Dry-run",
-    detail: `No Printify credentials. The dry-run adapter is active. ${webhookNote(p.webhookSecret)}`,
+    detail: `No Printify credentials. The dry-run adapter is active. ${webhookNote(p.webhookSecret)}${registered}`,
     envVars,
   };
 }
@@ -398,12 +399,13 @@ export function connectionHealth(input: {
   publishMode?: PublishMode;
   accessExpired?: boolean;
   etsyShopId?: string | null;
+  webhooksRegistered?: number | null;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
   return [
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
-    printifyCheck(),
+    printifyCheck(input.webhooksRegistered),
     storageCheck(),
     pushCheck(),
     llmCheck(),

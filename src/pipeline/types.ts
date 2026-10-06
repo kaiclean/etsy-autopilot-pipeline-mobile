@@ -20,6 +20,7 @@ export const STAGES: { id: StageName; label: string; description: string }[] = [
   { id: "publish", label: "Publish", description: "Push approved items to Etsy / Printify" },
   { id: "orders", label: "Orders", description: "Sync receipts and POD fulfillment" },
   { id: "analytics", label: "Analytics", description: "Pull views, favorites and roll up stats" },
+  { id: "maintenance", label: "Maintenance", description: "Register Printify webhooks, backfill stored images, and remove fake orders" },
 ];
 
 export const STAGE_IDS = STAGES.map((s) => s.id);
