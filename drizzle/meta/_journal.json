@@ -20,7 +20,14 @@
       "idx": 2,
       "version": "7",
       "when": 1791415504569,
-      "tag": "0002_parallel_george_stacy",
+      "tag": "0002_listing_deliverables",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791416025796,
+      "tag": "0003_promotions",
       "breakpoints": true
     }
   ]

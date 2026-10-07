@@ -1,6 +1,6 @@
 # Etsy Autopilot
 
-Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a staged pipeline (research → design → listing → produce → **your approval** → publish → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
+Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a staged pipeline (research → design → listing → produce → **your approval** → publish → promote → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
 
 Everything runs out of the box in **demo mode**: seeded demo data (flagged `is_demo`), mock image and text generation, and dry-run Etsy/Printify adapters. As you add credentials, each piece switches to the real service on its own.
 
@@ -55,11 +55,12 @@ src/
   adapters/
     image/                ImageProvider: mock | higgsfield | openai | replicate
     upscale/              Upscaler: resample (default, free) | replicate (model upscaling)
+    pinterest/            PinterestAdapter: dry-run | live (API v5, token refresh)
     llm/                  LLMProvider: mock (templates) | openai
     etsy/                 EtsyAdapter: dry-run | live (Open API v3, OAuth 2 PKCE, drafts, images, files, receipts, stats)
     printify/             PrintifyAdapter: dry-run | live (upload, create product, publish to Etsy, order status)
   pipeline/
-    research.ts design.ts listing.ts produce.ts publish.ts orders.ts analytics.ts
+    research.ts design.ts listing.ts produce.ts publish.ts promote.ts orders.ts analytics.ts
     runner.ts             runStage(): kill switch, pause, concurrency guard, logs, events
   app/(app)/              Dashboard: Home, Pipeline, Queue, Products, Orders, Analytics, Settings, More
   app/api/                pipeline/[stage]/run, cron/[stage], listings/[id], settings, events (SSE), etsy/oauth/*, push/*, webhooks/printify, media/*
@@ -76,6 +77,7 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 | Produce | Wall-art downloads (alpine, gothic, christmas): five 300 DPI JPGs (2:3 4000×6000, 3:4 4500×6000, 4:5 4800×6000, 11×14 3300×4200, A3 3508×4961), saliency-aware crops, stored in S3/Blob, listing copy rewritten to list the files | Files rendered and measured but not stored (`dry-run://`); live publish refuses them |
 | Approval | Always a human gate: swipe, edit inline, undo. Shows exactly which files the buyer gets | — |
 | Publish | Etsy `createDraftListing` plus image and file upload. Printify create + publish. | Records payloads and returns `dry-…` ids |
+| Promote | Pins up to 5 newly published listings per run to one Pinterest board (title ≤100, description ≤500 with an AI note, link to the Etsy listing). One pin per listing, ever; failures retry up to 3 times | Records the pins it would create |
 | Orders | Etsy `getShopReceipts`, Printify order status | Simulated receipts, fulfillment advances each sync |
 | Analytics | Etsy listing `views` / `num_favorers`, rollups, ads budget booking | Simulated view growth |
 
@@ -87,6 +89,15 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 - A 1024×1536 artwork needs up to 4.7× enlargement for the 4:5 file. With the default `resample` upscaler the queue shows a sharpness warning above 4×; set `UPSCALE_PROVIDER=replicate` for model upscaling.
 - **Delivery gate:** approval and publish refuse a digital listing whose description promises print sizes or 300 DPI without a complete pack, or promises ZIP/PDF bundles or editable templates. Invitations and stream graphics stay one-PNG products.
 - Each listing takes about 15 s to render at full size, so a run handles at most three listings.
+
+### Pinterest (Promote stage)
+
+1. Create an app at <https://developers.pinterest.com/apps/> with scopes `boards:read` and `pins:write`, and note the app id and secret.
+2. Get an access and refresh token through the app's OAuth flow (Pinterest's `api-quickstart` repository has a script), and copy the id of the board to pin to.
+3. Set the `PINTEREST_*` variables. On the first live run the stage refreshes the token and keeps the new one in the `settings` table.
+4. **Apply for Standard access early.** New apps start on Trial access, where every pin you create is visible only to you. Standard access needs a demo video and approval.
+
+Promote never pins a listing twice: the `promotions` table has one row per listing, and claiming it is a single insert. In live mode it only pins listings that are live on Etsy.
 
 ### Fee math (business plan §6)
 
@@ -139,6 +150,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `BLOB_READ_WRITE_TOKEN` | stored art | Vercel Blob, used only when the S3 variables are not all set. |
 | `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
 | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_MODEL`) | real copy | Listing writer (OpenAI or OpenRouter) |
+| `PINTEREST_APP_ID`, `PINTEREST_APP_SECRET`, `PINTEREST_BOARD_ID`, `PINTEREST_REFRESH_TOKEN` (+ optional `PINTEREST_ACCESS_TOKEN`) | live pins | Pinterest API v5. Live only when Go live is armed, like Etsy writes |
 | `UPSCALE_PROVIDER=replicate` + `REPLICATE_API_TOKEN` + `REPLICATE_UPSCALE_VERSION` (+ optional `REPLICATE_UPSCALE_COST_CHF`) | sharper print files | Model upscaling before Produce resamples. Default `resample` is free but warns above 4× enlargement |
 
 ---

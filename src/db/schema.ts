@@ -29,6 +29,7 @@ export type StageName =
   | "listing"
   | "produce"
   | "publish"
+  | "promote"
   | "orders"
   | "analytics";
 
@@ -211,6 +212,24 @@ export const printifyEvents = pgTable("printify_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** One row per listing per channel. The unique listing id is the claim: a listing is never pinned twice. */
+export const promotions = pgTable("promotions", {
+  id: serial("id").primaryKey(),
+  listingId: integer("listing_id")
+    .notNull()
+    .unique()
+    .references(() => listings.id, { onDelete: "cascade" }),
+  channel: text("channel").$type<"pinterest">().notNull().default("pinterest"),
+  status: text("status").$type<"queued" | "posted" | "failed">().notNull().default("queued"),
+  mode: text("mode").$type<"dry-run" | "live">().notNull(),
+  pinId: text("pin_id"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Promotion = typeof promotions.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
 export type Design = typeof designs.$inferSelect;
 export type Listing = typeof listings.$inferSelect;

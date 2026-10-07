@@ -15,6 +15,7 @@ on:
     - cron: "30 6 * * *" # listing
     - cron: "45 6 * * *" # produce
     - cron: "0 7 * * *" # publish
+    - cron: "30 7 * * *" # promote
     - cron: "0 8 * * *" # orders
   workflow_dispatch:
     inputs:
@@ -29,6 +30,7 @@ on:
           - listing
           - produce
           - publish
+          - promote
           - orders
 
 permissions: {}
@@ -141,6 +143,24 @@ jobs:
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
           curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/publish"
+
+  promote:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'promote' || github.event.schedule == '30 7 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run promote
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/promote"
 
   orders:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'orders' || github.event.schedule == '0 8 * * *' }}

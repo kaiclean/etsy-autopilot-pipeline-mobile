@@ -35,6 +35,13 @@ export type EtsyTokens = {
   userId?: string;
 };
 
+/** Pinterest API v5 tokens. Access tokens last about 30 days and are refreshed before they expire. */
+export type PinterestTokens = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+};
+
 export const DEFAULT_AUTOMATION: AutomationSettings = {
   killSwitch: false,
   dailyAiCapChf: 2,
@@ -56,6 +63,7 @@ export const DEFAULT_STAGES: StageSettings = {
   listing: { paused: false, cron: "30 6 * * *" },
   produce: { paused: false, cron: "45 6 * * *" },
   publish: { paused: false, cron: "0 7 * * *" },
+  promote: { paused: false, cron: "30 7 * * *" },
   orders: { paused: false, cron: "0 8 * * *" },
   analytics: { paused: false, cron: "0 3 * * *" },
 };
@@ -64,6 +72,7 @@ type SettingMap = {
   automation: AutomationSettings;
   stages: StageSettings;
   etsyTokens: EtsyTokens | null;
+  pinterestTokens: PinterestTokens | null;
   pushPrefs: PushPrefs;
 };
 
@@ -71,6 +80,7 @@ const DEFAULTS: SettingMap = {
   automation: DEFAULT_AUTOMATION,
   stages: DEFAULT_STAGES,
   etsyTokens: null,
+  pinterestTokens: null,
   pushPrefs: DEFAULT_PUSH_PREFS,
 };
 

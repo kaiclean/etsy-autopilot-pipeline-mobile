@@ -4,6 +4,7 @@ import {
   Megaphone,
   Paintbrush,
   PenLine,
+  Pin,
   Printer,
   Receipt,
   Send,
@@ -19,6 +20,7 @@ export const STAGE_ICONS: Record<StageName, LucideIcon> = {
   listing: PenLine,
   produce: Printer,
   publish: Send,
+  promote: Pin,
   orders: Receipt,
   analytics: BarChart3Icon,
 };

@@ -17,6 +17,7 @@ export const STAGES: { id: StageName; label: string; description: string }[] = [
   { id: "listing", label: "Listing", description: "Write titles, tags, descriptions & price with fee math" },
   { id: "produce", label: "Produce", description: "Render 300 DPI print files for wall-art downloads" },
   { id: "publish", label: "Publish", description: "Push approved items to Etsy / Printify" },
+  { id: "promote", label: "Promote", description: "Pin newly published listings to Pinterest" },
   { id: "orders", label: "Orders", description: "Sync receipts and POD fulfillment" },
   { id: "analytics", label: "Analytics", description: "Pull views, favorites and roll up stats" },
 ];

@@ -9,6 +9,7 @@ import { runDesign } from "./design";
 import { runListing } from "./listing";
 import { runOrders } from "./orders";
 import { runProduce } from "./produce";
+import { runPromote } from "./promote";
 import { runPublish } from "./publish";
 import { runResearch } from "./research";
 import { STAGES, type StageContext, type StageFn } from "./types";
@@ -19,6 +20,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   listing: runListing,
   produce: runProduce,
   publish: runPublish,
+  promote: runPromote,
   orders: runOrders,
   analytics: runAnalytics,
 };
