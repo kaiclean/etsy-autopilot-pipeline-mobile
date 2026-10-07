@@ -54,6 +54,7 @@ export const DEFAULT_STAGES: StageSettings = {
   research: { paused: false, cron: "0 5 * * 1" },
   design: { paused: false, cron: "0 6 * * *" },
   listing: { paused: false, cron: "30 6 * * *" },
+  produce: { paused: false, cron: "45 6 * * *" },
   publish: { paused: false, cron: "0 7 * * *" },
   orders: { paused: false, cron: "0 8 * * *" },
   analytics: { paused: false, cron: "0 3 * * *" },

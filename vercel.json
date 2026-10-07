@@ -4,6 +4,7 @@
     { "path": "/api/cron/research", "schedule": "0 5 * * 1" },
     { "path": "/api/cron/design", "schedule": "0 6 * * *" },
     { "path": "/api/cron/listing", "schedule": "30 6 * * *" },
+    { "path": "/api/cron/produce", "schedule": "45 6 * * *" },
     { "path": "/api/cron/publish", "schedule": "0 7 * * *" },
     { "path": "/api/cron/orders", "schedule": "0 8 * * *" },
     { "path": "/api/cron/analytics", "schedule": "0 3 * * *" }

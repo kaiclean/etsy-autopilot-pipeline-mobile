@@ -11,7 +11,7 @@ import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
 import { planBulkStatus } from "@/lib/catalog-filters";
-import { validateListing } from "@/lib/listing-validator";
+import { validateForPublish } from "@/lib/deliverables";
 import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import type { PushPrefs } from "@/lib/push-prefs";
@@ -59,7 +59,7 @@ export async function updateListing(id: number, edit: ListingEdit, approve = fal
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
   const next = { ...l, ...edit, description: edit.description ?? l.description };
-  const { valid, issues } = validateListing(next);
+  const { valid, issues } = validateForPublish(next);
   const automation = await getSetting(db, "automation");
   const fees = calculateFees({ priceChf: next.priceChf, podCostChf: l.podCostChf, offsiteAds: automation.assumeOffsiteAds });
   const canApprove = approve && valid;
@@ -88,7 +88,7 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
   if (status === "approved") {
-    const { valid, issues } = validateListing(l);
+    const { valid, issues } = validateForPublish(l);
     if (!valid) {
       await db.update(listings).set({ validation: issues }).where(eq(listings.id, id));
       revalidateAll();
@@ -132,14 +132,14 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
     known.map((row) => ({
       id: row.id,
       title: row.title,
-      hasErrors: status === "approved" && !validateListing(row).valid,
+      hasErrors: status === "approved" && !validateForPublish(row).valid,
     })),
     status,
   );
   for (const skip of plan.skipped) {
     const row = byId.get(skip.id);
     if (!row) continue;
-    const { issues } = validateListing(row);
+    const { issues } = validateForPublish(row);
     await db.update(listings).set({ validation: issues, updatedAt: new Date() }).where(eq(listings.id, row.id));
   }
   if (plan.changed.length > 0) {

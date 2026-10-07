@@ -9,7 +9,7 @@ export const PRINTIFY_WEBHOOK_TOPICS = [
 ] as const;
 
 /** Stage paths an external scheduler should hit. Matches the default schedules. */
-export const CRON_STAGE_PATHS = ["research", "design", "listing", "publish", "orders", "analytics"] as const;
+export const CRON_STAGE_PATHS = ["research", "design", "listing", "produce", "publish", "orders", "analytics"] as const;
 
 /** Callback path, or the absolute URL when APP_URL's origin is known. No secrets. */
 export function printifyCallbackUrl(origin: string | undefined) {

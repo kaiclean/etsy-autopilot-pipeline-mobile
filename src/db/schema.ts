@@ -27,14 +27,30 @@ export type StageName =
   | "research"
   | "design"
   | "listing"
+  | "produce"
   | "publish"
   | "orders"
   | "analytics";
 
 export type LogLine = { t: string; level: "info" | "warn" | "error"; msg: string };
 
+/** One print-ready file the buyer downloads. Written by the Produce stage. */
+export type Deliverable = {
+  name: string;
+  ratio: "2:3" | "3:4" | "4:5" | "11x14" | "ISO A";
+  width: number;
+  height: number;
+  bytes: number;
+  url: string;
+  /** False when no object storage is configured: the file was rendered and measured but not kept. */
+  stored: boolean;
+  method: "resample" | "upscale";
+  /** Enlargement from the original artwork to this file. */
+  upscale: number;
+};
+
 export type ValidationIssue = {
-  field: "title" | "tags" | "description" | "price";
+  field: "title" | "tags" | "description" | "price" | "files";
   severity: "error" | "warning";
   code: string;
   message: string;
@@ -85,6 +101,7 @@ export const listings = pgTable("listings", {
   netChf: doublePrecision("net_chf").notNull(),
   marginPct: doublePrecision("margin_pct").notNull(),
   validation: jsonb("validation").$type<ValidationIssue[]>().notNull().default([]),
+  deliverables: jsonb("deliverables").$type<Deliverable[]>().notNull().default([]),
   status: text("status").$type<ListingStatus>().notNull().default("pending_approval"),
   rejectedReason: text("rejected_reason"),
   etsyListingId: text("etsy_listing_id"),

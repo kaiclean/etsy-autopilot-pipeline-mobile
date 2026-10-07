@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Listing } from "@/db/schema";
 import { calculateFees } from "@/lib/fees";
-import { ETSY_LIMITS, validateListing } from "@/lib/listing-validator";
+import { validateForPublish } from "@/lib/deliverables";
+import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -46,8 +47,9 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
 
   const priceNum = Number(price.replace(",", "."));
   const { issues, valid } = useMemo(
-    () => validateListing({ title, tags, description, priceChf: priceNum, productType: listing.productType }),
-    [title, tags, description, priceNum, listing.productType],
+    () =>
+      validateForPublish({ title, tags, description, priceChf: priceNum, productType: listing.productType, deliverables: listing.deliverables }),
+    [title, tags, description, priceNum, listing.productType, listing.deliverables],
   );
   const fees = useMemo(
     () => calculateFees({ priceChf: Number.isFinite(priceNum) ? priceNum : 0, podCostChf: listing.podCostChf, offsiteAds }),

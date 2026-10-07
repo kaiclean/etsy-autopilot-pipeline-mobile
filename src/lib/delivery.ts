@@ -2,8 +2,8 @@ import type { ProductType } from "@/db/schema";
 
 /**
  * Wall-art ratios buyers expect from a finished printable pack.
- * The pipeline does not export these yet: publish uploads one PNG.
- * A later change should resample the artwork to 300 DPI at each ratio and ship a ZIP or PDF.
+ * The Produce stage renders these at 300 DPI for wall-art downloads (see `PRINT_SPECS` in deliverables.ts).
+ * Listings without produced files keep the one-PNG blurb below.
  */
 export const PLANNED_WALL_ART_RATIOS = ["2:3", "3:4", "4:5", "11x14", "ISO A"] as const;
 
@@ -14,8 +14,14 @@ export const DIGITAL_FILE_BLURB = [
   "• Instant download after purchase",
 ].join("\n");
 
-const UNSUPPORTED_LINE =
-  /300\s*dpi|2:3|3:4|4:5|11\s*x\s*14|iso\s*a|corjl|canva|fully editable|edit the text|editable template|zip|pdf bundle/i;
+/** Print sizes and DPI. A complete print pack makes these true. */
+export const PRINT_SIZE_PROMISE = /300\s*dpi|2:3|3:4|4:5|11\s*x\s*14|iso\s*a/i;
+/** Archive deliveries. The shop never ships these. */
+export const BUNDLE_PROMISE = /\bzip\b|pdf bundle/i;
+/** Editable templates. The shop never ships these. */
+export const EDITABLE_PROMISE = /corjl|canva|fully editable|edit the text|editable template/i;
+
+const UNSUPPORTED_LINE = new RegExp(`${PRINT_SIZE_PROMISE.source}|zip|pdf bundle|${EDITABLE_PROMISE.source}`, "i");
 
 /**
  * Drop lines that promise print ratios, 300 DPI packs, or editable templates,

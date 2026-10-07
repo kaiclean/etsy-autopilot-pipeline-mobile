@@ -2,6 +2,9 @@ import { eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getDb, type DB } from "@/db";
 import { designs, events, keywords, listings, orders } from "@/db/schema";
+import { PRINT_SPECS } from "@/lib/deliverables";
+import { alignDeliveryCopy } from "@/lib/delivery";
+import { withDisclosures } from "@/lib/disclosures";
 import { validateListing } from "@/lib/listing-validator";
 import { getSetting, setSetting } from "@/lib/settings";
 import { getAnalytics } from "@/lib/queries";
@@ -54,6 +57,72 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
       expect(x.tags).toHaveLength(13);
       expect(x.description).toContain("AI image tools");
       expect(x.netChf).toBeGreaterThan(0);
+    }
+  });
+
+  it("produce renders a 300 DPI print pack for wall-art downloads, once, and publish ships it", async () => {
+    const prevScale = process.env.PRODUCE_SCALE;
+    process.env.PRODUCE_SCALE = "0.05";
+    try {
+      const [design] = await db.select().from(designs).limit(1);
+      const [src] = await db.select().from(listings).limit(1);
+      const [row] = await db
+        .insert(listings)
+        .values({
+          designId: design.id,
+          keywordId: design.keywordId,
+          niche: "alpine",
+          productType: "digital",
+          title: "Minimal Swiss Alps Wall Art Printable Mountain Poster",
+          tags: Array.from({ length: 13 }, (_, i) => `swiss alps art ${i}`),
+          description: withDisclosures(alignDeliveryCopy("A calm alpine scene in muted tones.", "digital"), "digital"),
+          imageUrl: design.imageUrl,
+          priceChf: 8,
+          podCostChf: 0,
+          netChf: src.netChf,
+          marginPct: src.marginPct,
+          validation: [],
+          status: "pending_approval",
+          isDemo: true,
+        })
+        .returning();
+
+      const r = await runStage("produce", "manual", { db, random });
+      expect(r.status).toBe("success");
+      const [made] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(made.deliverables.map((d) => d.ratio)).toEqual(["2:3", "3:4", "4:5", "11x14", "ISO A"]);
+      expect(made.deliverables.every((d) => d.stored === false && d.url.startsWith("dry-run://"))).toBe(true);
+      expect(made.description).toContain("5 high-resolution JPG files (300 DPI)");
+      expect(made.description).not.toContain("One PNG");
+      expect(made.validation.map((i) => i.code)).toContain("files_not_stored");
+      // Preview-scale files are smaller than the 300 DPI sizes the copy now promises: the gate must refuse them.
+      expect(made.validation.map((i) => i.code)).toContain("delivery_mismatch");
+
+      const again = await runStage("produce", "manual", { db, random });
+      expect(again.status).toBe("success");
+      const [same] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(same.deliverables).toEqual(made.deliverables);
+
+      await db.update(listings).set({ status: "approved", approvedAt: new Date() }).where(eq(listings.id, row.id));
+      const blocked = await runStage("publish", "manual", { db, random });
+      expect(blocked.status).toBe("failed");
+      const [back] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(back.status).toBe("pending_approval");
+
+      // A full-size run (≈15 s per listing, covered by the renderer tests) records spec-sized files.
+      const full = made.deliverables.map((d) => {
+        const spec = PRINT_SPECS.find((s) => s.ratio === d.ratio)!;
+        return { ...d, width: spec.width, height: spec.height, upscale: 3.9 };
+      });
+      await db.update(listings).set({ deliverables: full, status: "approved", approvedAt: new Date() }).where(eq(listings.id, row.id));
+      const p = await runStage("publish", "manual", { db, random });
+      expect(p.status).toBe("success");
+      const [published] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(published.status).toBe("published");
+      expect(published.publishMode).toBe("dry-run");
+    } finally {
+      if (prevScale === undefined) delete process.env.PRODUCE_SCALE;
+      else process.env.PRODUCE_SCALE = prevScale;
     }
   });
 

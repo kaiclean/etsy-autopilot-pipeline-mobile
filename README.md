@@ -1,6 +1,6 @@
 # Etsy Autopilot
 
-Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a six-stage pipeline (research → design → listing → **your approval** → publish → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
+Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a staged pipeline (research → design → listing → produce → **your approval** → publish → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
 
 Everything runs out of the box in **demo mode**: seeded demo data (flagged `is_demo`), mock image and text generation, and dry-run Etsy/Printify adapters. As you add credentials, each piece switches to the real service on its own.
 
@@ -23,7 +23,7 @@ On first request the app creates an embedded Postgres (PGlite) in `./.data/pglit
 
 Try the whole loop:
 
-1. **Pipeline → Run all.** Research scores about 144 keywords, Design generates placeholder art, and Listing writes titles and tags with fee math.
+1. **Pipeline → Run all.** Research scores about 144 keywords, Design generates placeholder art, Listing writes titles and tags with fee math, and Produce renders print files for wall-art downloads.
 2. **Queue.** Swipe right to approve, left to reject, or tap to edit title, tags and price. Validation and net margin update live. You get an Undo toast after each decision.
 3. **Pipeline → Publish → Run now.** Approved listings are sent to the dry-run Etsy and Printify adapters.
 4. **Pipeline → Orders → Run now.** A simulated Etsy receipt arrives, a "New order" toast fires, and POD fulfillment status advances.
@@ -54,11 +54,12 @@ src/
   lib/niches.ts           The 5 niches from the business plan: seeds, style prompts, product mix, price bands
   adapters/
     image/                ImageProvider: mock | higgsfield | openai | replicate
+    upscale/              Upscaler: resample (default, free) | replicate (model upscaling)
     llm/                  LLMProvider: mock (templates) | openai
     etsy/                 EtsyAdapter: dry-run | live (Open API v3, OAuth 2 PKCE, drafts, images, files, receipts, stats)
     printify/             PrintifyAdapter: dry-run | live (upload, create product, publish to Etsy, order status)
   pipeline/
-    research.ts design.ts listing.ts publish.ts orders.ts analytics.ts
+    research.ts design.ts listing.ts produce.ts publish.ts orders.ts analytics.ts
     runner.ts             runStage(): kill switch, pause, concurrency guard, logs, events
   app/(app)/              Dashboard: Home, Pipeline, Queue, Products, Orders, Analytics, Settings, More
   app/api/                pipeline/[stage]/run, cron/[stage], listings/[id], settings, events (SSE), etsy/oauth/*, push/*, webhooks/printify, media/*
@@ -72,10 +73,20 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 | Research | Seed list, local long-tail modifiers, and `KEYWORD_SEEDS`. Etsy search volume comes from an operator CSV or `ETSY_DEMAND_SOURCE=fixture` (no etsy.com scraping). `ETSY_API_COMPETITION=true` reads listing counts from Open API v3. Google Trends is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is blocked and no export is configured |
 | Design | Higgsfield / OpenAI Images / Replicate adapters, capped by the daily and monthly AI budget | Niche-themed SVG placeholder art stamped "MOCK ART" |
 | Listing | OpenAI JSON writer, then sanitize, validate, and price with the fee engine | Deterministic niche templates |
-| Approval | Always a human gate: swipe, edit inline, undo | — |
+| Produce | Wall-art downloads (alpine, gothic, christmas): five 300 DPI JPGs (2:3 4000×6000, 3:4 4500×6000, 4:5 4800×6000, 11×14 3300×4200, A3 3508×4961), saliency-aware crops, stored in S3/Blob, listing copy rewritten to list the files | Files rendered and measured but not stored (`dry-run://`); live publish refuses them |
+| Approval | Always a human gate: swipe, edit inline, undo. Shows exactly which files the buyer gets | — |
 | Publish | Etsy `createDraftListing` plus image and file upload. Printify create + publish. | Records payloads and returns `dry-…` ids |
 | Orders | Etsy `getShopReceipts`, Printify order status | Simulated receipts, fulfillment advances each sync |
 | Analytics | Etsy listing `views` / `num_favorers`, rollups, ads budget booking | Simulated view growth |
+
+### Print files (Produce stage)
+
+`src/lib/deliverables.ts` defines the five print sizes and the delivery gate; `src/lib/print-pack.ts` renders them with sharp.
+
+- Etsy takes up to **5 files of at most 20 MB** per digital listing (per seller guides; confirm in Etsy Help). The pack uses all five slots and keeps each file under 15 MB, the object-storage cap.
+- A 1024×1536 artwork needs up to 4.7× enlargement for the 4:5 file. With the default `resample` upscaler the queue shows a sharpness warning above 4×; set `UPSCALE_PROVIDER=replicate` for model upscaling.
+- **Delivery gate:** approval and publish refuse a digital listing whose description promises print sizes or 300 DPI without a complete pack, or promises ZIP/PDF bundles or editable templates. Invitations and stream graphics stay one-PNG products.
+- Each listing takes about 15 s to render at full size, so a run handles at most three listings.
 
 ### Fee math (business plan §6)
 
@@ -128,6 +139,7 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `BLOB_READ_WRITE_TOKEN` | stored art | Vercel Blob, used only when the S3 variables are not all set. |
 | `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
 | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_MODEL`) | real copy | Listing writer (OpenAI or OpenRouter) |
+| `UPSCALE_PROVIDER=replicate` + `REPLICATE_API_TOKEN` + `REPLICATE_UPSCALE_VERSION` (+ optional `REPLICATE_UPSCALE_COST_CHF`) | sharper print files | Model upscaling before Produce resamples. Default `resample` is free but warns above 4× enlargement |
 
 ---
 

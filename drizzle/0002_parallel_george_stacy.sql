@@ -1,0 +1,1 @@
+ALTER TABLE "listings" ADD COLUMN "deliverables" jsonb DEFAULT '[]'::jsonb NOT NULL;

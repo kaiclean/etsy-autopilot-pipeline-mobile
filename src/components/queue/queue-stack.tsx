@@ -331,6 +331,29 @@ export function QueueStack({ listings, offsiteAds }: { listings: Listing[]; offs
                 <Stat label="Net / sale" value={chf(top.netChf)} />
                 <Stat label="Margin" value={`${top.marginPct.toFixed(0)}%`} good={top.marginPct >= 35} />
               </div>
+              {top.productType === "digital" && (
+                <p className="text-xs text-muted-foreground">
+                  {(top.deliverables ?? []).length === 0 ? (
+                    "Buyer gets one PNG of the artwork."
+                  ) : (
+                    <>
+                      Buyer gets {top.deliverables.length} JPG files at 300 DPI:{" "}
+                      {top.deliverables.map((d, i) => (
+                        <span key={d.name}>
+                          {i > 0 ? " · " : ""}
+                          {/^https?:\/\//.test(d.url) ? (
+                            <a href={d.url} target="_blank" rel="noreferrer" className="underline underline-offset-2" onPointerDown={(e) => e.stopPropagation()}>
+                              {d.ratio} {d.width}×{d.height}
+                            </a>
+                          ) : (
+                            `${d.ratio} ${d.width}×${d.height}`
+                          )}
+                        </span>
+                      ))}
+                    </>
+                  )}
+                </p>
+              )}
               {errors.length > 0 && (
                 <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">
                   <AlertTriangle className="mt-px size-4 shrink-0" />

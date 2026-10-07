@@ -5,8 +5,8 @@ import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, designs, listings } from "@/db/schema";
 import { isDemoMode, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
+import { ETSY_FILE_LIMITS, validateForPublish } from "@/lib/deliverables";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
-import { validateListing } from "@/lib/listing-validator";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import type { StageFn } from "./types";
 
@@ -43,7 +43,7 @@ export const runPublish: StageFn = async (ctx) => {
   let ok = 0;
   let failed = 0;
   for (const l of approved) {
-    const check = validateListing(l);
+    const check = validateForPublish(l);
     if (!check.valid) {
       await db
         .update(listings)
@@ -57,6 +57,10 @@ export const runPublish: StageFn = async (ctx) => {
       let etsyListingId: string | null = null;
       let printifyProductId: string | null = null;
       if (l.productType === "digital") {
+        const files = (l.deliverables ?? []).slice(0, ETSY_FILE_LIMITS.maxFiles);
+        if (etsy.mode === "live" && files.some((f) => !f.stored)) {
+          throw new Error("Print files were rendered without storage. Configure S3 or Vercel Blob; the next Produce run stores them, then publish again.");
+        }
         let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
         if (!listingId) {
           const created = await etsy.createDraftListing({
@@ -71,7 +75,11 @@ export const runPublish: StageFn = async (ctx) => {
         }
         const image = absoluteUrl(l.imageUrl);
         await etsy.uploadListingImage(listingId, image);
-        await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: image });
+        if (files.length) {
+          for (const f of files) await etsy.uploadListingFile(listingId, { name: f.name, url: f.url });
+        } else {
+          await etsy.uploadListingFile(listingId, { name: `listing-${l.id}.png`, url: image });
+        }
         // Live listings stay drafts unless ETSY_ACTIVATE=true. Etsy has no API for the
         // “How it’s made” / AI-tools field, and Kai’s clearance was drafts only.
         const activateLive = process.env.ETSY_ACTIVATE === "true";
