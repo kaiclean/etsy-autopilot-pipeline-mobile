@@ -1,6 +1,6 @@
-import { and, asc, count, desc, eq, getTableColumns, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, events, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, events, healthReports, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
@@ -11,7 +11,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
-import { dashboardOrdersWhere } from "./real-orders";
+import { dashboardOrdersWhere, notFakeReceiptWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, railwayDeploySha } from "./alerts";
@@ -214,6 +214,50 @@ export function analyticsListingsQuery(db: DB) {
     })
     .from(listings)
     .where(visible(listings.isDemo));
+}
+
+/** Quality holds, the latest Monday report, and Printify orders flagged for a 48h stall. */
+export async function getDashboardOps() {
+  const db = await getDb();
+  const [failures, failureCount, reportRows, stalled] = await Promise.all([
+    db
+      .select({
+        id: listings.id,
+        title: listings.title,
+        validation: listings.validation,
+        imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
+        niche: listings.niche,
+      })
+      .from(listings)
+      .where(and(eq(listings.status, "quality_failed"), visible(listings.isDemo)))
+      .orderBy(desc(listings.updatedAt))
+      .limit(6),
+    db
+      .select({ n: count() })
+      .from(listings)
+      .where(and(eq(listings.status, "quality_failed"), visible(listings.isDemo))),
+    db.select().from(healthReports).orderBy(desc(healthReports.weekStart), desc(healthReports.updatedAt)).limit(1),
+    db
+      .select({
+        id: orders.id,
+        podOrderId: orders.podOrderId,
+        etsyReceiptId: orders.etsyReceiptId,
+        fulfillmentStatus: orders.fulfillmentStatus,
+        fulfillmentChangedAt: orders.fulfillmentChangedAt,
+        title: listings.title,
+      })
+      .from(orders)
+      .leftJoin(listings, eq(orders.listingId, listings.id))
+      .where(and(isNotNull(orders.fulfillmentStalledAt), eq(orders.isDemo, false), notFakeReceiptWhere()))
+      .orderBy(desc(orders.fulfillmentStalledAt))
+      .limit(6),
+  ]);
+  return {
+    failures,
+    failureCount: Number(failureCount[0]?.n ?? 0),
+    report: reportRows[0] ?? null,
+    stalled,
+  };
 }
 
 export async function getQueue() {

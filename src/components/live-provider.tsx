@@ -14,7 +14,7 @@ type LiveState = {
 const LiveContext = createContext<LiveState>({ status: "connecting", latest: [] });
 export const useLive = () => useContext(LiveContext);
 
-const NOTIFY_TYPES = new Set(["order.new", "approval.pending", "job.failed", "listing.failed"]);
+const NOTIFY_TYPES = new Set(["order.new", "approval.pending", "job.failed", "listing.failed", "health.report", "fulfillment.stalled"]);
 const QUIET_TYPES = new Set(["job.success", "stage.toggle"]);
 
 async function notify(e: AppEvent) {

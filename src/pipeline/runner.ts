@@ -3,16 +3,62 @@ import { getDb, type DB } from "@/db";
 import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { getSetting } from "@/lib/settings";
+import { utcDayKey } from "@/lib/utc-day";
+import { getSetting, setSetting } from "@/lib/settings";
 import { resolveActiveShop } from "@/lib/shops";
 import { runAnalytics } from "./analytics";
+import { stageSucceededToday } from "./chain-day";
 import { runDesign } from "./design";
+import { publishHealthReport } from "./health-report";
 import { runListing } from "./listing";
 import { runMaintenance } from "./maintenance";
 import { runOrders } from "./orders";
 import { runPublish } from "./publish";
 import { runResearch } from "./research";
 import { STAGES, type StageContext, type StageFn } from "./types";
+
+const CHAIN_STAGES = ["research", "design", "listing"] as const;
+
+/** Research, then a design brief, then a listing draft. Never publishes or arms go-live. */
+async function runDailyChain(ctx: StageContext): Promise<string> {
+  if (await stageSucceededToday(ctx.db, ctx.shopId, "daily", ctx.now)) {
+    return `Daily chain already completed for ${utcDayKey(ctx.now)}. Drafts stay pending approval. Publish mode was not changed.`;
+  }
+  const before = await getSetting(ctx.db, "automation");
+  const stageSettings = await getSetting(ctx.db, "stages");
+  const parts: string[] = [];
+  for (const stage of CHAIN_STAGES) {
+    if (stageSettings[stage]?.paused) {
+      parts.push(`${stage}: paused`);
+      ctx.log(`${stage} is paused; daily chain skipped it`);
+      continue;
+    }
+    if (await stageSucceededToday(ctx.db, ctx.shopId, stage, ctx.now)) {
+      parts.push(`${stage}: already completed today`);
+      ctx.log(`${stage} already completed today`);
+      continue;
+    }
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now });
+    parts.push(`${stage}: ${run.summary ?? run.status}`);
+    ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
+    if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
+  }
+  const after = await getSetting(ctx.db, "automation");
+  if (after.publishMode !== before.publishMode) {
+    await setSetting(ctx.db, "automation", { ...after, publishMode: before.publishMode });
+    ctx.log("Restored publish mode. The daily chain does not change go-live.", "warn");
+  }
+  return `Daily chain finished (${parts.join(" · ")}). New drafts are pending approval or held by the quality gate. Nothing was activated.`;
+}
+
+const runHealth: StageFn = async (ctx) => {
+  const { payload, pushed } = await publishHealthReport(ctx.db, ctx.shopId, ctx.now);
+  ctx.log(
+    `Week ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)}, VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ads CHF ${payload.adsChf.toFixed(2)}, ${payload.suggestions.length} suggestions`,
+  );
+  const note = pushed ? "push sent" : "report updated, push already sent";
+  return `Week of ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)} (${note})`;
+};
 
 const STAGE_FNS: Record<StageName, StageFn> = {
   research: runResearch,
@@ -22,6 +68,8 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   orders: runOrders,
   analytics: runAnalytics,
   maintenance: runMaintenance,
+  daily: runDailyChain,
+  health: runHealth,
 };
 
 export type RunOptions = { db?: DB; random?: () => number; now?: Date };
@@ -100,10 +148,13 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
   }
 }
 
-/** Runs every stage in order. Publishing only touches listings Kai already approved. */
+const ORCHESTRATORS = new Set<StageName>(["daily", "health"]);
+
+/** Runs every production stage in order. The daily chain and Monday report stay on their own crons. */
 export async function runFullPipeline(trigger: StageContext["trigger"] = "manual", opts: RunOptions = {}) {
   const results: JobRun[] = [];
   for (const s of STAGES) {
+    if (ORCHESTRATORS.has(s.id)) continue;
     const r = await runStage(s.id, trigger === "manual" ? "chain" : trigger, opts);
     results.push(r);
     if (r.status === "skipped" && r.summary?.startsWith("Kill switch")) break;
