@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
 import { filterQueue, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueStatusFilter, type QueueTriage } from "@/lib/catalog-filters";
 import { productLabel } from "@/lib/fees";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 import { listingProvenance } from "@/lib/provenance";
 import { chf } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
@@ -318,6 +319,9 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
               </span>
               <div className="absolute top-3 left-3 flex gap-1.5" style={{ opacity: 1 - Math.max(approveOpacity, rejectOpacity) }}>
                 <ProvenanceBadge kind={listingProvenance(top)} solid />
+                {isPlaceholderUrl(top.imageUrl) && (
+                  <span className="inline-flex h-5 items-center rounded-full bg-destructive px-2 text-[11px] font-bold tracking-wide text-white">PLACEHOLDER</span>
+                )}
                 <NicheTag niche={top.niche} />
                 <span className="inline-flex h-5 items-center rounded-full bg-black/50 px-2 text-[11px] font-medium text-white backdrop-blur">
                   {productLabel(top.productType, top.podProvider)}
@@ -341,10 +345,11 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
               {errors.length > 0 && (
                 <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">
                   <AlertTriangle className="mt-px size-4 shrink-0" />
-                  <span>
-                    {errors[0].message}
-                    {errors.length > 1 ? ` (+${errors.length - 1} more)` : ""} Tap to fix.
-                  </span>
+                  <ul className="space-y-0.5">
+                    {errors.map((issue) => (
+                      <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
@@ -400,7 +405,11 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
                   <div className="truncate text-sm font-medium">{l.title}</div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                     <NicheTag niche={l.niche} /> {chf(l.priceChf)} · net {chf(l.netChf)}
-                    {hasErrors(l) && <span className="text-destructive">· needs fixes</span>}
+                    {hasErrors(l) && (
+                      <span className="text-destructive">
+                        · {l.validation.filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" · ")}
+                      </span>
+                    )}
                     {titleImageMismatch(l) && <span className="text-warning">· title/image mismatch</span>}
                     {!l.etsyListingId && l.imageUrl && <span>· no Etsy id</span>}
                     {l.id === top.id && <span>· reviewing</span>}

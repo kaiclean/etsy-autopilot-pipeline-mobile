@@ -8,6 +8,8 @@ export type StageContext = {
   trigger: "manual" | "cron" | "chain";
   random: () => number;
   now: Date;
+  /** When true, the daily chain ignores a success already recorded today. */
+  force?: boolean;
   log: (msg: string, level?: LogLine["level"]) => void;
 };
 

@@ -14,7 +14,7 @@ export class OpenAILLMProvider implements LLMProvider {
     const product = brief.productType === "digital" ? "digital download" : `print-on-demand ${brief.podPreset}`;
     const system = [
       "You write Etsy listings for a Swiss seller. Output strict JSON: {\"title\": string, \"tags\": string[], \"body\": string}.",
-      `Title: max ${ETSY_LIMITS.titleMax} characters, front-load the main keyword, no more than 3 ALL-CAPS words, use each of % : & at most once.`,
+      `Title: max ${ETSY_LIMITS.titleMax} characters, Title Case, front-load the main keyword, at most 3 ALL-CAPS words and prefer none, use each of % : & at most once.`,
       `Tags: exactly ${ETSY_LIMITS.tagCount} lowercase tags, each at most ${ETSY_LIMITS.tagMax} characters, letters/numbers/spaces only, no duplicates.`,
       "Body: 2 short paragraphs plus a bullet list of what the buyer gets. Do NOT include AI or production disclosures (they are appended automatically).",
       "The shop delivers one opaque PNG (about 1024x1536, or 1536x1024 for wide art) or one physical print-on-demand item. Nothing is editable, a template, a bundle, transparent, animated, or a set.",

@@ -1,19 +1,21 @@
 import { eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
-import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
+import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
-import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
+import { quoteLadder, type LadderRung } from "@/lib/pricing-ladder";
+import { isPlaceholderUrl } from "@/lib/art-quality";
+import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
 import { evaluateQualityGate } from "@/lib/quality-gate";
 import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
 import { tryBuildFileManifest } from "@/lib/file-manifest";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
-import type { StageFn } from "./types";
+import type { StageContext, StageFn } from "./types";
 
 export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?: PodPreset } {
   const mix = NICHES[niche].productMix;
@@ -39,16 +41,6 @@ export function productForPhrase(niche: Niche, phrase: string, random: number): 
   return pickProduct(niche, random);
 }
 
-function productForDesign(
-  niche: Niche,
-  random: number,
-  brief: { productType: ProductType; podPreset: string | null } | undefined,
-) {
-  const preset = brief?.podPreset && brief.podPreset in POD_PRESETS ? (brief.podPreset as PodPreset) : undefined;
-  if (!brief || (brief.productType === "pod" && !preset)) return pickProduct(niche, random);
-  return { type: brief.productType, pod: preset };
-}
-
 export async function draftListing(opts: {
   niche: Niche;
   keyword: string;
@@ -61,6 +53,8 @@ export async function draftListing(opts: {
   assumeOffsiteAds: boolean;
   /** Override the preset's CHF competitor anchor. Digital listings ignore this. */
   competitorChf?: number;
+  /** Ladder price. When set, fees include the 15% offsite-ads line so the stored net matches that price. */
+  priceChf?: number;
   llm?: LLMProvider;
 }) {
   const llm = opts.llm ?? getLLMProvider();
@@ -77,25 +71,121 @@ export async function draftListing(opts: {
   const band = NICHES[opts.niche].priceBand[opts.product.type];
   const targetMarginPct =
     opts.product.type === "pod" ? resolveTargetMargin("pod", opts.podTargetMarginPct) : resolveTargetMargin("digital", opts.digitalTargetMarginPct);
-  const priceChf = suggestPrice({
-    targetMarginPct,
-    podCostChf: pod,
-    offsiteAds: opts.assumeOffsiteAds,
-    minChf: band[0] || undefined,
-    maxChf: band[1] || undefined,
-    competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
-    productType: opts.product.type,
-  });
-  const draft = sanitizeDraft({
-    title: copy.title,
-    tags: copy.tags,
-    description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type), opts.product.type),
-    priceChf,
-    productType: opts.product.type,
-  });
-  const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.assumeOffsiteAds });
+  const priceChf =
+    opts.priceChf ??
+    suggestPrice({
+      targetMarginPct,
+      podCostChf: pod,
+      offsiteAds: opts.assumeOffsiteAds,
+      minChf: band[0] || undefined,
+      maxChf: band[1] || undefined,
+      competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
+      productType: opts.product.type,
+    });
+  const repaired = repairTrivialCopy(
+    {
+      title: copy.title,
+      tags: copy.tags,
+      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type), opts.product.type),
+      priceChf,
+      productType: opts.product.type,
+    },
+    { keyword, product: opts.product },
+  );
+  const draft = repaired.draft;
+  const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.priceChf != null ? true : opts.assumeOffsiteAds });
   const { issues } = validateListing(draft);
-  return { draft, fees, issues, pod, llmCost: copy.costChf, provider: copy.provider };
+  return { draft, fees, issues, pod, llmCost: copy.costChf, provider: copy.provider, fixes: repaired.fixes };
+}
+
+function keywordForRung(phrase: string, rung: LadderRung) {
+  const stripped = phrase.replace(/\b(?:mugs?|posters?|sweatshirts?|t-?shirts?|tees?)\b/gi, " ").replace(/\s+/g, " ").trim();
+  const base = stripped || phrase;
+  if (rung.id === "digital-mid") return `${base} large print`;
+  return base;
+}
+
+async function listRung(
+  ctx: StageContext,
+  design: typeof designs.$inferSelect,
+  phrase: string,
+  rung: LadderRung,
+  artworkUrl: string,
+  automation: { podTargetMarginPct?: number; digitalTargetMarginPct?: number; assumeOffsiteAds: boolean },
+) {
+  const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
+    niche: design.niche,
+    keyword: keywordForRung(phrase, rung),
+    product: rung.product,
+    seed: design.id,
+    podTargetMarginPct: automation.podTargetMarginPct,
+    digitalTargetMarginPct: automation.digitalTargetMarginPct,
+    assumeOffsiteAds: automation.assumeOffsiteAds,
+    priceChf: rung.priceChf,
+  });
+  const image = await listingImageForProduct({
+    productType: rung.product.type,
+    artworkUrl,
+    preset: rung.product.pod,
+    niche: design.niche,
+  });
+  if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
+  const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
+  const fileManifest = deliveryUrl ? tryBuildFileManifest(design.imageUrl, image.url) : null;
+  const gate = evaluateQualityGate({
+    title: draft.title,
+    tags: draft.tags,
+    description: draft.description,
+    priceChf: draft.priceChf,
+    productType: rung.product.type,
+    podProvider: rung.product.type === "pod" && rung.product.pod ? `printify:${rung.product.pod}` : null,
+    imageUrl: image.url,
+    artworkUrl,
+    printWidth: design.imageWidth,
+    printHeight: design.imageHeight,
+    colorVariance: design.colorVariance,
+  });
+  const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
+  await ctx.db.insert(listings).values({
+    shopId: ctx.shopId,
+    designId: design.id,
+    keywordId: design.keywordId,
+    niche: design.niche,
+    productType: rung.product.type,
+    podProvider: rung.product.type === "pod" && rung.product.pod ? `printify:${rung.product.pod}` : null,
+    title: draft.title,
+    tags: draft.tags,
+    description: draft.description,
+    imageUrl: image.url,
+    deliveryUrl,
+    fileManifest,
+    priceChf: draft.priceChf,
+    podCostChf: pod,
+    netChf: fees.netChf,
+    marginPct: fees.marginPct,
+    validation,
+    status: gate.pass ? "pending_approval" : "quality_failed",
+    isDemo: ctx.demo,
+  });
+  if (llmCost > 0) {
+    await ctx.db.insert(costs).values({
+      shopId: ctx.shopId,
+      kind: "ai_text",
+      amountChf: llmCost,
+      note: `${provider}: ${rung.label}`,
+      isDemo: ctx.demo,
+    });
+  }
+  return {
+    fixes,
+    errors: issues.filter((issue) => issue.severity === "error").map((issue) => issue.message),
+    passed: gate.pass,
+    hold: gate.reasons.map((reason) => reason.message).join("; "),
+    title: draft.title,
+    priceChf: draft.priceChf,
+    netChf: fees.netChf,
+    marginPct: fees.marginPct,
+  };
 }
 
 export const runListing: StageFn = async (ctx) => {
@@ -112,86 +202,49 @@ export const runListing: StageFn = async (ctx) => {
   let created = 0;
   let held = 0;
   let invalid = 0;
+  const notes: string[] = [];
   for (const { design, phrase } of pending) {
     if (isNichePaused(design.niche)) {
       await db.update(designs).set({ status: "discarded" }).where(eq(designs.id, design.id));
       log(`Skipped design #${design.id}: ${NICHES[design.niche].pausedReason}`, "warn");
       continue;
     }
-    const [brief] = design.keywordId
-      ? await db.select().from(designBriefs).where(eq(designBriefs.keywordId, design.keywordId)).limit(1)
-      : [];
-    const product = productForDesign(design.niche, ctx.random(), brief);
-    try {
-      const { draft, fees, issues, pod, llmCost, provider } = await draftListing({
-        niche: design.niche,
-        keyword: phrase ?? NICHES[design.niche].seeds[0].phrase,
-        product,
-        seed: design.id,
-        podTargetMarginPct: automation.podTargetMarginPct,
-        digitalTargetMarginPct: automation.digitalTargetMarginPct,
-        assumeOffsiteAds: automation.assumeOffsiteAds,
-      });
-      const artworkUrl = await persistableImageUrl(design.imageUrl);
-      const image = await listingImageForProduct({
-        productType: product.type,
-        artworkUrl,
-        preset: product.pod,
-        niche: design.niche,
-      });
-      if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
-      const deliveryUrl = product.type === "digital" ? artworkUrl : null;
-      const fileManifest = deliveryUrl ? tryBuildFileManifest(design.imageUrl, image.url) : null;
-      const gate = evaluateQualityGate({
-        title: draft.title,
-        tags: draft.tags,
-        description: draft.description,
-        priceChf: draft.priceChf,
-        productType: product.type,
-        podProvider: product.type === "pod" && product.pod ? `printify:${product.pod}` : null,
-        imageUrl: image.url,
-      });
-      const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
-      if (!gate.pass) held++;
-      await db.insert(listings).values({
-        shopId: ctx.shopId,
-        designId: design.id,
-        keywordId: design.keywordId,
-        niche: design.niche,
-        productType: product.type,
-        podProvider: product.type === "pod" ? `printify:${product.pod}` : null,
-        title: draft.title,
-        tags: draft.tags,
-        description: draft.description,
-        imageUrl: image.url,
-        deliveryUrl,
-        fileManifest,
-        priceChf: draft.priceChf,
-        podCostChf: pod,
-        netChf: fees.netChf,
-        marginPct: fees.marginPct,
-        validation,
-        status: gate.pass ? "pending_approval" : "quality_failed",
-        isDemo: ctx.demo,
-      });
-      await db.update(designs).set({ status: "listed" }).where(eq(designs.id, design.id));
-      if (llmCost > 0) {
-        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_text", amountChf: llmCost, note: `${provider}: listing copy`, isDemo: ctx.demo });
-      }
-      const errors = issues.filter((i) => i.severity === "error").length;
-      if (errors) invalid++;
-      created++;
-      log(`Listed “${draft.title.slice(0, 60)}…” at CHF ${draft.priceChf.toFixed(2)} → net ${fees.netChf.toFixed(2)} (${fees.marginPct}%)${errors ? ` · ${errors} validation error(s)` : ""}`);
-    } catch (e) {
-      log(`Listing failed for design #${design.id}: ${(e as Error).message}`, "error");
+    const phraseText = phrase ?? NICHES[design.niche].seeds[0]!.phrase;
+    const artworkUrl = await persistableImageUrl(design.imageUrl);
+    if (isPlaceholderUrl(artworkUrl)) {
+      log(`Design #${design.id} is DEMO placeholder art and will be held off the queue`, "warn");
     }
+    let listed = 0;
+    for (const rung of quoteLadder(design.niche)) {
+      try {
+        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation);
+        if (made.fixes.length) log(`Auto-fixed design #${design.id} ${rung.label} before the quality gate: ${made.fixes.join("; ")}`);
+        if (made.errors.length) {
+          invalid++;
+          const text = made.errors.join("; ");
+          notes.push(`#${design.id} ${rung.label}: ${text}`);
+          log(`Needs fixes for “${made.title.slice(0, 60)}”: ${text}`, "warn");
+        }
+        if (!made.passed) {
+          held++;
+          notes.push(`#${design.id} ${rung.label} quality hold: ${made.hold}`);
+          log(`Quality hold for “${made.title.slice(0, 60)}”: ${made.hold}`, "warn");
+        }
+        created++;
+        listed++;
+        log(`Listed “${made.title.slice(0, 60)}…” (${rung.label}) at CHF ${made.priceChf.toFixed(2)} → net ${made.netChf.toFixed(2)} (${made.marginPct}%)`);
+      } catch (e) {
+        log(`Listing failed for design #${design.id} ${rung.label}: ${(e as Error).message}`, "error");
+      }
+    }
+    if (listed) await db.update(designs).set({ status: "listed" }).where(eq(designs.id, design.id));
   }
   const queued = created - held;
   if (queued) {
     await emit(db, {
       type: "approval.pending",
       title: `${queued} listing${queued > 1 ? "s" : ""} awaiting approval`,
-      body: invalid ? `${invalid} need edits before they can be approved` : "Swipe to approve or reject",
+      body: invalid ? notes.filter((note) => !note.includes("quality hold")).join(" | ").slice(0, 280) : "Swipe to approve or reject",
       severity: "warning",
       href: "/queue",
     }, ctx.demo);
@@ -200,10 +253,11 @@ export const runListing: StageFn = async (ctx) => {
     await emit(db, {
       type: "quality.failed",
       title: `${held} listing${held > 1 ? "s" : ""} held by the quality gate`,
-      body: "They stay off the approval queue. The dashboard lists each reason.",
+      body: notes.filter((note) => note.includes("quality hold")).join(" | ").slice(0, 280) || "They stay off the approval queue. The dashboard lists each reason.",
       severity: "warning",
       href: "/",
     }, ctx.demo);
   }
-  return `Drafted ${queued} listings for approval${held ? `, held ${held} for quality` : ""}${invalid ? ` (${invalid} need fixes)` : ""}`;
+  const detail = notes.length ? `: ${notes.join(" | ").slice(0, 420)}` : "";
+  return `Drafted ${queued} listings for approval${held ? `, held ${held} at the quality gate` : ""}${invalid ? ` (${invalid} need fixes)` : ""}${detail}`;
 };

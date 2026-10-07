@@ -1,4 +1,5 @@
 import type { ProductType, ValidationIssue } from "@/db/schema";
+import { isPlaceholderUrl, MIN_COLOR_STDDEV, MIN_PRINT_EDGE } from "@/lib/art-quality";
 import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { POD_PRESETS, type PodPreset } from "@/lib/fees";
@@ -27,6 +28,11 @@ export type QualityGateInput = {
   productType: ProductType;
   podProvider?: string | null;
   imageUrl?: string | null;
+  /** Print master. Placeholder, flat, or sub-2000px art never reaches the queue. */
+  artworkUrl?: string | null;
+  printWidth?: number | null;
+  printHeight?: number | null;
+  colorVariance?: number | null;
 };
 
 export function podPresetFromProvider(provider: string | null | undefined): PodPreset | null {
@@ -129,6 +135,37 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
         input.productType === "pod" ? "A product mockup is required before approval." : "A gallery preview is required before approval.",
       ),
     );
+  }
+
+  if (isPlaceholderUrl(input.imageUrl) || isPlaceholderUrl(input.artworkUrl)) {
+    reasons.push(
+      issue(
+        "image",
+        "placeholder_art",
+        "Placeholder art is blocked. Demo mockups stay off the approval queue until a real design is generated.",
+      ),
+    );
+  }
+
+  const artChecked = input.printWidth !== undefined || input.printHeight !== undefined || input.colorVariance !== undefined;
+  if (artChecked) {
+    const width = input.printWidth ?? 0;
+    const height = input.printHeight ?? 0;
+    if (Math.max(width, height) < MIN_PRINT_EDGE) {
+      const size = width && height ? `${width}×${height}px` : "an unknown size";
+      reasons.push(
+        issue("image", "low_res_art", `Print file is ${size}. Print files need a long edge of at least ${MIN_PRINT_EDGE}px.`),
+      );
+    }
+    if (input.colorVariance != null && input.colorVariance < MIN_COLOR_STDDEV) {
+      reasons.push(
+        issue(
+          "image",
+          "flat_art",
+          `Artwork looks like a flat color (variation ${input.colorVariance.toFixed(1)}). Solid blocks are not queued.`,
+        ),
+      );
+    }
   }
 
   return { pass: reasons.length === 0, reasons };

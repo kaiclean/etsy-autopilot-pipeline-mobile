@@ -139,16 +139,23 @@ function profitable(price: number, opts: { podCostChf?: number; offsiteAds?: boo
   return calculateFees({ priceChf: price, podCostChf: opts.podCostChf, offsiteAds: opts.offsiteAds }).netChf > 0;
 }
 
+function clearsTarget(price: number, opts: { targetMarginPct: number; podCostChf?: number; offsiteAds?: boolean }) {
+  if (!(price > 0)) return false;
+  const margin = calculateFees({ priceChf: price, podCostChf: opts.podCostChf, offsiteAds: opts.offsiteAds }).marginPct;
+  return margin >= opts.targetMarginPct - 0.05;
+}
+
 /**
  * CHF retail price for a listing.
  *
  * 1. Solve for the lowest `.90` price that hits `targetMarginPct` (retailRound up).
- * 2. When `competitorChf` is set and disagrees, round down toward that market price
- *    (`retailRoundDown`) if the result still clears POD cost. Digital prices are not
- *    pulled below the margin solution, so downloads stay at ≥75% when that is reachable.
+ * 2. When `competitorChf` is set and lower, round down toward that market price
+ *    (`retailRoundDown`) only when the result still clears `targetMarginPct`.
+ *    A merely profitable anchor (net above zero, margin in the teens) does not win.
+ *    Digital prices are not pulled below the margin solution.
  * 3. Niche `minChf` / `maxChf` are soft guards. Digital uses the floor when the formula
- *    undershoots it. POD is not lifted to a premium floor and is not pinned to the ceiling
- *    when a profitable competitor anchor sits inside the band.
+ *    undershoots it. If the POD cap itself misses the target margin, the margin
+ *    solution is used even when it sits above `maxChf`.
  * 4. Digital + Offsite Ads cannot reach 75% (fees alone approach ~26%). That case stays
  *    on the niche floor instead of climbing to the cap.
  */
@@ -176,7 +183,7 @@ export function suggestPrice(opts: {
   }
 
   let price = solved;
-  if (productType === "pod" && competitor != null && competitor < solved && profitable(competitor, opts)) {
+  if (productType === "pod" && competitor != null && competitor < solved && clearsTarget(competitor, opts)) {
     price = competitor;
   }
 
@@ -184,9 +191,9 @@ export function suggestPrice(opts: {
   if (productType === "pod" && opts.minChf != null && price < opts.minChf && !profitable(price, opts)) price = opts.minChf;
 
   if (opts.maxChf != null && price > opts.maxChf) {
-    if (competitor != null && competitor <= opts.maxChf && profitable(competitor, opts)) price = competitor;
-    else if (solved <= opts.maxChf) price = solved;
-    else price = opts.maxChf;
+    if (competitor != null && competitor <= opts.maxChf && clearsTarget(competitor, opts)) price = competitor;
+    else if (clearsTarget(opts.maxChf, opts)) price = opts.maxChf;
+    else price = solved;
   }
   return round2(price);
 }

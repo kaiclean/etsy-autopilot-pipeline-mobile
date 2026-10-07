@@ -36,7 +36,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
       { type: "pod", pod: "posterA3", weight: 0.4 },
     ],
     priceBand: { digital: [5.9, 14.9], pod: [24.9, 39.9] },
-    style: "minimalist Swiss alpine landscape, flat vector shapes, muted earthy palette, soft grain, gallery wall art",
+    style: "bestselling Etsy alpine wall art, layered Swiss mountains and a quiet lake, muted sage and stone, soft grain, print-ready, no text",
     seeds: [
       { phrase: "swiss alps wall art", demand: 0.72, competition: 0.45 },
       { phrase: "matterhorn print", demand: 0.64, competition: 0.38 },
@@ -58,7 +58,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
       { type: "digital", weight: 0.2 },
     ],
     priceBand: { digital: [3.9, 8.9], pod: [24.9, 44.9] },
-    style: "dark gothic florals, plum and burgundy palette, moody vintage botanical illustration, autumn",
+    style: "bestselling Etsy dark gothic florals, plum and burgundy, vintage botanical engraving, candlelit autumn, no text",
     seeds: [
       { phrase: "gothic floral shirt", demand: 0.7, competition: 0.55 },
       { phrase: "dark academia print", demand: 0.66, competition: 0.6 },
@@ -79,7 +79,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
       { type: "pod", pod: "sweatshirt", weight: 0.3 },
     ],
     priceBand: { digital: [3.9, 9.9], pod: [19.9, 49.9] },
-    style: "cozy hand-drawn christmas illustration, warm red and pine green, hygge, candlelight, snow",
+    style: "bestselling Etsy cozy Christmas illustration, candlelight, pine green and deep red, snowy cabin, hygge, no text",
     seeds: [
       { phrase: "cozy christmas mug", demand: 0.76, competition: 0.62 },
       { phrase: "alpine christmas print", demand: 0.6, competition: 0.28 },
@@ -96,7 +96,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
     peakMonths: [],
     productMix: [{ type: "digital", weight: 1 }],
     priceBand: { digital: [4.9, 9.9], pod: [0, 0] },
-    style: "playful pastel birthday illustration, soft shapes, opaque background, no lettering",
+    style: "bestselling Etsy pastel birthday illustration, soft paper texture, playful still life, opaque background, no lettering",
     pausedReason:
       "Paused until a real invitation file exists. The pipeline only makes one opaque PNG, so it cannot sell an editable invite, template, or evite.",
     seeds: [
@@ -114,7 +114,7 @@ export const NICHES: Record<Niche, NicheConfig> = {
     peakMonths: [],
     productMix: [{ type: "digital", weight: 1 }],
     priceBand: { digital: [4.9, 19.9], pod: [0, 0] },
-    style: "neon purple and cyan scene, solid opaque background, no text, no frames",
+    style: "bestselling Etsy neon scene, saturated purple and cyan, solid opaque background, no text, no frames",
     pausedReason:
       "Paused until a real stream kit exists. The pipeline only makes one opaque PNG, so it cannot sell emotes, panels, alerts, webcam frames, or animated overlays.",
     seeds: [

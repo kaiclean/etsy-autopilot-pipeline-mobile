@@ -149,6 +149,9 @@ export const designs = pgTable("designs", {
   prompt: text("prompt").notNull(),
   provider: text("provider").notNull(),
   imageUrl: text("image_url").notNull(),
+  imageWidth: integer("image_width"),
+  imageHeight: integer("image_height"),
+  colorVariance: doublePrecision("color_variance"),
   status: text("status").$type<"generated" | "listed" | "discarded">().notNull().default("generated"),
   costChf: doublePrecision("cost_chf").notNull().default(0),
   isDemo: boolean("is_demo").notNull().default(false),
@@ -192,6 +195,8 @@ export const listings = pgTable("listings", {
   printifyProductId: text("printify_product_id"),
   publishMode: text("publish_mode").$type<"dry-run" | "live">(),
   publishError: text("publish_error"),
+  /** Last time publish actually called Etsy or Printify. Same-error retries wait 24h from here. */
+  publishAttemptedAt: timestamp("publish_attempted_at", { withTimezone: true }),
   /** Set once, when a POD row has waited >24h for an Etsy id, so the alert does not repeat. */
   etsyIdWaitAlertedAt: timestamp("etsy_id_wait_alerted_at", { withTimezone: true }),
   views: integer("views").notNull().default(0),

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { DB } from "@/db";
 import { jobRuns, listings } from "@/db/schema";
 import { listingNeedsEtsyId } from "@/lib/catalog-filters";
@@ -21,6 +21,12 @@ export type CronRunFact = {
   status: string;
   summary: string | null;
   logs: { msg: string }[];
+};
+
+export type PublishFailureFact = {
+  id: number;
+  title: string;
+  publishError: string;
 };
 
 const OAUTH_EXPIRY_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -69,6 +75,7 @@ export function buildCockpitAlerts(input: {
   now?: number;
   killSwitch: boolean;
   catalogDraftPending: boolean;
+  publishFailures?: PublishFailureFact[];
 }): CockpitAlert[] {
   const now = input.now ?? Date.now();
   const alerts: CockpitAlert[] = [];
@@ -91,8 +98,8 @@ export function buildCockpitAlerts(input: {
       severity: "watch",
       title: "Cron run failed",
       evidence: `Last failed cron stage: ${failed.stage}. Inspect the run logs; endpoint CRON_SECRET failures are not recorded as job runs.`,
-      href: "/connections#cron",
-      hrefLabel: "Open cron",
+      href: "/pipeline/live",
+      hrefLabel: "Open live log",
     });
   }
 
@@ -151,6 +158,17 @@ export function buildCockpitAlerts(input: {
     });
   }
 
+  for (const row of input.publishFailures ?? []) {
+    alerts.push({
+      id: `publish-error-${row.id}`,
+      severity: "watch",
+      title: `Publish failed · ${row.title}`,
+      evidence: row.publishError,
+      href: "/products",
+      hrefLabel: "Open products",
+    });
+  }
+
   if (input.catalogDraftPending) {
     alerts.push({
       id: "catalog-draft",
@@ -183,4 +201,14 @@ export async function loadCronRunFacts(db: DB): Promise<CronRunFact[]> {
     summary: row.summary,
     logs: row.logs ?? [],
   }));
+}
+
+export async function loadPublishFailures(db: DB): Promise<PublishFailureFact[]> {
+  const rows = await db
+    .select({ id: listings.id, title: listings.title, publishError: listings.publishError })
+    .from(listings)
+    .where(and(eq(listings.status, "failed"), isNotNull(listings.publishError), visible(listings.isDemo)))
+    .orderBy(desc(listings.updatedAt))
+    .limit(8);
+  return rows.flatMap((row) => (row.publishError ? [{ id: row.id, title: row.title, publishError: row.publishError }] : []));
 }

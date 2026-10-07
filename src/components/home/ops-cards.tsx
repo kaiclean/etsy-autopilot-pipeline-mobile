@@ -29,11 +29,13 @@ function reasons(validation: ValidationIssue[]) {
 export function OpsCards({
   failures,
   failureCount,
+  needsFixes,
   report,
   stalled,
 }: {
   failures: Failure[];
   failureCount: number;
+  needsFixes: Failure[];
   report: ReportRow;
   stalled: Stalled[];
 }) {
@@ -66,6 +68,35 @@ export function OpsCards({
           </Panel>
         )}
       </div>
+
+      {needsFixes.length > 0 && (
+        <div>
+          <SectionTitle
+            action={
+              <Link href="/queue" className="text-xs font-medium text-primary">
+                Queue
+              </Link>
+            }
+          >
+            Needs fixes
+          </SectionTitle>
+          <Panel className="divide-y divide-border overflow-hidden">
+            {needsFixes.map((listing) => (
+              <div key={listing.id} className="flex gap-3 px-4 py-3">
+                <Thumb src={listing.imageUrl} alt="" className="size-12 shrink-0" />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{listing.title}</div>
+                  <ul className="mt-1 space-y-0.5 text-xs text-destructive">
+                    {reasons(listing.validation).map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ))}
+          </Panel>
+        </div>
+      )}
 
       <div>
         <SectionTitle>Weekly health</SectionTitle>

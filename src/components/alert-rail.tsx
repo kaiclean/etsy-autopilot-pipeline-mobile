@@ -50,7 +50,10 @@ export function AlertRail({ alerts, heading = "Alerts" }: { alerts: CockpitAlert
         </Panel>
       )}
       <p className="mt-2 text-xs text-muted-foreground">
-        Cron endpoint 401 responses are not stored as job runs. Check GitHub Actions logs and verify that CRON_SECRET matches Railway.
+        Cron endpoint 401 responses are not stored as job runs. Check GitHub Actions logs and verify that CRON_SECRET matches Railway.{" "}
+        <Link href="/pipeline/live" className="font-medium text-primary">
+          Pipeline live log
+        </Link>
       </p>
     </section>
   );

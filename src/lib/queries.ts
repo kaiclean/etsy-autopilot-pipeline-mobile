@@ -14,7 +14,7 @@ import { visible } from "./events";
 import { dashboardOrdersWhere, notFakeReceiptWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
-import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, railwayDeploySha } from "./alerts";
+import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, loadPublishFailures, railwayDeploySha } from "./alerts";
 import { buildShopIdentity } from "./shop-identity";
 import { resolveRequestShop } from "./shops";
 import { getSetting } from "./settings";
@@ -53,12 +53,13 @@ export async function getShellData() {
 
 export async function getCockpitAlerts() {
   const db = await getDb();
-  const [tokens, automation, catalogDraft, cronRuns, nullEtsyIdCount] = await Promise.all([
+  const [tokens, automation, catalogDraft, cronRuns, nullEtsyIdCount, publishFailures] = await Promise.all([
     getSetting(db, "etsyTokens"),
     getSetting(db, "automation"),
     getSetting(db, "catalogDraft"),
     loadCronRunFacts(db),
     countListingsMissingEtsyId(db),
+    loadPublishFailures(db),
   ]);
   return buildCockpitAlerts({
     cronRuns,
@@ -67,6 +68,7 @@ export async function getCockpitAlerts() {
     tokens,
     killSwitch: automation.killSwitch,
     catalogDraftPending: catalogDraft.pending && !catalogDraft.reviewedByKai,
+    publishFailures,
   });
 }
 
@@ -219,7 +221,7 @@ export function analyticsListingsQuery(db: DB) {
 /** Quality holds, the latest Monday report, and Printify orders flagged for a 48h stall. */
 export async function getDashboardOps() {
   const db = await getDb();
-  const [failures, failureCount, reportRows, stalled] = await Promise.all([
+  const [failures, failureCount, reportRows, stalled, pendingReview] = await Promise.all([
     db
       .select({
         id: listings.id,
@@ -251,12 +253,26 @@ export async function getDashboardOps() {
       .where(and(isNotNull(orders.fulfillmentStalledAt), eq(orders.isDemo, false), notFakeReceiptWhere()))
       .orderBy(desc(orders.fulfillmentStalledAt))
       .limit(6),
+    db
+      .select({
+        id: listings.id,
+        title: listings.title,
+        validation: listings.validation,
+        imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
+        niche: listings.niche,
+      })
+      .from(listings)
+      .where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo)))
+      .orderBy(desc(listings.updatedAt))
+      .limit(20),
   ]);
+  const needsFixes = pendingReview.filter((row) => (row.validation ?? []).some((issue) => issue.severity === "error")).slice(0, 6);
   return {
     failures,
     failureCount: Number(failureCount[0]?.n ?? 0),
     report: reportRows[0] ?? null,
     stalled,
+    needsFixes,
   };
 }
 

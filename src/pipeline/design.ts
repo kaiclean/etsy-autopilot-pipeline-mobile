@@ -1,10 +1,12 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { costs, designBriefs, designs, keywords } from "@/db/schema";
+import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
+import { preparePrintFile } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
 import type { StageFn } from "./types";
@@ -17,15 +19,29 @@ export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   return Number(row?.total ?? 0);
 }
 
-export function buildPrompt(phrase: string, style: string) {
-  return `${style}. Subject: ${phrase}. Original composition, high detail, opaque background, not transparent, no text, no lettering, no logos, no brand names, no trademarked characters.`;
+const NICHE_PROMPTS: Record<string, string> = {
+  alpine:
+    "Bestselling Etsy alpine wall art: layered Swiss mountain ridges, a quiet lake, soft film grain, muted sage and stone, generous negative space, painterly but crisp, print-ready",
+  gothic:
+    "Bestselling Etsy dark botanical: dense gothic florals, plum, burgundy and near-black, vintage engraving texture, candlelit contrast, autumn leaves, ornate and readable at mug size",
+  christmas:
+    "Bestselling Etsy cozy Christmas illustration: warm candlelight, pine green and deep red, a snowy cabin, hygge still life, hand-drawn texture, gift-ready and highly detailed",
+  birthday:
+    "Bestselling Etsy birthday illustration: playful pastel shapes, soft paper texture, a small celebration still life, opaque background, charming and print-ready",
+  stream:
+    "Bestselling Etsy neon scene: saturated purple and cyan light, a solid opaque background, crisp shapes, high contrast, no frames and no interface chrome",
+};
+
+export function buildPrompt(phrase: string, style: string, niche?: string) {
+  const look = (niche && NICHE_PROMPTS[niche]) || style;
+  return `${look}. Subject: ${phrase}. Original composition in a bestselling Etsy style. High detail, rich color variation across the whole image, opaque background, not a flat color block, not a simple rectangle, not stripes, not transparent, no text, no lettering, no watermark, no logos, no brand names, no trademarked characters.`;
 }
 
 export const runDesign: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const automation = await getSetting(db, "automation");
-  const provider = getImageProvider();
-  log(`Image provider: ${provider.name} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
+  const provider = getImageProvider({ demo: ctx.demo });
+  log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
   let queue = await db
     .select()
@@ -64,7 +80,7 @@ export const runDesign: StageFn = async (ctx) => {
       continue;
     }
     const niche = NICHES[kw.niche];
-    const prompt = buildPrompt(kw.phrase, niche.style);
+    const prompt = buildPrompt(kw.phrase, niche.style, kw.niche);
     const brief = await ensureDesignBrief(ctx, kw, prompt);
     if (brief.created) {
       briefed++;
@@ -78,7 +94,19 @@ export const runDesign: StageFn = async (ctx) => {
         aspectRatio: kw.niche === "stream" ? "16:9" : "2:3",
         label: kw.phrase,
       });
-      const imageUrl = await persistableImageUrl(img.url);
+      const prepared = await preparePrintFile(img.url);
+      if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
+        log(`Refusing placeholder art for “${kw.phrase}”`, "error");
+        continue;
+      }
+      if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV) {
+        log(`Rejected flat artwork for “${kw.phrase}” (variation ${prepared.variance.toFixed(1)})`, "error");
+        if (!ctx.demo) continue;
+      }
+      const imageUrl = await persistableImageUrl(prepared.url);
+      if (ctx.demo && isPlaceholderUrl(imageUrl)) {
+        log(`DEMO placeholder for “${kw.phrase}” (${prepared.width ?? "?"}×${prepared.height ?? "?"}px). It will be held off the approval queue.`, "warn");
+      }
       await db.insert(designs).values({
         shopId: ctx.shopId,
         keywordId: kw.id,
@@ -86,6 +114,9 @@ export const runDesign: StageFn = async (ctx) => {
         prompt,
         provider: img.provider,
         imageUrl,
+        imageWidth: prepared.width,
+        imageHeight: prepared.height,
+        colorVariance: prepared.variance,
         costChf: img.costChf,
         isDemo: ctx.demo,
       });

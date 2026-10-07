@@ -390,7 +390,8 @@ describe("daily chain", () => {
       expect(draft.etsyListingId).toBeNull();
     }
     const queued = drafts.filter((draft) => draft.status === "pending_approval");
-    expect(queued.length).toBeGreaterThan(0);
+    expect(queued).toHaveLength(0);
+    expect(drafts.every((draft) => draft.validation.some((issue) => issue.code === "placeholder_art"))).toBe(true);
     const briefs = await db.select().from(designBriefs);
     expect(briefs.length).toBeGreaterThan(0);
 
