@@ -5,7 +5,11 @@ import { OpenAIImageProvider } from "./openai";
 import { ReplicateImageProvider } from "./replicate";
 import type { ImageProvider } from "./types";
 
-export function getImageProvider(): ImageProvider {
+/**
+ * Mock artwork is only for demo shops. A live shop with IMAGE_PROVIDER unset throws
+ * instead of queueing a flat placeholder.
+ */
+export function getImageProvider(opts?: { demo?: boolean }): ImageProvider {
   switch (config.imageProvider) {
     case "higgsfield":
       return new HiggsfieldImageProvider();
@@ -14,7 +18,8 @@ export function getImageProvider(): ImageProvider {
     case "replicate":
       return new ReplicateImageProvider();
     default:
-      return new MockImageProvider();
+      if (opts?.demo) return new MockImageProvider();
+      throw new Error("IMAGE_PROVIDER must be openai, replicate, or higgsfield. Mock artwork is only used in demo mode.");
   }
 }
 

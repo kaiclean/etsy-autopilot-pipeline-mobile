@@ -34,6 +34,11 @@ on:
           - publish
           - orders
           - health
+      force:
+        description: Pass force=1 so the daily chain runs again after a success today
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -46,6 +51,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -54,7 +60,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/analytics"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/analytics${query}"
 
   research:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'research' || github.event.schedule == '0 5 * * 1' }}
@@ -64,6 +74,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -72,7 +83,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/research"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/research${query}"
 
   design:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'design' || github.event.schedule == '0 6 * * *' }}
@@ -82,6 +97,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -90,7 +106,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/design"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/design${query}"
 
   listing:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'listing' || github.event.schedule == '30 6 * * *' }}
@@ -100,6 +120,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -108,7 +129,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/listing"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/listing${query}"
 
   publish:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'publish' || github.event.schedule == '0 7 * * *' }}
@@ -118,6 +143,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -126,7 +152,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/publish"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/publish${query}"
 
   orders:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'orders' || github.event.schedule == '0 8 * * *' }}
@@ -136,6 +166,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -144,7 +175,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/orders"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/orders${query}"
 
   maintenance:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'maintenance' || github.event.schedule == '17 4 * * *' }}
@@ -154,6 +189,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -162,7 +198,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/maintenance"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/maintenance${query}"
 
   daily:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'daily' || github.event.schedule == '20 5 * * *' }}
@@ -172,6 +212,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -180,7 +221,11 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/daily"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/daily${query}"
 
   health:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'health' || github.event.schedule == '0 9 * * 1' }}
@@ -190,6 +235,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then
@@ -198,4 +244,8 @@ jobs:
           fi
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/health"
+          query=""
+          if [ "${FORCE:-}" = "true" ]; then
+            query="?force=1"
+          fi
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/health${query}"

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
 import { filterProducts, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueTriage } from "@/lib/catalog-filters";
 import { calculateFees, productLabel } from "@/lib/fees";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
@@ -127,6 +128,9 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
               <Thumb src={l.imageUrl} alt="" className="size-[72px] shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13px] leading-snug font-medium">{l.title}</div>
+                {isPlaceholderUrl(l.imageUrl) && (
+                  <div className="mt-1 text-[11px] font-bold tracking-wide text-destructive">PLACEHOLDER ART</div>
+                )}
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <ProvenanceBadge kind={listingProvenance(l)} />
                   <ListingStatusPill status={l.status} dryRun={l.publishMode === "dry-run"} />
@@ -134,8 +138,17 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
                 </div>
                 {titleImageMismatch(l) && <div className="mt-1 text-[11px] text-warning">Title/image mismatch · flag only</div>}
                 {listingHasErrors(l.validation) && (
-                  <div className="mt-1 line-clamp-2 text-[11px] text-destructive">{l.validation.find((issue) => issue.severity === "error")?.message}</div>
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-destructive">
+                    {l.validation
+                      .filter((issue) => issue.severity === "error")
+                      .map((issue) => (
+                        <li key={`${issue.code}-${issue.message}`} className="line-clamp-2">
+                          {issue.message}
+                        </li>
+                      ))}
+                  </ul>
                 )}
+                {l.publishError && <div className="mt-1 line-clamp-3 text-[11px] text-destructive">{l.publishError}</div>}
                 {l.status === "publishing" && (
                   <div className="mt-1 text-[11px] text-warning">Waiting for the Etsy listing id from Printify.</div>
                 )}

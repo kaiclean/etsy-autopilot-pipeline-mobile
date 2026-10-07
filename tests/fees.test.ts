@@ -82,9 +82,11 @@ describe("suggestPrice", () => {
     expect(calculateFees({ priceChf: p, podCostChf: pod, offsiteAds: true }).marginPct).toBeGreaterThanOrEqual(35);
   });
 
-  it("respects min/max bounds", () => {
+  it("respects a floor, and keeps the margin solution when the cap misses the target", () => {
     expect(suggestPrice({ targetMarginPct: 10, minChf: 5.9 })).toBe(5.9);
-    expect(suggestPrice({ targetMarginPct: 60, podCostChf: 30, maxChf: 49.9 })).toBe(49.9);
+    const price = suggestPrice({ targetMarginPct: 60, podCostChf: 30, maxChf: 49.9, productType: "pod" });
+    expect(price).toBeGreaterThan(49.9);
+    expect(calculateFees({ priceChf: price, podCostChf: 30 }).marginPct).toBeGreaterThanOrEqual(60);
   });
 
   it("throws when the margin is unreachable", () => {
@@ -148,18 +150,19 @@ describe("competitive CHF pricing", () => {
     }
   });
 
-  it("rounds a 55% Offsite Ads quote down to the mug anchor instead of the ceiling", () => {
+  it("does not undercut to a competitor anchor that misses the target margin", () => {
     const price = suggestPrice({
-      targetMarginPct: 55,
+      targetMarginPct: 30,
       podCostChf: podCostChf("mug"),
       offsiteAds: true,
-      minChf: 19.9,
+      minChf: 15,
       maxChf: 49.9,
-      competitorChf: 21.4,
+      competitorChf: 19.9,
       productType: "pod",
     });
-    expect(price).toBe(20.9);
-    expect(price).not.toBe(49.9);
+    expect(price).toBeGreaterThan(19.9);
+    expect(price).toBeLessThanOrEqual(25);
+    expect(calculateFees({ priceChf: price, podCostChf: podCostChf("mug"), offsiteAds: true }).marginPct).toBeGreaterThanOrEqual(30);
   });
 
   it("keeps digital downloads profitable at or above the niche floor", () => {

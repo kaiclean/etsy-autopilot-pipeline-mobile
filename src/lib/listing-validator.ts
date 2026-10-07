@@ -286,3 +286,155 @@ export function sanitizeDraft<T extends ListingDraft>(d: T): T {
   }
   return { ...d, title, tags: tags.slice(0, ETSY_LIMITS.tagCount) };
 }
+
+const NEUTRAL_TAGS = [
+  "home decor",
+  "wall decor",
+  "art print",
+  "room accent",
+  "gallery piece",
+  "neutral art",
+  "modern decor",
+  "cozy style",
+  "art lover",
+  "gift print",
+  "interior art",
+  "calm artwork",
+  "styled print",
+];
+
+const PRODUCT_FAMILY = /\b(?:mugs?|posters?|sweatshirts?|t-?shirts?|tees?)\b/i;
+
+function rememberTag(tags: string[], seen: Set<string>, raw: string) {
+  if (tags.length >= ETSY_LIMITS.tagCount) return;
+  const tag = raw.replace(/[^\p{L}\p{N} '\-]/gu, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!tag || tag.length > ETSY_LIMITS.tagMax || seen.has(tag) || PRODUCT_FAMILY.test(tag)) return;
+  seen.add(tag);
+  tags.push(tag);
+}
+
+const FAMILIES = [
+  { family: "mug", pattern: /\bmugs?\b/i, presets: ["mug"] },
+  { family: "poster", pattern: /\bposters?\b/i, presets: ["posterA3"] },
+  { family: "sweatshirt", pattern: /\bsweatshirts?\b/i, presets: ["sweatshirt"] },
+  { family: "shirt", pattern: /\b(?:t-?shirts?|tees?)\b/i, presets: ["tshirt"] },
+] as const;
+
+function allowedFamilies(product: { type: ListingDraft["productType"]; pod?: string }) {
+  if (product.type === "digital") return new Set<string>(["poster"]);
+  const hit = FAMILIES.find((row) => product.pod && (row.presets as readonly string[]).includes(product.pod));
+  return new Set(hit ? [hit.family] : []);
+}
+
+function softenShoutedTitle(title: string) {
+  let changed = false;
+  const next = title.replace(/\S+/g, (word) => {
+    const letters = word.replace(/[^\p{L}]/gu, "");
+    if (letters.length > 1 && letters === letters.toUpperCase()) {
+      changed = true;
+      return word.replace(/\p{L}+/gu, (chunk) => chunk.charAt(0) + chunk.slice(1).toLowerCase());
+    }
+    return word;
+  });
+  return { title: next, changed };
+}
+
+function stripPraise(text: string) {
+  const re = new RegExp(PRAISE_SOURCE, "gi");
+  if (!re.test(text)) return { text, changed: false };
+  const next = text
+    .replace(new RegExp(PRAISE_SOURCE, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim();
+  return { text: next, changed: true };
+}
+
+/**
+ * Truncates the title to 140, each tag to 20, and fills or trims the list to exactly 13.
+ * Shouted words become Title Case and empty praise is removed before the gate.
+ * Product words (mug, poster, shirt) are not invented. Other gate failures stay for review.
+ */
+export function repairTrivialCopy<T extends ListingDraft>(
+  d: T,
+  opts?: { keyword?: string; product?: { type: ListingDraft["productType"]; pod?: string } },
+): { draft: T; fixes: string[] } {
+  const fixes: string[] = [];
+  let title = (d.title ?? "").replace(/\s+/g, " ").trim();
+  let description = d.description ?? "";
+  const shouted = softenShoutedTitle(title);
+  if (shouted.changed) {
+    title = shouted.title;
+    fixes.push("rewrote all-caps words into title case");
+  }
+  const titlePraise = stripPraise(title);
+  if (titlePraise.changed) {
+    title = titlePraise.text;
+    fixes.push("removed empty praise from the title");
+  }
+  const bodyPraise = stripPraise(description);
+  if (bodyPraise.changed) {
+    description = bodyPraise.text;
+    fixes.push("removed empty praise from the description");
+  }
+  const keyword = opts?.keyword?.replace(/\s+/g, " ").trim();
+  if (keyword && !title.toLowerCase().startsWith(keyword.toLowerCase())) {
+    const lead = keyword.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
+    title = `${lead} ${title}`.replace(/\s+/g, " ").trim();
+    fixes.push("moved the buyer keyword to the front of the title");
+  }
+  if (opts?.product) {
+    const allowed = allowedFamilies(opts.product);
+    let stripped = title;
+    for (const family of FAMILIES) {
+      if (allowed.has(family.family)) continue;
+      stripped = stripped.replace(new RegExp(family.pattern.source, "gi"), " ");
+    }
+    stripped = stripped.replace(/\s+/g, " ").replace(/\s+\|/g, " |").trim();
+    if (stripped !== title) {
+      title = stripped;
+      fixes.push("removed product words that do not match this variant");
+    }
+  }
+  const trimmedTitle = title;
+  const rawTags = d.tags ?? [];
+  const sanitized = sanitizeDraft({ ...d, title, description });
+  if (trimmedTitle.length > ETSY_LIMITS.titleMax) fixes.push("shortened the title to 140 characters");
+  if (rawTags.some((tag) => tag.trim().length > ETSY_LIMITS.tagMax)) fixes.push("shortened tags to 20 characters");
+
+  const tags = [...sanitized.tags];
+  if (rawTags.length !== ETSY_LIMITS.tagCount || tags.length !== ETSY_LIMITS.tagCount) {
+    fixes.push("set the tag list to 13");
+    const seen = new Set(tags);
+    for (const filler of NEUTRAL_TAGS) rememberTag(tags, seen, filler);
+    const words = sanitized.title
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}']+/u)
+      .filter((word) => word.length >= 3 && word.length <= ETSY_LIMITS.tagMax);
+    for (const word of words) rememberTag(tags, seen, word);
+    for (let i = 0; i < words.length - 1; i++) rememberTag(tags, seen, `${words[i]} ${words[i + 1]}`);
+    let n = 1;
+    while (tags.length < ETSY_LIMITS.tagCount && n < 40) {
+      rememberTag(tags, seen, `art style ${n}`);
+      n++;
+    }
+  }
+  if (opts?.product) {
+    const allowed = allowedFamilies(opts.product);
+    const before = tags.length;
+    const kept = tags.filter((tag) => FAMILIES.every((family) => allowed.has(family.family) || !family.pattern.test(tag)));
+    if (kept.length !== before) {
+      tags.length = 0;
+      tags.push(...kept);
+      fixes.push("dropped tags for a different product");
+      const seen = new Set(tags);
+      for (const filler of NEUTRAL_TAGS) rememberTag(tags, seen, filler);
+      let n = 1;
+      while (tags.length < ETSY_LIMITS.tagCount && n < 40) {
+        rememberTag(tags, seen, `art style ${n}`);
+        n++;
+      }
+    }
+  }
+  return { draft: { ...sanitized, tags: tags.slice(0, ETSY_LIMITS.tagCount) }, fixes };
+}

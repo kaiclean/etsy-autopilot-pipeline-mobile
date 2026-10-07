@@ -9,6 +9,7 @@ import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
+import { maskSecrets } from "./stage-log";
 import type { StageFn } from "./types";
 
 export function podPreset(provider: string | null): PodPreset | undefined {
@@ -28,6 +29,17 @@ export function absoluteUrl(url: string) {
   return new URL(url, `${publicAppUrl()}/`).toString();
 }
 
+/** Same stored error is not sent again until this long after the last attempt. */
+export const PUBLISH_RETRY_MS = 24 * 60 * 60 * 1000;
+
+export function publishRetryBlocked(
+  row: { status: string; publishError: string | null; publishAttemptedAt: Date | null },
+  now: Date,
+) {
+  if (row.status !== "failed" || !row.publishError || !row.publishAttemptedAt) return false;
+  return now.getTime() - new Date(row.publishAttemptedAt).getTime() < PUBLISH_RETRY_MS;
+}
+
 export const runPublish: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const approved = await db
@@ -43,7 +55,13 @@ export const runPublish: StageFn = async (ctx) => {
 
   let ok = 0;
   let failed = 0;
+  let skipped = 0;
   for (const l of approved) {
+    if (publishRetryBlocked(l, ctx.now)) {
+      skipped++;
+      log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
+      continue;
+    }
     const check = validateListing(l);
     if (!check.valid) {
       await db
@@ -129,6 +147,7 @@ export const runPublish: StageFn = async (ctx) => {
           ...(podPrintProviderId != null ? { podPrintProviderId } : {}),
           publishMode: mode,
           publishError: null,
+          publishAttemptedAt: ctx.now,
           publishedAt: nextStatus === "published" ? ctx.now : null,
           updatedAt: ctx.now,
         })
@@ -142,12 +161,13 @@ export const runPublish: StageFn = async (ctx) => {
       });
       ok++;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = maskSecrets(e instanceof Error ? e.message : String(e));
       await db
         .update(listings)
         .set({
           status: "failed",
           publishError: msg,
+          publishAttemptedAt: ctx.now,
           ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
           updatedAt: ctx.now,
         })
@@ -168,7 +188,7 @@ export const runPublish: StageFn = async (ctx) => {
   if (failed) {
     await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" }, ctx.demo);
   }
-  const summary = `Published ${ok}, failed ${failed} (${etsy.mode})`;
+  const summary = `Published ${ok}, failed ${failed}${skipped ? `, skipped ${skipped} (same error within 24h)` : ""} (${etsy.mode})`;
   if (failed > 0) throw new Error(summary);
   return summary;
 };

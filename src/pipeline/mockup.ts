@@ -1,7 +1,8 @@
 import type { Niche, ProductType } from "@/db/schema";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 import { config } from "@/lib/config";
 import type { PodPreset } from "@/lib/fees";
-import { digitalPreviewUrl, podMockupPng } from "@/lib/png";
+import { digitalPreviewUrl } from "@/lib/png";
 
 export type MockupRequest = {
   artworkUrl: string;
@@ -28,17 +29,19 @@ export interface MockupProvider {
   tryCompose(req: MockupRequest): Promise<MockupResult | null>;
 }
 
-export function podMockupUrl(preset: PodPreset, niche: string) {
-  return `/api/mockup/${preset}?niche=${encodeURIComponent(niche)}`;
+export function podMockupUrl(preset: PodPreset, niche: string, artworkUrl?: string) {
+  const params = new URLSearchParams({ niche });
+  if (artworkUrl && !isPlaceholderUrl(artworkUrl) && artworkUrl.length <= 1800 && !artworkUrl.startsWith("data:")) {
+    params.set("src", artworkUrl);
+  }
+  return `/api/mockup/${preset}?${params.toString()}`;
 }
 
-/** PNG product scene (frame, mug, tee). Served by `/api/mockup/[preset]`. */
+/** PNG product scene (frame, mug, tee). Served by `/api/mockup/[preset]`, which composites `src` when it is real art. */
 export const templateMockupProvider: MockupProvider = {
   name: "template-mockup",
   async tryCompose(req) {
-    const png = podMockupPng(req.preset, req.niche);
-    if (png.length < 8) return null;
-    return { url: podMockupUrl(req.preset, req.niche), provider: this.name, mocked: true };
+    return { url: podMockupUrl(req.preset, req.niche, req.artworkUrl), provider: this.name, mocked: true };
   },
 };
 

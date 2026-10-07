@@ -15,13 +15,14 @@ import { runMaintenance } from "./maintenance";
 import { runOrders } from "./orders";
 import { runPublish } from "./publish";
 import { runResearch } from "./research";
+import { writeStageLog } from "./stage-log";
 import { STAGES, type StageContext, type StageFn } from "./types";
 
 const CHAIN_STAGES = ["research", "design", "listing"] as const;
 
 /** Research, then a design brief, then a listing draft. Never publishes or arms go-live. */
 async function runDailyChain(ctx: StageContext): Promise<string> {
-  if (await stageSucceededToday(ctx.db, ctx.shopId, "daily", ctx.now)) {
+  if (!ctx.force && (await stageSucceededToday(ctx.db, ctx.shopId, "daily", ctx.now))) {
     return `Daily chain already completed for ${utcDayKey(ctx.now)}. Drafts stay pending approval. Publish mode was not changed.`;
   }
   const before = await getSetting(ctx.db, "automation");
@@ -33,12 +34,12 @@ async function runDailyChain(ctx: StageContext): Promise<string> {
       ctx.log(`${stage} is paused; daily chain skipped it`);
       continue;
     }
-    if (await stageSucceededToday(ctx.db, ctx.shopId, stage, ctx.now)) {
+    if (!ctx.force && (await stageSucceededToday(ctx.db, ctx.shopId, stage, ctx.now))) {
       parts.push(`${stage}: already completed today`);
       ctx.log(`${stage} already completed today`);
       continue;
     }
-    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now });
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force });
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
@@ -72,7 +73,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean };
 
 async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string, demo: boolean) {
   const [run] = await db
@@ -111,7 +112,11 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
     trigger,
     random: opts.random ?? Math.random,
     now: opts.now ?? new Date(),
-    log: (msg, level = "info") => logs.push({ t: new Date().toISOString(), level, msg }),
+    force: opts.force === true,
+    log: (msg, level = "info") => {
+      const safe = writeStageLog(stage, level, msg);
+      logs.push({ t: new Date().toISOString(), level, msg: safe });
+    },
   };
   const label = STAGES.find((s) => s.id === stage)!.label;
   const afterOrders = async () => {
@@ -135,7 +140,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
     await emit(db, { type: "job.success", title: `${label} finished`, body: summary, severity: "info", href: "/pipeline" }, demo);
     return done;
   } catch (e) {
-    const msg = (e as Error).message;
+    const msg = writeStageLog(stage, "error", (e as Error).message);
     logs.push({ t: new Date().toISOString(), level: "error", msg });
     await afterOrders();
     const [done] = await db

@@ -57,7 +57,7 @@ export default async function HomePage() {
           <ConnectionsStrip checks={connections.checks} />
           {!connections.etsyConnected && <EtsyConnectCta canConnect={connections.canConnectEtsy} />}
           <HeroKpis kpis={data.kpis} series={data.series} />
-          <OpsCards failures={ops.failures} failureCount={ops.failureCount} report={ops.report} stalled={ops.stalled} />
+          <OpsCards failures={ops.failures} failureCount={ops.failureCount} needsFixes={ops.needsFixes} report={ops.report} stalled={ops.stalled} />
 
           {data.pending.length > 0 && (
             <Link href="/queue" className="block">

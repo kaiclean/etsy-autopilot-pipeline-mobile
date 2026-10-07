@@ -47,10 +47,11 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     const l = await runStage("listing", "manual", { db, random });
     expect(l.status).toBe("success");
     const pendingAfter = await count(db, listings, eq(listings.status, "pending_approval"));
-    expect(pendingAfter).toBeGreaterThan(pendingBefore);
-
-    const fresh = await db.select().from(listings).where(eq(listings.status, "pending_approval"));
-    for (const x of fresh.slice(-3)) {
+    expect(pendingAfter).toBe(pendingBefore);
+    const held = await db.select().from(listings).where(eq(listings.status, "quality_failed"));
+    expect(held.length).toBeGreaterThan(0);
+    expect(held.some((row) => row.validation.some((issue) => issue.code === "placeholder_art"))).toBe(true);
+    for (const x of held.slice(-3)) {
       expect(x.title.length).toBeLessThanOrEqual(140);
       expect(x.tags).toHaveLength(13);
       expect(x.description).toContain("AI image tools");
