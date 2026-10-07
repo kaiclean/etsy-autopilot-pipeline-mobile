@@ -5,11 +5,12 @@ import { ConnectionsStrip, EtsyConnectCta } from "@/components/connections-panel
 import { Panel, SectionTitle, STAGE_ICONS, Thumb } from "@/components/common";
 import { HeroKpis } from "@/components/home/hero-kpis";
 import { NextActions } from "@/components/home/next-actions";
+import { OpsCards } from "@/components/home/ops-cards";
 import { RunPipelineButton } from "@/components/run-button";
 import { chf, relTime, TZ } from "@/lib/format";
 import { buildNextActions, toStageSnapshots } from "@/lib/next-actions";
 import { AlertRail } from "@/components/alert-rail";
-import { getCockpitAlerts, getConnectionsData, getHomeData } from "@/lib/queries";
+import { getCockpitAlerts, getConnectionsData, getDashboardOps, getHomeData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 function greeting() {
@@ -18,7 +19,12 @@ function greeting() {
 }
 
 export default async function HomePage() {
-  const [data, connections, alerts] = await Promise.all([getHomeData(), getConnectionsData(), getCockpitAlerts()]);
+  const [data, connections, alerts, ops] = await Promise.all([
+    getHomeData(),
+    getConnectionsData(),
+    getCockpitAlerts(),
+    getDashboardOps(),
+  ]);
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
   const attention = buildNextActions({
@@ -51,6 +57,7 @@ export default async function HomePage() {
           <ConnectionsStrip checks={connections.checks} />
           {!connections.etsyConnected && <EtsyConnectCta canConnect={connections.canConnectEtsy} />}
           <HeroKpis kpis={data.kpis} series={data.series} />
+          <OpsCards failures={ops.failures} failureCount={ops.failureCount} report={ops.report} stalled={ops.stalled} />
 
           {data.pending.length > 0 && (
             <Link href="/queue" className="block">

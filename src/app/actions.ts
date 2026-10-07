@@ -14,7 +14,7 @@ import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
 import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
-import type { PushPrefs } from "@/lib/push-prefs";
+import { PUSH_PREF_KEYS, type PushPrefs } from "@/lib/push-prefs";
 import { DEFAULT_CATALOG_DRAFT, getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
 import {
   activateDigitalListing,
@@ -183,7 +183,7 @@ export async function savePushPrefs(patch: Partial<PushPrefs>) {
   const db = await getDb();
   const current = await getSetting(db, "pushPrefs");
   const next = { ...current };
-  for (const key of ["order.new", "approval.pending", "job.failed"] as const) {
+  for (const key of PUSH_PREF_KEYS) {
     if (typeof patch[key] === "boolean") next[key] = patch[key];
   }
   await setSetting(db, "pushPrefs", next);

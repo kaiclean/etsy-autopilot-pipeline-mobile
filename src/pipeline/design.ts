@@ -1,10 +1,12 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
-import { costs, designs, keywords } from "@/db/schema";
+import { costs, designBriefs, designs, keywords } from "@/db/schema";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { getSetting } from "@/lib/settings";
+import { stageSucceededToday } from "./chain-day";
+import { ensureDesignBrief } from "./design-brief";
 import type { StageFn } from "./types";
 
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
@@ -32,6 +34,8 @@ export const runDesign: StageFn = async (ctx) => {
     .orderBy(desc(keywords.score))
     .limit(automation.designsPerRun);
   if (queue.length === 0) {
+    const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
+    if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
     queue = await db.select().from(keywords).where(eq(keywords.status, "new")).orderBy(desc(keywords.score)).limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");
   }
@@ -44,6 +48,7 @@ export const runDesign: StageFn = async (ctx) => {
   let spentMonth = await aiSpend(db, monthStart);
 
   let made = 0;
+  let briefed = 0;
   for (const kw of queue) {
     if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf) {
       log(`Daily AI cap reached (CHF ${spentToday.toFixed(2)} / ${automation.dailyAiCapChf}); stopping`, "warn");
@@ -60,6 +65,11 @@ export const runDesign: StageFn = async (ctx) => {
     }
     const niche = NICHES[kw.niche];
     const prompt = buildPrompt(kw.phrase, niche.style);
+    const brief = await ensureDesignBrief(ctx, kw, prompt);
+    if (brief.created) {
+      briefed++;
+      log(`Design brief for “${kw.phrase}” (${brief.brief?.productType ?? "listing"}${brief.brief?.podPreset ? `/${brief.brief.podPreset}` : ""})`);
+    }
     try {
       const img = await provider.generate({
         prompt,
@@ -85,6 +95,7 @@ export const runDesign: StageFn = async (ctx) => {
       spentToday += img.costChf;
       spentMonth += img.costChf;
       await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
       made++;
       log(`Generated design for “${kw.phrase}”`);
     } catch (e) {
@@ -94,5 +105,5 @@ export const runDesign: StageFn = async (ctx) => {
   if (made) {
     await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" }, ctx.demo);
   }
-  return `Generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
+  return `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
 };

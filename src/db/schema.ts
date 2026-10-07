@@ -21,7 +21,8 @@ export type ListingStatus =
   | "pod_created"
   | "publishing"
   | "published"
-  | "failed";
+  | "failed"
+  | "quality_failed";
 
 /** Recorded bytes for the file a digital buyer downloads, plus the smaller gallery preview. */
 export type DeliveryFileRecord = {
@@ -52,7 +53,9 @@ export type StageName =
   | "publish"
   | "orders"
   | "analytics"
-  | "maintenance";
+  | "maintenance"
+  | "daily"
+  | "health";
 
 export type LogLine = { t: string; level: "info" | "warn" | "error"; msg: string };
 
@@ -109,7 +112,7 @@ export const shopAutomation = pgTable("shop_automation", {
 });
 
 export type ValidationIssue = {
-  field: "title" | "tags" | "description" | "price";
+  field: "title" | "tags" | "description" | "price" | "image";
   severity: "error" | "warning";
   code: string;
   message: string;
@@ -221,8 +224,81 @@ export const orders = pgTable("orders", {
   fulfillmentStatus: text("fulfillment_status").$type<FulfillmentStatus>().notNull(),
   podOrderId: text("pod_order_id"),
   isDemo: boolean("is_demo").notNull().default(false),
+  /** Clock for Printify status progress. Stall watch uses this, not a generic row touch. */
+  fulfillmentChangedAt: timestamp("fulfillment_changed_at", { withTimezone: true }),
+  /** Set once when a Printify order has had no status progress for 48 hours. */
+  fulfillmentStalledAt: timestamp("fulfillment_stalled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One brief per keyword. The daily chain reuses it instead of drafting a second product. */
+export const designBriefs = pgTable(
+  "design_briefs",
+  {
+    id: serial("id").primaryKey(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .default(omnishopId)
+      .references(() => shops.id),
+    keywordId: integer("keyword_id")
+      .notNull()
+      .references(() => keywords.id),
+    niche: text("niche").$type<Niche>().notNull(),
+    prompt: text("prompt").notNull(),
+    productType: text("product_type").$type<ProductType>().notNull(),
+    podPreset: text("pod_preset"),
+    dayKey: text("day_key").notNull(),
+    status: text("status").$type<"briefed" | "designed">().notNull().default("briefed"),
+    isDemo: boolean("is_demo").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("design_briefs_keyword_id_unique").on(t.keywordId)],
+);
+
+export type HealthSuggestion = {
+  listingId: number;
+  title: string;
+  action: "refresh" | "retire";
+  reason: string;
+};
+
+export type HealthReportPayload = {
+  weekStart: string;
+  windowStart: string;
+  windowEnd: string;
+  views: number;
+  favorites: number;
+  sales: number;
+  profitChf: number;
+  vatChf: number;
+  podCostChf: number;
+  adsChf: number;
+  suggestions: HealthSuggestion[];
+};
+
+/** One Monday report per shop per week. Re-runs update the same row. */
+export const healthReports = pgTable(
+  "health_reports",
+  {
+    id: serial("id").primaryKey(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .default(omnishopId)
+      .references(() => shops.id),
+    weekStart: text("week_start").notNull(),
+    payload: jsonb("payload").$type<HealthReportPayload>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("health_reports_shop_week").on(t.shopId, t.weekStart)],
+);
+
+/** Dedupes the web-push for a real Etsy receipt. Demo and dry-run ids are never inserted. */
+export const saleAlerts = pgTable("sale_alerts", {
+  etsyReceiptId: text("etsy_receipt_id").primaryKey(),
+  shopId: uuid("shop_id").references(() => shops.id),
+  alertedAt: timestamp("alerted_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const jobRuns = pgTable("job_runs", {
@@ -343,3 +419,6 @@ export type Cost = typeof costs.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type PrintifyEvent = typeof printifyEvents.$inferSelect;
 export type PodSample = typeof podSamples.$inferSelect;
+export type DesignBrief = typeof designBriefs.$inferSelect;
+export type HealthReport = typeof healthReports.$inferSelect;
+export type SaleAlert = typeof saleAlerts.$inferSelect;

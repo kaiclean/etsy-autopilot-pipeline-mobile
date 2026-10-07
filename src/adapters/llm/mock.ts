@@ -25,7 +25,7 @@ const NICHE_COPY: Record<Niche, { hooks: string[]; tags: string[]; body: string 
   gothic: {
     hooks: ["Dark Floral Gothic Design", "Moody Autumn Botanical", "Witchy Vintage Florals"],
     tags: [
-      "gothic floral", "dark academia", "halloween shirt", "witchy gift", "moody botanical",
+      "gothic floral", "dark academia", "october bloom", "witchy gift", "moody botanical",
       "autumn florals", "spooky season", "vintage flowers", "goth gift", "fall aesthetic",
       "plum and burgundy", "dark cottagecore", "halloween decor", "skull flowers", "gothic art",
     ],
@@ -34,7 +34,7 @@ const NICHE_COPY: Record<Niche, { hooks: string[]; tags: string[]; body: string 
   christmas: {
     hooks: ["Cozy Alpine Christmas Design", "Hygge Winter Holiday Gift", "Warm Candlelight Christmas Art"],
     tags: [
-      "cozy christmas", "christmas gift", "hygge decor", "winter art", "holiday mug",
+      "cozy christmas", "christmas gift", "hygge decor", "winter art", "holiday gift",
       "alpine christmas", "gift for her", "stocking stuffer", "xmas present", "snowy cabin",
       "christmas decor", "cozy season", "secret santa gift", "festive art", "winter village",
     ],

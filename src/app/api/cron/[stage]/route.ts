@@ -7,7 +7,11 @@ import { isStage } from "@/pipeline/types";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/** Called by Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`. */
+/**
+ * Called by GitHub Actions cron with `Authorization: Bearer $CRON_SECRET`.
+ * `daily` runs research → design brief → listing draft and leaves drafts pending.
+ * `health` runs the Monday report. Neither route publishes or changes go-live.
+ */
 export async function GET(req: Request, ctx: { params: Promise<{ stage: string }> }) {
   const secret = config.cronSecret;
   const auth = req.headers.get("authorization");

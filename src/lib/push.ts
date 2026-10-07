@@ -7,7 +7,15 @@ import { pushEventEnabled } from "@/lib/push-prefs";
 import { getSetting } from "@/lib/settings";
 
 /** Events that should reach a closed PWA. In-app toasts still cover everything else. */
-export const PUSH_EVENT_TYPES = new Set(["order.new", "approval.pending", "job.failed", "listing.failed", "listing.awaiting_etsy_id"]);
+export const PUSH_EVENT_TYPES = new Set([
+  "order.new",
+  "approval.pending",
+  "job.failed",
+  "listing.failed",
+  "listing.awaiting_etsy_id",
+  "health.report",
+  "fulfillment.stalled",
+]);
 
 export type PushPayload = { title: string; body: string; url: string };
 

@@ -54,6 +54,9 @@ export default async function OrdersPage() {
                   ) : (
                     <FulfillmentPill status={o.fulfillmentStatus} />
                   )}
+                  {o.fulfillmentStalledAt && (
+                    <span className="inline-flex h-5 items-center rounded-full bg-destructive/15 px-2 text-[11px] font-semibold text-destructive">Stalled 48h</span>
+                  )}
                   {productType === "pod" && o.podOrderId && <span className="hidden font-mono md:inline">{o.podOrderId}</span>}
                 </div>
               </div>

@@ -11,11 +11,13 @@ on:
   schedule:
     - cron: "0 3 * * *" # analytics
     - cron: "17 4 * * *" # maintenance
+    - cron: "20 5 * * *" # daily chain: research, design brief, listing draft
     - cron: "0 5 * * 1" # research, Monday
     - cron: "0 6 * * *" # design
     - cron: "30 6 * * *" # listing
     - cron: "0 7 * * *" # publish
     - cron: "0 8 * * *" # orders
+    - cron: "0 9 * * 1" # health report, Monday
   workflow_dispatch:
     inputs:
       stage:
@@ -24,12 +26,14 @@ on:
         type: choice
         options:
           - analytics
+          - maintenance
+          - daily
           - research
           - design
           - listing
           - publish
           - orders
-          - maintenance
+          - health
 
 permissions: {}
 
@@ -159,3 +163,39 @@ jobs:
           url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
           url="${url%/}"
           curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/maintenance"
+
+  daily:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'daily' || github.event.schedule == '20 5 * * *' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run daily chain
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/daily"
+
+  health:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'health' || github.event.schedule == '0 9 * * 1' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run health report
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Set repository secret CRON_SECRET to the same value as Railway. It is not stored in this workflow."
+            exit 1
+          fi
+          url="${AUTOPILOT_URL:-https://etsy-autopilot-production-8b9f.up.railway.app}"
+          url="${url%/}"
+          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/health"

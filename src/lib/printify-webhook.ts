@@ -218,7 +218,7 @@ export async function ingestPrintifyWebhook(
         await db
           .update(orders)
           .set({
-            ...(nextStatus ? { fulfillmentStatus: nextStatus } : {}),
+            ...(nextStatus ? { fulfillmentStatus: nextStatus, fulfillmentChangedAt: new Date(), fulfillmentStalledAt: null } : {}),
             ...(nextPod ? { podOrderId: nextPod } : {}),
             updatedAt: new Date(),
           })

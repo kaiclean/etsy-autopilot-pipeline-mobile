@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
-import { costs, designs, keywords, listings } from "@/db/schema";
+import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { sanitizeDraft, validateListing } from "@/lib/listing-validator";
+import { evaluateQualityGate } from "@/lib/quality-gate";
 import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
 import { tryBuildFileManifest } from "@/lib/file-manifest";
 import { isNichePaused, NICHES } from "@/lib/niches";
@@ -22,6 +23,30 @@ export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?:
     if (r < acc) return { type: m.type, pod: m.pod };
   }
   return { type: mix[0].type, pod: mix[0].pod };
+}
+
+/** When the keyword names a mug, poster, tee, or sweatshirt, the brief uses that variant. */
+export function productForPhrase(niche: Niche, phrase: string, random: number): { type: ProductType; pod?: PodPreset } {
+  const wantsSweat = /\bsweatshirts?\b/i.test(phrase);
+  const wantsMug = /\bmugs?\b/i.test(phrase);
+  const wantsPoster = /\bposters?\b/i.test(phrase);
+  const wantsShirt = !wantsSweat && /\b(?:t-?shirts?|tees?)\b/i.test(phrase);
+  const preferred = wantsMug ? "mug" : wantsPoster ? "posterA3" : wantsSweat ? "sweatshirt" : wantsShirt ? "tshirt" : null;
+  if (preferred) {
+    const match = NICHES[niche].productMix.find((item) => item.pod === preferred);
+    if (match) return { type: match.type, pod: match.pod };
+  }
+  return pickProduct(niche, random);
+}
+
+function productForDesign(
+  niche: Niche,
+  random: number,
+  brief: { productType: ProductType; podPreset: string | null } | undefined,
+) {
+  const preset = brief?.podPreset && brief.podPreset in POD_PRESETS ? (brief.podPreset as PodPreset) : undefined;
+  if (!brief || (brief.productType === "pod" && !preset)) return pickProduct(niche, random);
+  return { type: brief.productType, pod: preset };
 }
 
 export async function draftListing(opts: {
@@ -85,6 +110,7 @@ export const runListing: StageFn = async (ctx) => {
   if (pending.length === 0) return "No new designs waiting for listings.";
 
   let created = 0;
+  let held = 0;
   let invalid = 0;
   for (const { design, phrase } of pending) {
     if (isNichePaused(design.niche)) {
@@ -92,7 +118,10 @@ export const runListing: StageFn = async (ctx) => {
       log(`Skipped design #${design.id}: ${NICHES[design.niche].pausedReason}`, "warn");
       continue;
     }
-    const product = pickProduct(design.niche, ctx.random());
+    const [brief] = design.keywordId
+      ? await db.select().from(designBriefs).where(eq(designBriefs.keywordId, design.keywordId)).limit(1)
+      : [];
+    const product = productForDesign(design.niche, ctx.random(), brief);
     try {
       const { draft, fees, issues, pod, llmCost, provider } = await draftListing({
         niche: design.niche,
@@ -113,6 +142,17 @@ export const runListing: StageFn = async (ctx) => {
       if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
       const deliveryUrl = product.type === "digital" ? artworkUrl : null;
       const fileManifest = deliveryUrl ? tryBuildFileManifest(design.imageUrl, image.url) : null;
+      const gate = evaluateQualityGate({
+        title: draft.title,
+        tags: draft.tags,
+        description: draft.description,
+        priceChf: draft.priceChf,
+        productType: product.type,
+        podProvider: product.type === "pod" && product.pod ? `printify:${product.pod}` : null,
+        imageUrl: image.url,
+      });
+      const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
+      if (!gate.pass) held++;
       await db.insert(listings).values({
         shopId: ctx.shopId,
         designId: design.id,
@@ -130,8 +170,8 @@ export const runListing: StageFn = async (ctx) => {
         podCostChf: pod,
         netChf: fees.netChf,
         marginPct: fees.marginPct,
-        validation: issues,
-        status: "pending_approval",
+        validation,
+        status: gate.pass ? "pending_approval" : "quality_failed",
         isDemo: ctx.demo,
       });
       await db.update(designs).set({ status: "listed" }).where(eq(designs.id, design.id));
@@ -146,14 +186,24 @@ export const runListing: StageFn = async (ctx) => {
       log(`Listing failed for design #${design.id}: ${(e as Error).message}`, "error");
     }
   }
-  if (created) {
+  const queued = created - held;
+  if (queued) {
     await emit(db, {
       type: "approval.pending",
-      title: `${created} listing${created > 1 ? "s" : ""} awaiting approval`,
+      title: `${queued} listing${queued > 1 ? "s" : ""} awaiting approval`,
       body: invalid ? `${invalid} need edits before they can be approved` : "Swipe to approve or reject",
       severity: "warning",
       href: "/queue",
     }, ctx.demo);
   }
-  return `Drafted ${created} listings for approval${invalid ? ` (${invalid} need fixes)` : ""}`;
+  if (held) {
+    await emit(db, {
+      type: "quality.failed",
+      title: `${held} listing${held > 1 ? "s" : ""} held by the quality gate`,
+      body: "They stay off the approval queue. The dashboard lists each reason.",
+      severity: "warning",
+      href: "/",
+    }, ctx.demo);
+  }
+  return `Drafted ${queued} listings for approval${held ? `, held ${held} for quality` : ""}${invalid ? ` (${invalid} need fixes)` : ""}`;
 };

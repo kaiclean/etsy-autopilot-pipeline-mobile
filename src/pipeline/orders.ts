@@ -6,9 +6,12 @@ import type { DB } from "@/db";
 import { listings, orders, shops, type Listing } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit, visible } from "@/lib/events";
+import { dispatchEventPush } from "@/lib/push";
+import { claimSaleAlert, isRealSaleReceipt } from "@/lib/sale-alert";
 import { calculateFees } from "@/lib/fees";
 import { persistedOrderIsDemo, publishedListingsWhere, realOrderCursorWhere, receiptLookback, shouldSimulateReceipts } from "@/lib/real-orders";
 import { syncAwaitingEtsyIds } from "./etsy-id-sync";
+import { flagStalledFulfillment } from "./fulfillment-watch";
 import type { StageFn } from "./types";
 
 type ReceiptLog = (msg: string, level?: "info" | "warn" | "error") => void;
@@ -59,17 +62,19 @@ export async function saveReceipts(
           offsiteAdsChf: fees.offsiteAdsFeeChf,
           profitChf: 0,
           fulfillmentStatus: "pending",
+          fulfillmentChangedAt: r.createdAt,
           isDemo,
           createdAt: r.createdAt,
         })
         .onConflictDoNothing({ target: orders.etsyReceiptId })
         .returning({ id: orders.id });
-      if (insertedRows.length === 0) continue;
-      existing.add(r.receiptId);
-      inserted++;
-      unmatched++;
-      log(`Receipt ${r.receiptId} references listing ${r.etsyListingId} with no local row; saved as unmatched`, "warn");
-      await emit(
+    if (insertedRows.length === 0) continue;
+    existing.add(r.receiptId);
+    inserted++;
+    unmatched++;
+    log(`Receipt ${r.receiptId} references listing ${r.etsyListingId} with no local row; saved as unmatched`, "warn");
+    const pushUnmatched = isRealSaleReceipt(r.receiptId, isDemo) && (await claimSaleAlert(db, r.receiptId, opts.shopId));
+    await emit(
         db,
         {
           type: "order.unmatched",
@@ -80,7 +85,16 @@ export async function saveReceipts(
           shopId: opts.shopId,
         },
         isDemo,
+        { push: false },
       );
+    if (pushUnmatched) {
+      await dispatchEventPush(db, {
+        type: "order.new",
+        title: `New order · CHF ${fees.revenueChf.toFixed(2)}`,
+        body: `Etsy listing ${r.etsyListingId} is not in the pipeline yet.`,
+        href: "/orders",
+      });
+    }
       continue;
     }
     const offsite = opts.offsite(r);
@@ -100,6 +114,7 @@ export async function saveReceipts(
         offsiteAdsChf: fees.offsiteAdsFeeChf,
         profitChf: fees.netChf,
         fulfillmentStatus: l.productType === "digital" ? "delivered_digital" : "pending",
+        fulfillmentChangedAt: r.createdAt,
         podOrderId: opts.podOrderId?.(l, r) ?? null,
         isDemo,
         createdAt: r.createdAt,
@@ -109,6 +124,7 @@ export async function saveReceipts(
     if (insertedRows.length === 0) continue;
     existing.add(r.receiptId);
     inserted++;
+    const pushSale = isRealSaleReceipt(r.receiptId, isDemo) && (await claimSaleAlert(db, r.receiptId, opts.shopId ?? l.shopId));
     await emit(
       db,
       {
@@ -120,6 +136,7 @@ export async function saveReceipts(
         shopId: opts.shopId ?? l.shopId,
       },
       isDemo,
+      { push: pushSale },
     );
   }
   return { inserted, unmatched };
@@ -195,11 +212,16 @@ export const runOrders: StageFn = async (ctx) => {
     for (const o of open) {
       const next = statuses[o.podOrderId!];
       if (next && next !== o.status) {
-        await db.update(orders).set({ fulfillmentStatus: next, updatedAt: ctx.now }).where(eq(orders.id, o.id));
+        await db
+          .update(orders)
+          .set({ fulfillmentStatus: next, fulfillmentChangedAt: ctx.now, fulfillmentStalledAt: null, updatedAt: ctx.now })
+          .where(eq(orders.id, o.id));
         advanced++;
       }
     }
     log(`POD fulfillment: ${advanced}/${open.length} open orders changed status`);
   }
-  return `${inserted} new order(s), ${unmatched} unmatched, ${idSync.linked} Etsy id(s) linked, ${advanced} fulfillment update(s)`;
+  const stalled = await flagStalledFulfillment(db, { shopId: ctx.shopId, now: ctx.now });
+  if (stalled.flagged) log(`Flagged ${stalled.flagged} Printify order(s) with no status progress for 48 hours`, "warn");
+  return `${inserted} new order(s), ${unmatched} unmatched, ${idSync.linked} Etsy id(s) linked, ${advanced} fulfillment update(s), ${stalled.flagged} stalled`;
 };

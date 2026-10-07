@@ -1,5 +1,7 @@
 import {
+  Activity,
   BarChart3Icon,
+  CalendarClock,
   Lightbulb,
   Megaphone,
   Paintbrush,
@@ -21,6 +23,8 @@ export const STAGE_ICONS: Record<StageName, LucideIcon> = {
   orders: Receipt,
   analytics: BarChart3Icon,
   maintenance: Wrench,
+  daily: CalendarClock,
+  health: Activity,
 };
 
 export const AdsIcon = Megaphone;
@@ -58,6 +62,7 @@ const LISTING_STYLE: Record<ListingStatus, { label: string; cls: string }> = {
   published: { label: "On Etsy", cls: "bg-success/15 text-success" },
   rejected: { label: "Rejected", cls: "bg-muted text-muted-foreground" },
   failed: { label: "Failed", cls: "bg-destructive/15 text-destructive" },
+  quality_failed: { label: "Quality hold", cls: "bg-destructive/15 text-destructive" },
 };
 
 export function ListingStatusPill({ status, dryRun }: { status: ListingStatus; dryRun?: boolean }) {

@@ -14,7 +14,7 @@ export type EmitInput = {
   shopId?: string;
 };
 
-export async function emit(db: DB, e: EmitInput, demo = isDemoMode()) {
+export async function emit(db: DB, e: EmitInput, demo = isDemoMode(), opts?: { push?: boolean }) {
   const { shopId, ...rest } = e;
   await db.insert(events).values({
     ...rest,
@@ -22,6 +22,7 @@ export async function emit(db: DB, e: EmitInput, demo = isDemoMode()) {
     severity: rest.severity ?? "info",
     isDemo: demo,
   });
+  if (opts?.push === false) return;
   try {
     await dispatchEventPush(db, e);
   } catch (error) {
