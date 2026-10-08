@@ -12,9 +12,16 @@ import { buildCockpitAlerts } from "@/lib/alerts";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { runStage } from "@/pipeline/runner";
 
-const push = vi.hoisted(() => ({
-  dispatchEventPush: vi.fn(async () => ({ sent: 1, removed: 0 })),
-}));
+const push = vi.hoisted(() => {
+  const pushed: { type?: string; title?: string }[] = [];
+  return {
+    pushed,
+    dispatchEventPush: async (_db: unknown, event: { type?: string; title?: string }) => {
+      pushed.push({ type: event?.type, title: event?.title });
+      return { sent: 1, removed: 0 };
+    },
+  };
+});
 
 vi.mock("@/lib/push", async () => {
   const actual = await vi.importActual<typeof import("@/lib/push")>("@/lib/push");
@@ -44,9 +51,13 @@ async function selectedKeywords(db: DB, shopId: string) {
   ]);
 }
 
+function creditPushes() {
+  return push.pushed.filter((event) => event.title === "Image provider out of credits");
+}
+
 afterEach(() => {
   setImageProviderForTests(null);
-  push.dispatchEventPush.mockClear();
+  push.pushed.length = 0;
 });
 
 describe("provider yield", () => {
@@ -134,9 +145,7 @@ describe("design credit failures", () => {
 
     const rows = await db.select().from(jobRuns);
     expect(rows.find((row) => row.stage === "design")?.status).toBe("failed");
-    const creditPushes = push.dispatchEventPush.mock.calls.filter((call) => call[1]?.title === "Image provider out of credits");
-    expect(creditPushes).toHaveLength(1);
-    expect(creditPushes[0][1]).toMatchObject({ type: "job.failed", href: "/pipeline/live" });
+    expect(creditPushes()).toEqual([{ type: "job.failed", title: "Image provider out of credits" }]);
   });
 
   it("warns when some images succeed and keeps going after a non-credit error", async () => {
@@ -159,7 +168,7 @@ describe("design credit failures", () => {
     expect(run.summary).toMatch(/generated 1\/3/);
     expect(run.summary).not.toMatch(/out of credits/);
     expect(calls).toBe(3);
-    expect(push.dispatchEventPush).not.toHaveBeenCalled();
+    expect(creditPushes()).toEqual([]);
   });
 
   it("stops the rest of the run after a 402 that follows a success", async () => {
@@ -182,7 +191,6 @@ describe("design credit failures", () => {
     expect(run.summary).toMatch(/^Image provider out of credits/);
     expect(run.summary).toMatch(/generated 1\/3/);
     expect(calls).toBe(2);
-    const creditPushes = push.dispatchEventPush.mock.calls.filter((call) => call[1]?.title === "Image provider out of credits");
-    expect(creditPushes).toHaveLength(1);
+    expect(creditPushes()).toEqual([{ type: "job.failed", title: "Image provider out of credits" }]);
   });
 });
