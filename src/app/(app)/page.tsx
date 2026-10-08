@@ -103,7 +103,7 @@ export default async function HomePage() {
                         <span
                           className={cn(
                             "size-2 rounded-full",
-                            st === "success" ? "bg-success" : st === "failed" ? "bg-destructive" : st === "running" ? "animate-pulse bg-chart-4" : st === "skipped" ? "bg-warning" : "bg-muted-foreground/40",
+                            st === "success" ? "bg-success" : st === "failed" ? "bg-destructive" : st === "warning" ? "bg-warning" : st === "running" ? "animate-pulse bg-chart-4" : st === "skipped" ? "bg-warning" : "bg-muted-foreground/40",
                           )}
                         />
                       </div>

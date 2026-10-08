@@ -5,11 +5,19 @@ import { OpenAIImageProvider } from "./openai";
 import { ReplicateImageProvider } from "./replicate";
 import type { ImageProvider } from "./types";
 
+let providerOverride: ImageProvider | null = null;
+
+/** Test hook. Production callers leave this unset. */
+export function setImageProviderForTests(provider: ImageProvider | null) {
+  providerOverride = provider;
+}
+
 /**
  * Mock artwork is only for demo shops. A live shop with IMAGE_PROVIDER unset throws
  * instead of queueing a flat placeholder.
  */
 export function getImageProvider(opts?: { demo?: boolean }): ImageProvider {
+  if (providerOverride) return providerOverride;
   switch (config.imageProvider) {
     case "higgsfield":
       return new HiggsfieldImageProvider();

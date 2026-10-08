@@ -146,6 +146,17 @@ describe("OpenAI image adapter", () => {
     expect(JSON.parse(String(calls[0].init?.body)).model).toBe("google/gemini-2.5-flash-image");
     expect(image).toMatchObject({ url: "https://cdn.example/a.png", costChf: 0.04, provider: "openai" });
   });
+
+  it("does not call the second images path after a 402", async () => {
+    process.env.OPENAI_API_KEY = "sk-unit-test";
+    process.env.OPENAI_BASE_URL = "https://openrouter.ai/api/v1";
+    const calls = installFetch(() => jsonResponse(402, { error: { message: "Insufficient credits" } }));
+    await expect(
+      new OpenAIImageProvider().generate({ prompt: "alpine poster", niche: "alpine", seed: 1 }),
+    ).rejects.toThrow(/402/);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://openrouter.ai/api/v1/images");
+  });
 });
 
 describe("OpenAI LLM adapter", () => {

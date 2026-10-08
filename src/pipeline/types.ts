@@ -13,7 +13,19 @@ export type StageContext = {
   log: (msg: string, level?: LogLine["level"]) => void;
 };
 
-export type StageFn = (ctx: StageContext) => Promise<string>;
+export type StageStatus = "success" | "warning" | "failed";
+
+export type StageResult = { summary: string; status: StageStatus };
+
+export function stageResult(summary: string, status: StageStatus = "success"): StageResult {
+  return { summary, status };
+}
+
+export function asStageResult(value: string | StageResult): StageResult {
+  return typeof value === "string" ? { summary: value, status: "success" } : value;
+}
+
+export type StageFn = (ctx: StageContext) => Promise<string | StageResult>;
 
 export const STAGES: { id: StageName; label: string; description: string }[] = [
   { id: "research", label: "Research", description: "Collect and score keyword & trend candidates" },

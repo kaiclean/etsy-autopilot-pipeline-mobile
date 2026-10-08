@@ -56,7 +56,7 @@ export function LiveLog({ initial }: { initial: PipelineLive }) {
           {data.runs.map((run) => (
             <div key={run.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[8rem_6rem_1fr_5rem]">
               <div className="text-sm font-medium">{run.stage}</div>
-              <div className={cn("text-xs font-semibold uppercase", run.status === "failed" ? "text-destructive" : run.status === "success" ? "text-success" : "text-muted-foreground")}>
+              <div className={cn("text-xs font-semibold uppercase", run.status === "failed" ? "text-destructive" : run.status === "warning" ? "text-warning" : run.status === "success" ? "text-success" : "text-muted-foreground")}>
                 {run.status}
               </div>
               <div className="min-w-0 text-xs text-muted-foreground">

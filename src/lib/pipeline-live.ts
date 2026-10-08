@@ -69,7 +69,7 @@ export async function loadPipelineLive(db: DB, opts?: { errorsOnly?: boolean; li
     .orderBy(desc(listings.updatedAt))
     .limit(12);
   return {
-    runs: opts?.errorsOnly ? runs.filter((run) => run.status === "failed" || run.errorCount > 0) : runs,
+    runs: opts?.errorsOnly ? runs.filter((run) => run.status === "failed" || run.status === "warning" || run.errorCount > 0) : runs,
     lines,
     publishErrors: failed.flatMap((row) =>
       row.publishError ? [{ id: row.id, title: row.title, publishError: row.publishError, updatedAt: new Date(row.updatedAt).toISOString() }] : [],

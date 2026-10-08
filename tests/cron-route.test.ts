@@ -34,6 +34,18 @@ describe("cron stage route", () => {
     expect(runner.runStage).toHaveBeenCalledWith("publish", "cron", { force: false });
   });
 
+  it("returns 200 when a stage finishes with a warning", async () => {
+    delete process.env.CRON_SECRET;
+    runner.runStage.mockResolvedValue({ status: "warning", summary: "Briefed 0, generated 1/3 designs" });
+    const res = await call("design");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      stage: "design",
+      status: "warning",
+      summary: "Briefed 0, generated 1/3 designs",
+    });
+  });
+
   it("returns 200 when the stage succeeds", async () => {
     delete process.env.CRON_SECRET;
     runner.runStage.mockResolvedValue({ status: "success", summary: "Published 1, failed 0 (dry-run)" });

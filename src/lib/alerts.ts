@@ -3,6 +3,7 @@ import type { DB } from "@/db";
 import { jobRuns, listings } from "@/db/schema";
 import { listingNeedsEtsyId } from "@/lib/catalog-filters";
 import { visible } from "@/lib/events";
+import { isProviderCreditsError } from "@/lib/provider-errors";
 import type { EtsyTokens } from "@/lib/settings";
 
 export type AlertSeverity = "blocker" | "watch" | "info";
@@ -50,9 +51,16 @@ export function railwayDeploySha(
   return sha || null;
 }
 
+export function cronRunText(run: { summary: string | null; logs: { msg: string }[] }) {
+  return `${run.summary ?? ""}\n${run.logs.map((line) => line.msg).join("\n")}`;
+}
+
 export function cronRunIsUnauthorized(run: { summary: string | null; logs: { msg: string }[] }) {
-  const blob = `${run.summary ?? ""}\n${run.logs.map((line) => line.msg).join("\n")}`;
-  return /\b401\b|unauthorized/i.test(blob);
+  return /\b401\b|unauthorized/i.test(cronRunText(run));
+}
+
+export function cronRunIsCreditsError(run: { summary: string | null; logs: { msg: string }[] }) {
+  return isProviderCreditsError(cronRunText(run));
 }
 
 /** Latest cron run per stage. `runs` must be newest first. */
@@ -81,9 +89,22 @@ export function buildCockpitAlerts(input: {
   const alerts: CockpitAlert[] = [];
   const latest = latestCronRuns(input.cronRuns);
   const unauthorized = latest.find((run) => run.status === "failed" && cronRunIsUnauthorized(run));
+  const credits = latest.find((run) => (run.status === "failed" || run.status === "warning") && cronRunIsCreditsError(run));
   const failed = latest.find((run) => run.status === "failed");
+  const warned = latest.find((run) => run.status === "warning");
 
-  if (unauthorized) {
+  if (credits) {
+    alerts.push({
+      id: "image-credits",
+      severity: credits.status === "failed" ? "blocker" : "watch",
+      title: "Image provider out of credits",
+      evidence: `${credits.stage} stopped because the image provider returned 402 Insufficient credits. ${credits.summary ?? ""}`.trim(),
+      href: "/pipeline/live",
+      hrefLabel: "Open live log",
+    });
+  }
+
+  if (unauthorized && unauthorized !== credits) {
     alerts.push({
       id: "cron-401",
       severity: "blocker",
@@ -92,12 +113,23 @@ export function buildCockpitAlerts(input: {
       href: "/connections#cron",
       hrefLabel: "Open cron",
     });
-  } else if (failed) {
+  } else if (failed && failed !== credits) {
     alerts.push({
       id: "cron-secret",
       severity: "watch",
       title: "Cron run failed",
       evidence: `Last failed cron stage: ${failed.stage}. Inspect the run logs; endpoint CRON_SECRET failures are not recorded as job runs.`,
+      href: "/pipeline/live",
+      hrefLabel: "Open live log",
+    });
+  }
+
+  if (warned && warned !== credits) {
+    alerts.push({
+      id: "cron-warning",
+      severity: "watch",
+      title: "Pipeline run finished with warnings",
+      evidence: `${warned.stage} produced only part of its intended output. ${warned.summary ?? "Open the live log for the error lines."}`.trim(),
       href: "/pipeline/live",
       hrefLabel: "Open live log",
     });

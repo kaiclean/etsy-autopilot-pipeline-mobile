@@ -22,6 +22,7 @@ export function RunStageButton({ stage, label, disabled, className }: { stage: s
           const r = await triggerStage(stage);
           router.refresh();
           if (r.status === "skipped") toast.warning(`Skipped: ${r.summary}`);
+          else if (r.status === "warning") toast.warning(r.summary ?? "Finished with warnings");
           else if (!r.ok) toast.error(r.summary ?? r.error ?? "Run failed");
           else if (r.summary) toast.success(r.summary);
         })
@@ -47,10 +48,12 @@ export function RunPipelineButton({ disabled, className, compact }: { disabled?:
           const runs = await triggerFullPipeline();
           router.refresh();
           const failed = runs.filter((r) => r.status === "failed");
+          const warned = runs.filter((r) => r.status === "warning");
           const skipped = runs.find((r) => r.status === "skipped");
           toast.dismiss(id);
           if (skipped?.summary?.startsWith("Kill switch")) toast.error("Kill switch is on. Nothing ran.");
           else if (failed.length) toast.error(`${failed.length} stage(s) failed`, { description: failed.map((f) => `${f.stage}: ${f.summary}`).join("\n") });
+          else if (warned.length) toast.warning(`${warned.length} stage(s) finished with warnings`, { description: warned.map((f) => `${f.stage}: ${f.summary}`).join("\n") });
           else toast.success("Pipeline finished", { description: runs.map((r) => `${r.stage}: ${r.summary}`).join("\n") });
         })
       }
