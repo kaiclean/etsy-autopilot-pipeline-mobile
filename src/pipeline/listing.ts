@@ -11,7 +11,7 @@ import { isPlaceholderUrl } from "@/lib/art-quality";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
 import { evaluateQualityGate } from "@/lib/quality-gate";
 import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
-import { tryBuildFileManifest } from "@/lib/file-manifest";
+import { buildFileManifest } from "@/lib/file-manifest";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
@@ -136,7 +136,7 @@ async function listRung(
   });
   if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
   const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
-  const fileManifest = deliveryUrl ? tryBuildFileManifest(design.imageUrl, image.url) : null;
+  const fileManifest = deliveryUrl ? await buildFileManifest(deliveryUrl, image.url) : null;
   const gate = evaluateQualityGate({
     title: draft.title,
     tags: draft.tags,

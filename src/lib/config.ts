@@ -1,3 +1,5 @@
+import type { ProviderCreditSignal } from "./provider-errors";
+
 const env = (k: string) => {
   const v = process.env[k];
   return v && v.trim() !== "" ? v.trim() : undefined;
@@ -73,16 +75,47 @@ export const config = {
   get openaiImageModel() {
     return env("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
   },
+  /** Image calls. Each value falls back to the matching OPENAI_* setting. */
+  get imageApiKey() {
+    return env("IMAGE_API_KEY") ?? env("OPENAI_API_KEY");
+  },
+  get imageBaseUrl() {
+    return (env("IMAGE_BASE_URL") ?? env("OPENAI_BASE_URL") ?? "https://api.openai.com/v1").replace(/\/$/, "");
+  },
+  get imageModel() {
+    return env("IMAGE_MODEL") ?? env("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
+  },
+  /** Ollama Cloud chat. There is no image endpoint on this host. */
+  get ollama() {
+    return {
+      apiKey: env("OLLAMA_API_KEY"),
+      baseUrl: "https://ollama.com/v1",
+      model: env("OLLAMA_MODEL") ?? "gemma4:31b",
+    };
+  },
+  get omniroute() {
+    const base = env("OMNIROUTE_BASE_URL");
+    return {
+      apiKey: env("OMNIROUTE_API_KEY"),
+      baseUrl: base ? base.replace(/\/$/, "") : undefined,
+      model: env("OMNIROUTE_MODEL"),
+      imageModel: env("OMNIROUTE_IMAGE_MODEL"),
+    };
+  },
   get replicateToken() {
     return env("REPLICATE_API_TOKEN");
   },
-  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" {
+  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" | "omniroute" {
     const p = env("IMAGE_PROVIDER");
-    if (p === "higgsfield" || p === "openai" || p === "replicate") return p;
+    if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute") return p;
     return "mock";
   },
-  get llmProvider(): "mock" | "openai" {
-    return env("LLM_PROVIDER") === "openai" && env("OPENAI_API_KEY") ? "openai" : "mock";
+  get llmProvider(): "mock" | "openai" | "ollama" | "omniroute" {
+    const p = env("LLM_PROVIDER");
+    if (p === "openai" && env("OPENAI_API_KEY")) return "openai";
+    if (p === "ollama" && env("OLLAMA_API_KEY")) return "ollama";
+    if (p === "omniroute" && env("OMNIROUTE_API_KEY")) return "omniroute";
+    return "mock";
   },
   get authSecret() {
     return env("AUTH_SECRET") ?? (process.env.NODE_ENV === "production" ? undefined : "dev-only-insecure-secret");
@@ -154,7 +187,22 @@ export type IntegrationStatus = {
   envVars: string[];
 };
 
-export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
+function withCreditStatus(row: IntegrationStatus, signal: ProviderCreditSignal | undefined): IntegrationStatus {
+  if (!signal || signal === "ok" || row.status === "missing") return row;
+  if (signal === "failed") {
+    return {
+      ...row,
+      status: "missing",
+      detail: `${row.detail} Latest design run: image provider returned 402 Insufficient credits.`,
+    };
+  }
+  return {
+    ...row,
+    detail: `${row.detail} Latest design run recorded 402 Insufficient credits.`,
+  };
+}
+
+export function integrationStatus(etsyConnected: boolean, opts?: { providerCredits?: ProviderCreditSignal }): IntegrationStatus[] {
   const e = config.etsy;
   const p = config.printify;
   const h = config.higgsfield;
@@ -219,38 +267,66 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
         : "In-app alerts still work. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT (mailto:) for push when the PWA is closed. npm run vapid:generate",
       envVars: ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"],
     },
-    {
-      id: "images",
-      name: "Image generation",
-      status: config.imageProvider === "mock" ? "mock" : "configured",
-      detail:
-        config.imageProvider === "mock"
-          ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate."
-          : config.imageProvider === "openai"
-            ? `OpenAI-compatible · ${config.openaiImageModel} · ${config.openaiBaseUrl}`
-            : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
-      envVars: [
-        "IMAGE_PROVIDER",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "OPENAI_IMAGE_MODEL",
-        "HIGGSFIELD_API_KEY",
-        "HIGGSFIELD_API_SECRET",
-        "REPLICATE_API_TOKEN",
-      ],
-    },
-    {
-      id: "llm",
-      name: "Listing writer (LLM)",
-      status: config.llmProvider === "openai" ? "configured" : "mock",
-      detail:
-        config.llmProvider === "openai"
-          ? `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`
-          : env("LLM_PROVIDER") === "openai"
-            ? "LLM_PROVIDER=openai but OPENAI_API_KEY is missing. Demo shops use the template writer; a live shop's listing stage fails."
-            : "Demo-only template writer. Set LLM_PROVIDER=openai and OPENAI_API_KEY before a live shop drafts listings.",
-      envVars: ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"],
-    },
+    withCreditStatus(
+      {
+        id: "images",
+        name: "Image generation",
+        status: config.imageProvider === "mock" ? "mock" : "configured",
+        detail:
+          config.imageProvider === "mock"
+            ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute."
+            : config.imageProvider === "openai"
+              ? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`
+              : config.imageProvider === "omniroute"
+                ? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
+                : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
+        envVars: [
+          "IMAGE_PROVIDER",
+          "IMAGE_API_KEY",
+          "IMAGE_BASE_URL",
+          "IMAGE_MODEL",
+          "OPENAI_API_KEY",
+          "OPENAI_BASE_URL",
+          "OPENAI_IMAGE_MODEL",
+          "OMNIROUTE_API_KEY",
+          "OMNIROUTE_BASE_URL",
+          "OMNIROUTE_IMAGE_MODEL",
+          "HIGGSFIELD_API_KEY",
+          "HIGGSFIELD_API_SECRET",
+          "REPLICATE_API_TOKEN",
+        ],
+      },
+      opts?.providerCredits,
+    ),
+    withCreditStatus(
+      {
+        id: "llm",
+        name: "Listing writer (LLM)",
+        status: config.llmProvider === "mock" ? "mock" : "configured",
+        detail:
+          config.llmProvider === "openai"
+            ? `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`
+            : config.llmProvider === "ollama"
+              ? `Ollama Cloud · ${config.ollama.model} · ${config.ollama.baseUrl}`
+              : config.llmProvider === "omniroute"
+                ? `OmniRoute · ${config.omniroute.model ?? "OMNIROUTE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
+                : env("LLM_PROVIDER") === "openai" || env("LLM_PROVIDER") === "ollama" || env("LLM_PROVIDER") === "omniroute"
+                  ? `LLM_PROVIDER=${env("LLM_PROVIDER")} but its API key is missing. Demo shops use the template writer; a live shop's listing stage fails.`
+                  : "Demo-only template writer. Set LLM_PROVIDER (openai, ollama, or omniroute) and its API key before a live shop drafts listings.",
+        envVars: [
+          "LLM_PROVIDER",
+          "OPENAI_API_KEY",
+          "OPENAI_BASE_URL",
+          "OPENAI_MODEL",
+          "OLLAMA_API_KEY",
+          "OLLAMA_MODEL",
+          "OMNIROUTE_API_KEY",
+          "OMNIROUTE_BASE_URL",
+          "OMNIROUTE_MODEL",
+        ],
+      },
+      opts?.providerCredits,
+    ),
     {
       id: "auth",
       name: "Dashboard auth",

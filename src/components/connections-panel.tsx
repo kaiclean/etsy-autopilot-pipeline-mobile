@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { Panel, SectionTitle } from "@/components/common";
+import { TestConnectionButton } from "@/components/test-connection";
 import { healthTone, type HealthCheck } from "@/lib/health";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +94,7 @@ export function ConnectionsPanel({
           );
         })}
       </Panel>
+      <TestConnectionButton />
       <p className="text-[11px] text-muted-foreground">
         Status uses env var names only. Secret values are never shown. Write APIs run only when the dashboard choice and host{" "}
         <code>PUBLISH_MODE</code> are both live. Shop reads use the stored OAuth tokens either way.

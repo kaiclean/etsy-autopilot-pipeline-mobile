@@ -15,3 +15,49 @@ export function yieldStatus(produced: number, failures: number): StageYield {
   if (failures > 0) return "warning";
   return "success";
 }
+
+export type ProviderCreditSignal = "ok" | "warning" | "failed";
+
+/** Latest design run: failed credits are red, any other credit error is amber. */
+export function providerCreditSignal(
+  run: { status: string; summary: string | null; logs: { msg: string }[] } | null | undefined,
+): ProviderCreditSignal {
+  if (!run) return "ok";
+  const text = `${run.summary ?? ""}\n${(run.logs ?? []).map((line) => line.msg).join("\n")}`;
+  if (!isProviderCreditsError(text)) return "ok";
+  return run.status === "failed" ? "failed" : "warning";
+}
+
+const IMAGE_ERROR = /\b(?:401|402|404)\b|model[_\s-]?not[_\s-]?found|no such model|unknown model|invalid model|images failed|insufficient credits|out of credits/i;
+
+export type ImageRunFact = {
+  status: string;
+  summary: string | null;
+  logs?: { msg: string }[];
+};
+
+function redactProviderText(value: string) {
+  return value
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+}
+
+/** Latest design-run line that names a real provider failure. Success runs stay quiet. */
+export function lastImageProviderError(run: ImageRunFact | null | undefined): string | null {
+  if (!run || (run.status !== "failed" && run.status !== "warning")) return null;
+  const lines = [...(run.logs ?? []).map((line) => line.msg), run.summary ?? ""].filter((line) => line.trim() !== "");
+  const hit = lines.find((line) => IMAGE_ERROR.test(line));
+  return hit ? redactProviderText(hit) : null;
+}
+
+/** Short chip label for the last image-provider failure. */
+export function imageProviderStatusLabel(error: string) {
+  if (/\b402\b|insufficient credits|out of credits/i.test(error)) return "Out of credits";
+  if (/\b401\b/i.test(error)) return "401";
+  if (/\b404\b/i.test(error)) return "404";
+  if (/model[_\s-]?not[_\s-]?found|no such model|unknown model|invalid model/i.test(error)) return "Model not found";
+  return "Error";
+}

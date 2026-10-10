@@ -1,12 +1,13 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
-import { costs, designBriefs, designs, keywords } from "@/db/schema";
+import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
+import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
@@ -33,6 +34,9 @@ const NICHE_PROMPTS: Record<string, string> = {
     "Bestselling Etsy neon scene: saturated purple and cyan light, a solid opaque background, crisp shapes, high contrast, no frames and no interface chrome",
 };
 
+/** After this many provider failures, the keyword returns to the backlog so research can pick another. */
+export const DESIGN_FAILURE_COOLDOWN = 2;
+
 export function buildPrompt(phrase: string, style: string, niche?: string) {
   const look = (niche && NICHE_PROMPTS[niche]) || style;
   return `${look}. Subject: ${phrase}. Original composition in a bestselling Etsy style. High detail, rich color variation across the whole image, opaque background, not a flat color block, not a simple rectangle, not stripes, not transparent, no text, no lettering, no watermark, no logos, no brand names, no trademarked characters.`;
@@ -50,12 +54,17 @@ export const runDesign: StageFn = async (ctx) => {
     .select()
     .from(keywords)
     .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), liveOnly))
-    .orderBy(desc(keywords.score))
+    .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(automation.designsPerRun);
   if (queue.length === 0) {
     const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
     if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
-    queue = await db.select().from(keywords).where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly)).orderBy(desc(keywords.score)).limit(automation.designsPerRun);
+    queue = await db
+      .select()
+      .from(keywords)
+      .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly))
+      .orderBy(asc(keywords.designFailures), desc(keywords.score))
+      .limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");
   }
   if (queue.length === 0) return "No keywords to design for. Run Research first.";
@@ -70,6 +79,16 @@ export const runDesign: StageFn = async (ctx) => {
   let briefed = 0;
   let failures = 0;
   let creditsStopped = false;
+  const noteFailure = async (kw: (typeof queue)[number]) => {
+    const next = kw.designFailures + 1;
+    kw.designFailures = next;
+    const release = next >= DESIGN_FAILURE_COOLDOWN;
+    await db
+      .update(keywords)
+      .set({ designFailures: next, ...(release ? { status: "new" as const } : {}), updatedAt: ctx.now })
+      .where(eq(keywords.id, kw.id));
+    if (release) log(`Returned “${kw.phrase}” to the backlog after ${next} provider failures`, "warn");
+  };
   for (const kw of queue) {
     if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf) {
       log(`Daily AI cap reached (CHF ${spentToday.toFixed(2)} / ${automation.dailyAiCapChf}); stopping`, "warn");
@@ -102,6 +121,7 @@ export const runDesign: StageFn = async (ctx) => {
       const prepared = await preparePrintFile(img.url);
       if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
         failures++;
+        await noteFailure(kw);
         log(`Refusing placeholder art for “${kw.phrase}”`, "error");
         continue;
       }
@@ -109,12 +129,64 @@ export const runDesign: StageFn = async (ctx) => {
         log(`Rejected flat artwork for “${kw.phrase}” (variation ${prepared.variance.toFixed(1)})`, "error");
         if (!ctx.demo) {
           failures++;
+          await noteFailure(kw);
           continue;
         }
       }
       const imageUrl = await persistableImageUrl(prepared.url);
       if (ctx.demo && isPlaceholderUrl(imageUrl)) {
         log(`DEMO placeholder for “${kw.phrase}” (${prepared.width ?? "?"}×${prepared.height ?? "?"}px). It will be held off the approval queue.`, "warn");
+      }
+      // Seeded demo rows never receive art paid for by a live run.
+      const existingListings = await db
+        .select()
+        .from(listings)
+        .where(and(eq(listings.keywordId, kw.id), eq(listings.shopId, ctx.shopId), ctx.demo ? undefined : eq(listings.isDemo, false)));
+      const placeholders = existingListings.filter((row) => isPlaceholderUrl(row.imageUrl) || isPlaceholderUrl(row.deliveryUrl));
+      if (placeholders.length && !isPlaceholderUrl(imageUrl)) {
+        const refreshed = {
+          imageUrl,
+          provider: img.provider,
+          imageWidth: prepared.width,
+          imageHeight: prepared.height,
+          colorVariance: prepared.variance,
+          costChf: img.costChf,
+        };
+        for (const listing of placeholders) {
+          const deliveryReplaced = Boolean(listing.deliveryUrl && isPlaceholderUrl(listing.deliveryUrl));
+          await db
+            .update(listings)
+            .set({
+              imageUrl: isPlaceholderUrl(listing.imageUrl)
+                ? listing.productType === "digital"
+                  ? digitalPreviewUrl(imageUrl, listing.niche)
+                  : imageUrl
+                : listing.imageUrl,
+              deliveryUrl: deliveryReplaced ? imageUrl : listing.deliveryUrl,
+              // A new delivery file needs a fresh manifest and a fresh human check.
+              ...(deliveryReplaced ? { fileManifest: null, fileVerifiedAt: null, fileVerifiedBy: null } : {}),
+              updatedAt: ctx.now,
+            })
+            .where(eq(listings.id, listing.id));
+        }
+        const existingDesigns = await db
+          .select()
+          .from(designs)
+          .where(and(eq(designs.keywordId, kw.id), eq(designs.shopId, ctx.shopId), ctx.demo ? undefined : eq(designs.isDemo, false)));
+        for (const design of existingDesigns) {
+          if (!isPlaceholderUrl(design.imageUrl)) continue;
+          await db.update(designs).set(refreshed).where(eq(designs.id, design.id));
+        }
+        if (img.costChf > 0) {
+          await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: ctx.demo });
+        }
+        spentToday += img.costChf;
+        spentMonth += img.costChf;
+        await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+        await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
+        made++;
+        log(`Replaced placeholder art for “${kw.phrase}” on ${placeholders.length} listing${placeholders.length === 1 ? "" : "s"}`);
+        continue;
       }
       await db.insert(designs).values({
         shopId: ctx.shopId,
@@ -141,6 +213,7 @@ export const runDesign: StageFn = async (ctx) => {
     } catch (e) {
       const message = (e as Error).message;
       failures++;
+      await noteFailure(kw);
       log(`Generation failed for “${kw.phrase}”: ${message}`, "error");
       if (isProviderCreditsError(message)) {
         creditsStopped = true;

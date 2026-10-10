@@ -120,5 +120,17 @@ describe("M1 shop registry", () => {
     expect(JSON.stringify(pubs)).not.toContain("shop-token");
     expect(JSON.stringify(pubs)).not.toContain("shop-refresh");
     expect(pubs[0].connections.map((row) => row.provider).sort()).toEqual(["etsy", "openrouter", "printify", "s3"]);
+
+    const stale = { accessToken: "shop-token", refreshToken: "shop-refresh", expiresAt: 2 };
+    const rotated = { accessToken: "rotated-token", refreshToken: "rotated-refresh", expiresAt: 3 };
+    await writeEtsyTokens(db, shop.id, rotated);
+    const current = await writeEtsyTokens(db, shop.id, { ...stale, refreshError: "Etsy token refresh failed" }, stale);
+    expect(current).toMatchObject(rotated);
+    expect((await getSetting(db, "etsyTokens"))?.accessToken).toBe("rotated-token");
+    const [connection] = await db
+      .select()
+      .from(shopConnections)
+      .where(and(eq(shopConnections.shopId, shop.id), eq(shopConnections.provider, "etsy")));
+    expect(connection.tokens).toMatchObject(rotated);
   });
 });

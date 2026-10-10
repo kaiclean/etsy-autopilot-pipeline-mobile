@@ -7,6 +7,7 @@ import { config, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
+import { buildFileManifest, manifestIsComplete } from "@/lib/file-manifest";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import { maskSecrets } from "./stage-log";
@@ -89,13 +90,21 @@ export const runPublish: StageFn = async (ctx) => {
         const [design] = l.designId
           ? await db.select({ provider: designs.provider, imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId))
           : [];
+        let manifest = l.fileManifest;
+        if (l.deliveryUrl && !manifestIsComplete(manifest)) {
+          const built = await buildFileManifest(l.deliveryUrl, l.imageUrl);
+          if (manifestIsComplete(built)) {
+            manifest = built;
+            await db.update(listings).set({ fileManifest: manifest, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+          }
+        }
         const refusal = digitalDraftRefusal({
           etsyMode: etsy.mode,
           imageProvider: config.imageProvider,
           designProvider: design?.provider ?? null,
           imageUrl: l.imageUrl,
           deliveryUrl: l.deliveryUrl,
-          manifest: l.fileManifest,
+          manifest,
         });
         if (refusal) throw new Error(refusal);
         let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
@@ -112,7 +121,7 @@ export const runPublish: StageFn = async (ctx) => {
         }
         // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
         await etsy.uploadListingImage(listingId, absoluteUrl(l.imageUrl));
-        await etsy.uploadListingFile(listingId, { name: l.fileManifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
+        await etsy.uploadListingFile(listingId, { name: manifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
         etsyListingId = listingId;
         log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {

@@ -1,4 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -194,8 +195,38 @@ function pushCheck(): HealthCheck {
   };
 }
 
-function llmCheck(): HealthCheck {
-  const envVars = ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"];
+function overlayCredits(check: HealthCheck, signal: ProviderCreditSignal, which: "images" | "llm"): HealthCheck {
+  if (signal === "ok" || check.label === "Key missing") return check;
+  const failed = signal === "failed";
+  const who = which === "images" ? "Image generation" : "The listing writer";
+  return {
+    ...check,
+    level: failed ? "red" : "yellow",
+    label: failed ? "Out of credits" : "Low credits",
+    detail: `${who} returned 402 Insufficient credits on the latest design run. Keys are still set. Token values are hidden.`,
+  };
+}
+
+function llmCheck(signal: ProviderCreditSignal): HealthCheck {
+  return overlayCredits(llmProviderCheck(), signal, "llm");
+}
+
+function imageCheck(signal: ProviderCreditSignal): HealthCheck {
+  return overlayCredits(imageProviderCheck(), signal, "images");
+}
+
+function llmProviderCheck(): HealthCheck {
+  const envVars = [
+    "LLM_PROVIDER",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
+    "OLLAMA_API_KEY",
+    "OLLAMA_MODEL",
+    "OMNIROUTE_API_KEY",
+    "OMNIROUTE_BASE_URL",
+    "OMNIROUTE_MODEL",
+  ];
   const requested = explicit("LLM_PROVIDER");
   if (requested === "openai" && !config.openaiKey) {
     return {
@@ -204,6 +235,26 @@ function llmCheck(): HealthCheck {
       level: "red",
       label: "Key missing",
       detail: "LLM_PROVIDER=openai but OPENAI_API_KEY is unset. The template writer is still in use.",
+      envVars,
+    };
+  }
+  if (requested === "ollama" && !config.ollama.apiKey) {
+    return {
+      id: "llm",
+      name: "LLM provider",
+      level: "red",
+      label: "Key missing",
+      detail: "LLM_PROVIDER=ollama but OLLAMA_API_KEY is unset. The template writer is still in use.",
+      envVars,
+    };
+  }
+  if (requested === "omniroute" && !config.omniroute.apiKey) {
+    return {
+      id: "llm",
+      name: "LLM provider",
+      level: "red",
+      label: "Key missing",
+      detail: "LLM_PROVIDER=omniroute but OMNIROUTE_API_KEY is unset. The template writer is still in use.",
       envVars,
     };
   }
@@ -217,35 +268,64 @@ function llmCheck(): HealthCheck {
       envVars,
     };
   }
+  if (config.llmProvider === "ollama") {
+    return {
+      id: "llm",
+      name: "LLM provider",
+      level: "green",
+      label: "Ready",
+      detail: `Ollama Cloud · ${config.ollama.model} · ${config.ollama.baseUrl}`,
+      envVars,
+    };
+  }
+  if (config.llmProvider === "omniroute") {
+    const base = config.omniroute.baseUrl;
+    const model = config.omniroute.model;
+    const ready = Boolean(base && model);
+    return {
+      id: "llm",
+      name: "LLM provider",
+      level: ready ? "green" : "yellow",
+      label: ready ? "Ready" : "Incomplete",
+      detail: `OmniRoute · ${model ?? "OMNIROUTE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
+      envVars,
+    };
+  }
   return {
     id: "llm",
     name: "LLM provider",
     level: "yellow",
     label: "Mock",
-    detail: "Deterministic template writer. Set LLM_PROVIDER=openai and OPENAI_API_KEY for generated copy.",
+    detail: "Deterministic template writer. Set LLM_PROVIDER to openai, ollama, or omniroute.",
     envVars,
   };
 }
 
-function imageCheck(): HealthCheck {
+function imageProviderCheck(): HealthCheck {
   const envVars = [
     "IMAGE_PROVIDER",
+    "IMAGE_API_KEY",
+    "IMAGE_BASE_URL",
+    "IMAGE_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENAI_IMAGE_MODEL",
+    "OMNIROUTE_API_KEY",
+    "OMNIROUTE_BASE_URL",
+    "OMNIROUTE_IMAGE_MODEL",
     "HIGGSFIELD_API_KEY",
     "HIGGSFIELD_API_SECRET",
     "REPLICATE_API_TOKEN",
   ];
   const provider = config.imageProvider;
   if (provider === "openai") {
-    if (!config.openaiKey) {
+    if (!config.imageApiKey) {
       return {
         id: "images",
         name: "Image provider",
         level: "red",
         label: "Key missing",
-        detail: "IMAGE_PROVIDER=openai but OPENAI_API_KEY is unset.",
+        detail: "IMAGE_PROVIDER=openai but IMAGE_API_KEY and OPENAI_API_KEY are unset.",
         envVars,
       };
     }
@@ -254,7 +334,30 @@ function imageCheck(): HealthCheck {
       name: "Image provider",
       level: "green",
       label: "Ready",
-      detail: `OpenAI-compatible · ${config.openaiImageModel} · ${config.openaiBaseUrl}`,
+      detail: `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`,
+      envVars,
+    };
+  }
+  if (provider === "omniroute") {
+    if (!config.omniroute.apiKey) {
+      return {
+        id: "images",
+        name: "Image provider",
+        level: "red",
+        label: "Key missing",
+        detail: "IMAGE_PROVIDER=omniroute but OMNIROUTE_API_KEY is unset.",
+        envVars,
+      };
+    }
+    const base = config.omniroute.baseUrl;
+    const model = config.omniroute.imageModel;
+    const ready = Boolean(base && model);
+    return {
+      id: "images",
+      name: "Image provider",
+      level: ready ? "green" : "yellow",
+      label: ready ? "Ready" : "Incomplete",
+      detail: `OmniRoute · ${model ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
       envVars,
     };
   }
@@ -303,7 +406,7 @@ function imageCheck(): HealthCheck {
     name: "Image provider",
     level: "yellow",
     label: "Mock",
-    detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, or replicate.",
+    detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, replicate, or omniroute. IMAGE_BASE_URL falls back to OPENAI_BASE_URL.",
     envVars,
   };
 }
@@ -393,6 +496,17 @@ function authCheck(): HealthCheck {
   };
 }
 
+function overlayImageRun(check: HealthCheck, run: ImageRunFact | null | undefined): HealthCheck {
+  const error = lastImageProviderError(run);
+  if (!error || check.label === "Key missing") return check;
+  return {
+    ...check,
+    level: run?.status === "warning" ? "yellow" : "red",
+    label: imageProviderStatusLabel(error),
+    detail: error,
+  };
+}
+
 /** Status for the command center. Reports env var names and modes only, never secret values. */
 export function connectionHealth(input: {
   etsyConnected: boolean;
@@ -400,16 +514,21 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
+  /** Latest design run. 402/credit errors turn the image check red or amber. */
+  providerCredits?: ProviderCreditSignal;
+  /** Latest design run. A 401, 404, or model error replaces the image check's Ready. */
+  imageRun?: ImageRunFact | null;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
+  const providerCredits = input.providerCredits ?? "ok";
   return [
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
     printifyCheck(input.webhooksRegistered),
     storageCheck(),
     pushCheck(),
-    llmCheck(),
-    imageCheck(),
+    llmCheck("ok"),
+    overlayImageRun(imageCheck(providerCredits), input.imageRun),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
     authCheck(),

@@ -19,7 +19,7 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   constructor(
     private tokens: EtsyTokens,
-    private saveTokens: (t: EtsyTokens) => Promise<void>,
+    private saveTokens: (t: EtsyTokens, expected?: EtsyTokens) => Promise<EtsyTokens | null | void>,
     private shopIdOverride?: string,
   ) {}
 
@@ -31,8 +31,24 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   private async authHeaders() {
     if (Date.now() > this.tokens.expiresAt) {
-      this.tokens = await refreshTokens(this.tokens.refreshToken);
-      await this.saveTokens(this.tokens);
+      if (!this.tokens.refreshToken) {
+        const refreshError = "Etsy refresh token missing";
+        this.tokens = { ...this.tokens, refreshError };
+        await this.saveTokens(this.tokens);
+        throw new Error(refreshError);
+      }
+      const current = this.tokens;
+      try {
+        const next = await refreshTokens(current.refreshToken);
+        this.tokens = { ...next, refreshError: null };
+        await this.saveTokens(this.tokens);
+      } catch (error) {
+        const status = error instanceof Error ? error.message.match(/\b(\d{3})\b/)?.[1] : undefined;
+        const refreshError = status ? `Etsy token refresh failed (HTTP ${status})` : "Etsy token refresh failed";
+        const failedTokens = { ...current, refreshError };
+        this.tokens = (await this.saveTokens(failedTokens, current)) ?? failedTokens;
+        throw new Error(refreshError);
+      }
     }
     const { apiKey, sharedSecret } = config.etsy;
     return {

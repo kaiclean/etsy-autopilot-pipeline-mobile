@@ -5,14 +5,19 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { listings, type StageName } from "@/db/schema";
+import { keywords, listings, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
-import { config } from "@/lib/config";
+import { config, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
+import { artRegenerationBlocker } from "@/lib/art-queue";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
+import { probeConnections } from "@/lib/provider-probe";
+import { getLastRuns } from "@/lib/queries";
 import { requireAuth } from "@/lib/session";
+import { resolveActiveShop } from "@/lib/shops";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import { PUSH_PREF_KEYS, type PushPrefs } from "@/lib/push-prefs";
 import { DEFAULT_CATALOG_DRAFT, getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
@@ -191,12 +196,46 @@ export async function savePushPrefs(patch: Partial<PushPrefs>) {
   return { ok: true as const, pushPrefs: next };
 }
 
-export async function triggerStage(stage: string) {
+export async function triggerStage(stage: string, opts?: { force?: boolean }) {
   await requireAuth();
   if (!isStage(stage)) return { ok: false as const, error: "Unknown stage" };
-  const run = await runStage(stage as StageName, "manual");
+  const force = stage === "daily" && opts?.force === true;
+  const run = await runStage(stage as StageName, "manual", { force });
   revalidateAll();
   return { ok: run.status !== "failed", status: run.status, summary: run.summary };
+}
+
+export async function testProviderConnections() {
+  await requireAuth();
+  return probeConnections();
+}
+
+/** Mark placeholder listings' keywords selected so the next Design run replaces the art. Does not publish. */
+export async function queueArtRegeneration(ids: number[]) {
+  await requireAuth();
+  const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
+  if (!unique.length) return { ok: false as const, queued: 0, error: "No listings selected." };
+  const design = (await getLastRuns()).find((stage) => stage.id === "design")?.run ?? null;
+  const blocker = artRegenerationBlocker(config.imageProvider, design);
+  if (blocker) return { ok: false as const, queued: 0, error: blocker };
+  const db = await getDb();
+  const shop = await resolveActiveShop(db);
+  const live = !isDemoMode(shop.etsyShopId ?? undefined);
+  const rows = await db.select().from(listings).where(inArray(listings.id, unique));
+  // A live shop never pays to redraw seeded demo rows.
+  const targets = rows.filter((row) => isPlaceholderUrl(row.imageUrl) && row.keywordId && row.shopId === shop.id && !(live && row.isDemo));
+  const keywordIds = [...new Set(targets.map((row) => row.keywordId).filter((id): id is number => typeof id === "number"))];
+  if (!keywordIds.length) return { ok: false as const, queued: 0, error: "None of those listings have placeholder art to regenerate." };
+  await db.update(keywords).set({ status: "selected", updatedAt: new Date() }).where(inArray(keywords.id, keywordIds));
+  await emit(db, {
+    type: "design.queued",
+    title: `${targets.length} listing${targets.length === 1 ? "" : "s"} queued for new art`,
+    body: "The next Design run will replace placeholder images. Nothing was published.",
+    severity: "info",
+    href: "/products",
+  });
+  revalidateAll();
+  return { ok: true as const, queued: targets.length };
 }
 
 export async function triggerFullPipeline() {

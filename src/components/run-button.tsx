@@ -5,10 +5,23 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { triggerFullPipeline, triggerStage } from "@/app/actions";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export function RunStageButton({ stage, label, disabled, className }: { stage: string; label?: string; disabled?: boolean; className?: string }) {
+export function RunStageButton({
+  stage,
+  label,
+  disabled,
+  className,
+  force = false,
+}: {
+  stage: string;
+  label?: string;
+  disabled?: boolean;
+  className?: string;
+  force?: boolean;
+}) {
   const [pending, start] = useTransition();
   const router = useRouter();
   return (
@@ -19,12 +32,13 @@ export function RunStageButton({ stage, label, disabled, className }: { stage: s
       className={cn("h-10 rounded-xl px-3.5", className)}
       onClick={() =>
         start(async () => {
-          const r = await triggerStage(stage);
+          const r = await triggerStage(stage, force ? { force: true } : undefined);
           router.refresh();
-          if (r.status === "skipped") toast.warning(`Skipped: ${r.summary}`);
-          else if (r.status === "warning") toast.warning(r.summary ?? "Finished with warnings");
-          else if (!r.ok) toast.error(r.summary ?? r.error ?? "Run failed");
-          else if (r.summary) toast.success(r.summary);
+          const summary = r.summary ? formatMaintenanceSummary(r.summary) : r.summary;
+          if (r.status === "skipped") toast.warning(`Skipped: ${summary}`);
+          else if (r.status === "warning") toast.warning(summary ?? "Finished with warnings");
+          else if (!r.ok) toast.error(summary ?? r.error ?? "Run failed");
+          else if (summary) toast.success(summary);
         })
       }
     >

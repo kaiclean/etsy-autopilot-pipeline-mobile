@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import type { JobRun, StageName } from "@/db/schema";
 import { describeCron, nextRun } from "@/lib/cron";
 import { relTime } from "@/lib/format";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -43,6 +44,7 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
   const [paused, setPausedOptimistic] = useOptimistic(settings.paused);
   const [, start] = useTransition();
   const [open, setOpen] = useState(false);
+  const [forceRun, setForceRun] = useState(false);
   const next = nextRun(settings.cron);
 
   return (
@@ -74,7 +76,7 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
       </div>
 
       <div className="mt-3 rounded-xl bg-muted/40 px-3 py-2.5 text-xs">
-        <p className="line-clamp-2 min-h-8 text-foreground/90">{last?.summary ?? "Not run yet."}</p>
+        <p className="line-clamp-2 min-h-8 text-foreground/90">{last?.summary ? formatMaintenanceSummary(last.summary) : "Not run yet."}</p>
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
           <span suppressHydrationWarning>Last: {last ? `${relTime(last.startedAt)} · ${last.trigger}` : "never"}</span>
           <span className="flex items-center gap-1">
@@ -85,11 +87,24 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
         </div>
       </div>
 
-      <div className="mt-3 flex gap-2">
-        <RunStageButton stage={id} label="Run now" disabled={killSwitch} className="flex-1" />
-        <Button variant="outline" size="lg" className="h-10 rounded-xl px-3.5" onClick={() => setOpen(true)}>
-          <ScrollText className="size-4" /> Logs
-        </Button>
+      <div className="mt-3 flex flex-col gap-2">
+        <div className="flex gap-2">
+          <RunStageButton stage={id} label="Run now" force={id === "daily" && forceRun} disabled={killSwitch} className="flex-1" />
+          <Button variant="outline" size="lg" className="h-10 rounded-xl px-3.5" onClick={() => setOpen(true)}>
+            <ScrollText className="size-4" /> Logs
+          </Button>
+        </div>
+        {id === "daily" && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-current"
+              checked={forceRun}
+              onChange={(event) => setForceRun(event.target.checked)}
+            />
+            Force (?force=1) even if today’s chain already succeeded
+          </label>
+        )}
       </div>
 
       <Drawer open={open} onOpenChange={setOpen} showSwipeHandle>
@@ -108,10 +123,10 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
                     {r.finishedAt ? ` · ${((new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()) / 1000).toFixed(1)}s` : ""}
                   </span>
                 </div>
-                <p className="mt-2 text-sm">{r.summary}</p>
+                <p className="mt-2 text-sm">{r.summary ? formatMaintenanceSummary(r.summary) : ""}</p>
                 {r.logs.length > 0 && (
                   <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                    {r.logs.map((l) => `${l.t.slice(11, 19)} ${l.level === "info" ? " " : l.level === "warn" ? "!" : "✗"} ${l.msg}`).join("\n")}
+                    {r.logs.map((l) => `${l.t.slice(11, 19)} ${l.level === "info" ? " " : l.level === "warn" ? "!" : "✗"} ${formatMaintenanceSummary(l.msg)}`).join("\n")}
                   </pre>
                 )}
               </div>

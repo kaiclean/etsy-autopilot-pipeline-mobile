@@ -4,12 +4,27 @@ import { NICHES } from "@/lib/niches";
 import { PROMISE_RULES } from "@/lib/delivery";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
+export type CompatibleChatOptions = {
+  name?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  missingKey?: string;
+};
+
 export class OpenAILLMProvider implements LLMProvider {
-  readonly name = "openai";
+  readonly name: string;
+  private readonly options?: CompatibleChatOptions;
+
+  constructor(options?: CompatibleChatOptions) {
+    this.name = options?.name ?? "openai";
+    this.options = options;
+  }
 
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {
-    const key = config.openaiKey;
-    if (!key) throw new Error("OPENAI_API_KEY missing");
+    const defaults = !this.options;
+    const key = defaults ? config.openaiKey : this.options?.apiKey;
+    if (!key) throw new Error(this.options?.missingKey ?? "OPENAI_API_KEY missing");
     const niche = NICHES[brief.niche];
     const product = brief.productType === "digital" ? "digital download" : `print-on-demand ${brief.podPreset}`;
     const system = [
@@ -25,12 +40,15 @@ export class OpenAILLMProvider implements LLMProvider {
     ].join("\n");
     const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}\nDeliverable: ${brief.productType === "digital" ? "one opaque PNG, instant download, no physical item" : "one made-to-order physical item, printed and shipped"}`;
 
-    const base = config.openaiBaseUrl;
+    const base = (defaults ? config.openaiBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
+    if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "LLM base URL missing");
+    const model = defaults ? config.openaiModel : this.options?.model;
+    if (!model) throw new Error(this.name === "omniroute" ? "OMNIROUTE_MODEL missing" : "OLLAMA_MODEL missing");
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: config.openaiModel,
+        model,
         response_format: { type: "json_object" },
         temperature: 0.7,
         messages: [
@@ -50,7 +68,7 @@ export class OpenAILLMProvider implements LLMProvider {
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
       body: String(parsed.body ?? ""),
       costChf,
-      provider: `openai:${config.openaiModel}`,
+      provider: `${this.name}:${model}`,
     };
   }
 }
