@@ -46,13 +46,15 @@ describe("artwork compositing and the art gate", () => {
     expect(placeholder.pass).toBe(false);
     expect(placeholder.reasons.map((reason) => reason.code)).toContain("placeholder_art");
 
-    const small = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 1024, printHeight: 1536, colorVariance: 30 });
+    const small = evaluateQualityGate({ ...base, podProvider: "printify:posterA3", imageUrl: "/api/mockup/posterA3?niche=christmas", artworkUrl: "https://cdn.example/art.png", printWidth: 1024, printHeight: 1536, colorVariance: 30 });
     expect(small.reasons.map((reason) => reason.code)).toContain("low_res_art");
+    const smallMug = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 1024, printHeight: 1536, colorVariance: 30 });
+    expect(smallMug.reasons.map((reason) => reason.code)).not.toContain("low_res_art");
 
     const flat = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 2400, printHeight: 3000, colorVariance: colorVariance(solid) });
     expect(flat.reasons.map((reason) => reason.code)).toContain("flat_art");
 
-    const ok = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 2400, printHeight: 3000, colorVariance: 40 });
+    const ok = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 3510, printHeight: 5265, colorVariance: 40 });
     expect(ok.pass).toBe(true);
   });
 });

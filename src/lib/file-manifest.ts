@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type { FileManifest } from "@/db/schema";
 import { config, publicAppUrl } from "./config";
-import { decodeDataUrl, MEDIA_KEY, readStoredObject } from "./object-storage";
+import { decodeDataUrl, MAX_ARTWORK_BYTES, MEDIA_KEY, readStoredObject } from "./object-storage";
 import { localAssetPng } from "./png";
 
 /** Same ceiling as object storage. Larger responses are not hashed. */
-export const MANIFEST_MAX_BYTES = 15 * 1024 * 1024;
+export const MANIFEST_MAX_BYTES = MAX_ARTWORK_BYTES;
 
 export type ManifestLoadDeps = {
   fetchImpl?: typeof fetch;

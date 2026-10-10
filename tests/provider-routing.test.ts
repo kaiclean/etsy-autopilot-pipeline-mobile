@@ -19,6 +19,7 @@ const ENV_KEYS = [
   "IMAGE_MODEL",
   "IMAGE_PROVIDER",
   "LLM_PROVIDER",
+  "VISION_MODEL",
   "OLLAMA_API_KEY",
   "OLLAMA_MODEL",
   "OMNIROUTE_API_KEY",
@@ -116,6 +117,58 @@ describe("image endpoint fallbacks", () => {
 });
 
 describe("provider selection", () => {
+  it("uses VISION_MODEL for the small-image assessment request", async () => {
+    process.env.VISION_MODEL = "vision-test-model";
+    const calls = installFetch(() => jsonResponse(200, {
+      choices: [{ message: { content: JSON.stringify({ score: 8, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }) } }],
+    }));
+    const provider = new OpenAILLMProvider({ name: "test", apiKey: "test-key", baseUrl: "https://llm.example/v1", model: "text-only" });
+    await provider.assessImage("https://cdn.example/preview.png");
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.model).toBe("vision-test-model");
+    expect(body.messages[1].content[1].image_url.url).toBe("https://cdn.example/preview.png");
+  });
+
+  it("parses and uploads a 30 MB RunPod response without storing base64 as its URL", async () => {
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "endpoint-test";
+    process.env.RUNPOD_COMFY_WORKFLOW = JSON.stringify({ "6": { inputs: { text: "{{PROMPT}}" } } });
+    const bytes = Buffer.alloc(30 * 1024 * 1024);
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    const calls = installFetch(() => jsonResponse(200, { status: "COMPLETED", output: { images: [{ type: "base64", data: bytes.toString("base64") }] } }));
+    const upload = vi.fn(async (received: Buffer) => {
+      expect(received.length).toBe(bytes.length);
+      expect(received.equals(bytes)).toBe(true);
+      return { url: "https://cdn.example/large.png", backend: "s3" as const, key: "large.png" };
+    });
+    const image = await new RunPodImageProvider({ upload }).generate({ prompt: "print", niche: "alpine", seed: 42, print: true });
+    expect(calls).toHaveLength(1);
+    expect(upload).toHaveBeenCalledOnce();
+    expect(image.url).toBe("https://cdn.example/large.png");
+  });
+
+  it("upscales the saved RunPod image without enlarging the diffusion latent", async () => {
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "endpoint-test";
+    process.env.RUNPOD_COMFY_WORKFLOW = JSON.stringify({
+      "6": { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } },
+      "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } },
+    });
+    const calls = installFetch(() => jsonResponse(200, { status: "COMPLETED", output: { images: [{ type: "base64", data: "cG5n" }] } }));
+    await new RunPodImageProvider().generate({ prompt: "clean art", niche: "gothic", seed: 1, print: true });
+    const workflow = JSON.parse(String(calls[0].init?.body)).input.workflow;
+    expect(workflow["9"].inputs.images).toEqual(["11", 0]);
+    expect(workflow["10"]).toMatchObject({
+      class_type: "UpscaleModelLoader",
+      inputs: { model_name: "4x-UltraSharp.pth" },
+    });
+    expect(workflow["11"]).toMatchObject({ class_type: "ImageUpscaleWithModel", inputs: { image: ["8", 0], upscale_model: ["10", 0] } });
+    await new RunPodImageProvider().generate({ prompt: "clean art", niche: "gothic", seed: 1 });
+    const digital = JSON.parse(String(calls[1].init?.body)).input.workflow;
+    expect(digital["9"].inputs.images).toEqual(["8", 0]);
+    expect(digital["10"]).toBeUndefined();
+  });
+
   it("runs a ComfyUI workflow on RunPod and extracts the generated image", async () => {
     process.env.IMAGE_PROVIDER = "runpod";
     process.env.RUNPOD_API_KEY = "runpod-test-key";

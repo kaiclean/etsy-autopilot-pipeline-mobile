@@ -6,6 +6,7 @@ export type ImageRequest = {
   seed: number;
   aspectRatio?: "2:3" | "1:1" | "4:5" | "16:9";
   label?: string;
+  print?: boolean;
 };
 
 export type GeneratedImage = {

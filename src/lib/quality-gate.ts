@@ -1,8 +1,9 @@
 import type { ProductType, ValidationIssue } from "@/db/schema";
-import { isPlaceholderUrl, MIN_COLOR_STDDEV, MIN_PRINT_EDGE } from "@/lib/art-quality";
+import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { POD_PRESETS, type PodPreset } from "@/lib/fees";
+import { PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
 
 /**
  * Competitive CHF bands already used by the shop (mug CHF 15–25, A3 poster CHF 18–33).
@@ -151,10 +152,10 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
   if (artChecked) {
     const width = input.printWidth ?? 0;
     const height = input.printHeight ?? 0;
-    if (Math.max(width, height) < MIN_PRINT_EDGE) {
+    if (preset === "posterA3" && (Math.min(width, height) < PRINT_WIDTH || Math.max(width, height) < PRINT_HEIGHT)) {
       const size = width && height ? `${width}×${height}px` : "an unknown size";
       reasons.push(
-        issue("image", "low_res_art", `Print file is ${size}. Print files need a long edge of at least ${MIN_PRINT_EDGE}px.`),
+        issue("image", "low_res_art", `Print file is ${size}. Print files need at least ${PRINT_WIDTH}×${PRINT_HEIGHT}px for an A3 poster at 300 dpi.`),
       );
     }
     if (input.colorVariance != null && input.colorVariance < MIN_COLOR_STDDEV) {
