@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, inArray, lte, notLike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { keywords, listings, orders } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
-import { realPublishedListingsWhere } from "@/lib/real-orders";
+import { notFakeReceiptWhere, realPublishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
@@ -90,7 +90,7 @@ export const runResearch: StageFn = async (ctx) => {
               lte(orders.createdAt, ctx.now),
             ),
           )
-          .where(and(realListing, inArray(listings.keywordId, performanceKeywordIds), notLike(orders.etsyReceiptId, "dry-%"), notLike(orders.etsyReceiptId, "demo-%")))
+          .where(and(realListing, inArray(listings.keywordId, performanceKeywordIds), notFakeReceiptWhere()))
           .groupBy(listings.keywordId)
       : [];
   const performance = new Map<number, { views: number; favorites: number; sales: number }>();

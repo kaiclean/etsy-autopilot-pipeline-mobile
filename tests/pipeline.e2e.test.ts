@@ -156,6 +156,8 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     expect(p.summary).toMatch(/Published 0, failed/);
     const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
     expect(after.status).toBe("pending_approval");
+    expect(after.publishAttemptCount).toBe(0);
+    expect(after.publishAttemptedAt).toBeNull();
   });
 
   it("daily AI cap stops paid image generation", async () => {

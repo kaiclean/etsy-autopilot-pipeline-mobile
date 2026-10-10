@@ -32,8 +32,9 @@ export function absoluteUrl(url: string) {
 
 /** Same stored error is not sent again until this long after the last attempt. */
 export const PUBLISH_RETRY_MS = 24 * 60 * 60 * 1000;
-// Both publish routes have a 300-second max duration; four times that leaves room for cleanup.
-export const PUBLISH_STALE_MS = 20 * 60 * 1000;
+// Both publish routes set maxDuration=300 seconds; keep four times that as recovery grace.
+const PUBLISH_ROUTE_MAX_DURATION_MS = 300 * 1000;
+export const PUBLISH_STALE_MS = 4 * PUBLISH_ROUTE_MAX_DURATION_MS;
 export const AMBIGUOUS_PUBLISH_ERROR_PREFIX = "Publish attempt ended without a recorded provider result.";
 export const AMBIGUOUS_PUBLISH_ERROR = `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} Check Etsy or Printify before retrying.`;
 
@@ -101,6 +102,30 @@ export const runPublish: StageFn = async (ctx) => {
       }
       continue;
     }
+    const check = validateListing(l);
+    if (!check.valid) {
+      const [returned] = await db
+        .update(listings)
+        .set({ status: "pending_approval", validation: check.issues, updatedAt: ctx.now })
+        .where(
+          and(
+            eq(listings.id, l.id),
+            eq(listings.status, l.status),
+            eq(listings.publishAttemptCount, l.publishAttemptCount),
+            eq(listings.updatedAt, l.updatedAt),
+            l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
+          ),
+        )
+        .returning({ id: listings.id });
+      if (!returned) {
+        skipped++;
+        log(`#${l.id} skipped: listing changed during validation`, "warn");
+        continue;
+      }
+      log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
+      failed++;
+      continue;
+    }
     const [claimed] = await db
       .update(listings)
       .set({ status: "publishing", publishAttemptedAt: ctx.now, publishAttemptCount: l.publishAttemptCount + 1, publishError: null, updatedAt: ctx.now })
@@ -109,6 +134,7 @@ export const runPublish: StageFn = async (ctx) => {
           eq(listings.id, l.id),
           eq(listings.status, l.status),
           eq(listings.publishAttemptCount, l.publishAttemptCount),
+          eq(listings.updatedAt, l.updatedAt),
           l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
         ),
       )
@@ -116,16 +142,6 @@ export const runPublish: StageFn = async (ctx) => {
     if (!claimed) {
       skipped++;
       log(`#${l.id} skipped: another publish run claimed it`, "warn");
-      continue;
-    }
-    const check = validateListing(l);
-    if (!check.valid) {
-      await db
-        .update(listings)
-        .set({ status: "pending_approval", validation: check.issues, updatedAt: ctx.now })
-        .where(eq(listings.id, l.id));
-      log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
-      failed++;
       continue;
     }
     try {

@@ -76,9 +76,9 @@ export async function getCockpitAlerts() {
 
 type RangeKey = "today" | "7d" | "30d";
 
-async function loadWindow(days: number) {
+async function loadWindow(days: number, now = new Date()) {
   const db = await getDb();
-  const since = new Date(Date.now() - days * DAY);
+  const since = new Date(now.getTime() - days * DAY);
   const [o, c, s] = await Promise.all([
     db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere())),
     db.select().from(costs).where(and(gte(costs.createdAt, since), visible(costs.isDemo))),
@@ -311,12 +311,12 @@ export async function getOrders() {
   return { rows, summary };
 }
 
-export async function getAnalytics() {
+export async function getAnalytics(now = new Date()) {
   const db = await getDb();
-  const { orders: o, costs: c, stats } = await loadWindow(30);
+  const { orders: o, costs: c, stats } = await loadWindow(30, now);
   const allListings = await analyticsListingsQuery(db);
   const listingById = new Map(allListings.map((l) => [l.id, l]));
-  const days = lastNDays(30);
+  const days = lastNDays(30, now);
 
   const series = days.map((date) => ({ date, revenue: 0, profit: 0, orders: 0, views: 0, favorites: 0 }));
   const idx = new Map(days.map((d, i) => [d, i]));
@@ -373,7 +373,7 @@ export async function getAnalytics() {
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
   const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads_actual + costByKind.other;
   const publishedListings = allListings.filter(isRealPublishedListing);
-  const analyticsFreshCutoff = Date.now() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
+  const analyticsFreshCutoff = now.getTime() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
   const freshAnalyticsListings = publishedListings.filter(
     (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,
   );
