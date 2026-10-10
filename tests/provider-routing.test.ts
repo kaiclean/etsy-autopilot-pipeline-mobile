@@ -120,7 +120,7 @@ describe("provider selection", () => {
   it("uses VISION_MODEL for the small-image assessment request", async () => {
     process.env.VISION_MODEL = "vision-test-model";
     const calls = installFetch(() => jsonResponse(200, {
-      choices: [{ message: { content: JSON.stringify({ score: 8, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }) } }],
+      choices: [{ message: { content: JSON.stringify({ score: 8, defects: [], text: false, empty: false, frameOnly: false, artifacts: false }) } }],
     }));
     const provider = new OpenAILLMProvider({ name: "test", apiKey: "test-key", baseUrl: "https://llm.example/v1", model: "text-only" });
     await provider.assessImage("https://cdn.example/preview.png");

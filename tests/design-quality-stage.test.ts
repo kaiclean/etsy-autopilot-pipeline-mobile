@@ -7,19 +7,81 @@ import { setImageProviderForTests } from "@/adapters/image";
 import { setLLMProviderForTests } from "@/adapters/llm";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
-import { designs, keywords, listings } from "@/db/schema";
-import { rgbPng } from "@/lib/png";
+import { designBriefs, designs, keywords, listings } from "@/db/schema";
+import { encodeRgbPng, rgbPng } from "@/lib/png";
+import { MockLLMProvider } from "@/adapters/llm/mock";
+import { reassessDesigns } from "@/pipeline/reassess-designs";
 import { runStage } from "@/pipeline/runner";
 
 const originalDemo = process.env.DEMO_MODE;
 afterEach(() => {
   setImageProviderForTests(null);
   setLLMProviderForTests(null);
+  vi.unstubAllGlobals();
   if (originalDemo === undefined) delete process.env.DEMO_MODE;
   else process.env.DEMO_MODE = originalDemo;
 });
 
 describe("live visual gate", () => {
+  it("accepts praise notes in Design and Listing and holds unscored legacy art for review", async () => {
+    process.env.DEMO_MODE = "false";
+    const client = new PGlite("memory://");
+    try {
+      const db = drizzle(client, { schema }) as DB;
+      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      await db.insert(keywords).values({ phrase: "swiss alps wall art boho neutral", niche: "alpine", source: "test", status: "selected", isDemo: false });
+      const rgb = Uint8Array.from({ length: 12 * 18 * 3 }, (_, index) => index % 2 ? 220 : 30);
+      const bytes = encodeRgbPng({ width: 12, height: 18, rgb });
+      const image = "https://cdn.example/alpine.png";
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(bytes))));
+      setImageProviderForTests({ name: "test", estimatedCostChf: 0, generate: async () => ({ url: image, costChf: 0, provider: "test" }) });
+      const writer = new MockLLMProvider();
+      const assessImage = vi.fn(async () => ({
+        score: 9, defects: [], notes: ["Clean illustration", "Strong composition"],
+        text: false, empty: false, frameOnly: false, artifacts: false,
+      }));
+      setLLMProviderForTests({ name: "test", assessImage, writeListing: writer.writeListing.bind(writer) });
+      await runStage("design", "manual", { db, random: () => 0.1 });
+      const [passing] = await db.select().from(designs);
+      expect(passing.status).toBe("generated");
+      expect(passing.qualityScore).toBe(9);
+      expect(passing.qualityReasons).toEqual([]);
+      await db.insert(designs).values({ niche: "alpine", prompt: "legacy", provider: "test", imageUrl: image, isDemo: false });
+      await runStage("listing", "manual", { db });
+      const rows = await db.select().from(designs);
+      expect(rows.find((row) => row.id === passing.id)?.status).toBe("listed");
+      expect(rows.find((row) => row.prompt === "legacy")?.status).toBe("needs_review");
+      expect((await db.select().from(listings)).length).toBeGreaterThan(0);
+      expect(assessImage).toHaveBeenCalledOnce();
+    } finally { await client.close(); }
+  });
+
+  it("explicitly re-assesses unscored rejected designs without approving listings", async () => {
+    const client = new PGlite("memory://");
+    try {
+      const db = drizzle(client, { schema }) as DB;
+      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      const [keyword] = await db.insert(keywords).values({ phrase: "legacy alpine", niche: "alpine", source: "test", isDemo: false }).returning();
+      await db.insert(designBriefs).values({ keywordId: keyword.id, niche: "alpine", concept: "mountain", prompt: "legacy", productType: "digital", dayKey: "2026-10-10" });
+      const rgb = Uint8Array.from({ length: 12 * 18 * 3 }, (_, index) => index % 2 ? 220 : 30);
+      const image = `data:image/png;base64,${encodeRgbPng({ width: 12, height: 18, rgb }).toString("base64")}`;
+      await db.insert(designs).values([68, 69, 70, 71, 72].map((id) => ({
+        id, keywordId: keyword.id, niche: "alpine" as const, prompt: "legacy", provider: "test",
+        imageUrl: image, qualityScore: null, status: "rejected" as const, qualityReasons: ["No passing image quality assessment."], isDemo: false,
+      })));
+      const vision = { name: "test", writeListing: vi.fn(), assessImage: vi.fn(async () => ({
+        score: 8, defects: [], notes: ["Balanced composition"], text: false, empty: false, frameOnly: false, artifacts: false,
+      })) };
+      const ids = [68, 69, 70, 71, 72];
+      expect(await reassessDesigns(db, ids, vision)).toHaveLength(5);
+      expect((await db.select().from(designs))[0].status).toBe("rejected");
+      await reassessDesigns(db, ids, vision, true);
+      expect((await db.select().from(designs)).every((row) => row.status === "generated" && row.qualityScore === 8 && row.qualityReasons.length === 0)).toBe(true);
+      expect(await reassessDesigns(db, ids, vision, true)).toEqual([]);
+      expect(await db.select().from(listings)).toHaveLength(0);
+    } finally { await client.close(); }
+  });
+
   it.each(["unsupported", "failed"])("holds artwork for review when vision is %s", async (caseName) => {
     process.env.DEMO_MODE = "false";
     const client = new PGlite("memory://");

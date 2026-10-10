@@ -14,7 +14,8 @@
     "db:clear-fake-orders": "tsx src/db/clear-fake-orders.ts",
     "images:backfill": "tsx src/db/backfill-image-urls.ts",
     "backfill:etsy-ids": "tsx src/pipeline/backfill-etsy-ids.ts",
-    "vapid:generate": "node scripts/generate-vapid-keys.mjs"
+    "vapid:generate": "node scripts/generate-vapid-keys.mjs",
+    "designs:assess": "tsx src/db/reassess-designs.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1143.0",

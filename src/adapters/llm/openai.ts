@@ -38,7 +38,7 @@ export class OpenAILLMProvider implements LLMProvider {
         model,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: "Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), reasons (short strings), text (true for any letters, fake signature, stamp or watermark), empty (true for large empty/solid areas), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels or murky contrast). Be strict; do not assume defects are absent." },
+          { role: "system", content: "Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), defects (short strings listing only concrete problems; empty array when none), notes (informational strengths or commentary, never defects), text (true for any letters, fake signature, stamp or watermark), empty (true only for large blank/solid regions with no design intent; intentional negative space in minimalist art is NOT empty), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels or murky contrast). Use JSON booleans for flags. Be strict; do not assume defects are absent." },
           { role: "user", content: [{ type: "text", text: "Assess this image for sale as printed art." }, { type: "image_url", image_url: { url } }] },
         ],
       }),
@@ -47,14 +47,26 @@ export class OpenAILLMProvider implements LLMProvider {
     if (!res.ok) throw new Error(`Vision LLM ${res.status}`);
     const json = await res.json();
     const parsed = parseListingJson(json?.choices?.[0]?.message?.content) as Record<string, unknown>;
-    if (!Number.isInteger(parsed.score) || Number(parsed.score) < 1 || Number(parsed.score) > 10 ||
-        !Array.isArray(parsed.reasons) || !parsed.reasons.every((s) => typeof s === "string") ||
-        ["text", "empty", "frameOnly", "artifacts"].some((field) => typeof parsed[field] !== "boolean")) {
+    const score = typeof parsed.score === "string" && /^(?:[1-9]|10)$/.test(parsed.score) ? Number(parsed.score) : parsed.score;
+    const flag = (value: unknown) => value === "true" ? true : value === "false" ? false : value;
+    const flags = { text: flag(parsed.text), empty: flag(parsed.empty), frameOnly: flag(parsed.frameOnly), artifacts: flag(parsed.artifacts) };
+    const strings = (value: unknown) => Array.isArray(value) && value.every((s) => typeof s === "string");
+    if (!Number.isInteger(score) || Number(score) < 1 || Number(score) > 10 ||
+        !strings(parsed.defects) ||
+        (parsed.notes !== undefined && !strings(parsed.notes)) ||
+        (parsed.strengths !== undefined && !strings(parsed.strengths)) ||
+        Object.values(flags).some((value) => typeof value !== "boolean")) {
       throw new Error("Vision LLM returned an invalid assessment");
     }
     const usage = json.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
     const costChf = (((Number(usage.prompt_tokens) || 0) * 0.4 + (Number(usage.completion_tokens) || 0) * 1.6) / 1_000_000) * 0.83;
-    return { ...(parsed as VisionAssessment), reasons: (parsed.reasons as string[]).slice(0, 5).map((reason) => reason.slice(0, 200)), costChf };
+    const bounded = (values: string[]) => values.slice(0, 5).map((value) => value.slice(0, 200));
+    return {
+      score: score as number, ...flags as Pick<VisionAssessment, "text" | "empty" | "frameOnly" | "artifacts">,
+      defects: bounded(parsed.defects as string[]),
+      notes: bounded([...(parsed.notes as string[] ?? []), ...(parsed.strengths as string[] ?? [])]),
+      costChf,
+    };
   }
 
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {

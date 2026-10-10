@@ -3,7 +3,7 @@ import { getImageProvider } from "@/adapters/image";
 import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
 import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
-import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 import { assessArtwork } from "@/lib/design-quality";
 import { productKeyword } from "@/lib/product-title";
 import { persistableImageUrl } from "@/lib/compact-image-url";
@@ -203,9 +203,7 @@ export const runDesign: StageFn = async (ctx) => {
         }
         const check = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { pass: true, reasons: [] }
-          : assessArtwork(assessment, prepared.width, prepared.height, print && img.provider === "runpod");
-        if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV && !ctx.demo) check.reasons.push("Flat artwork.");
-        check.pass = check.reasons.length === 0;
+          : assessArtwork(assessment, prepared.width, prepared.height, print && img.provider === "runpod", ctx.demo ? null : prepared.variance);
         rejected = { img, prepared, score: assessment.score, reasons: check.reasons };
         if (check.pass) {
           accepted = rejected;

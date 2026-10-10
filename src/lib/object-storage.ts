@@ -1,10 +1,12 @@
 import { config, publicAppUrl, storageBackend } from "@/lib/config";
+import { isSafeArtworkUrl } from "@/lib/art-quality";
 
 export type StoredObject = { url: string; key: string; backend: "s3" | "blob" };
 
 export type MaterializeDeps = {
   upload?: (bytes: Buffer, contentType: string) => Promise<StoredObject | null>;
   fetchImpl?: typeof fetch;
+  requireStored?: boolean;
 };
 
 const DATA_URL = /^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/;
@@ -55,10 +57,10 @@ async function s3Client() {
   });
 }
 
-async function urlForStoredKey(key: string): Promise<string> {
+async function urlForStoredKey(key: string, permanent = false): Promise<string> {
   const s = config.storage;
   if (s.publicBaseUrl) return `${s.publicBaseUrl}/${key}`;
-  if (storageBackend() === "s3" && s.urlMode === "signed") {
+  if (storageBackend() === "s3" && s.urlMode === "signed" && !permanent) {
     const { GetObjectCommand } = await import("@aws-sdk/client-s3");
     const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
     return getSignedUrl(await s3Client(), new GetObjectCommand({ Bucket: s.bucket, Key: key }), { expiresIn: 60 * 60 * 24 * 7 });
@@ -67,7 +69,7 @@ async function urlForStoredKey(key: string): Promise<string> {
 }
 
 /** Upload image bytes. S3 wins when its credentials and bucket are set; otherwise Vercel Blob. */
-export async function uploadImageBytes(bytes: Buffer, contentType: string): Promise<StoredObject | null> {
+export async function uploadImageBytes(bytes: Buffer, contentType: string, permanent = false): Promise<StoredObject | null> {
   const backend = storageBackend();
   if (backend === "none") return null;
   if (bytes.length > MAX_ARTWORK_BYTES) throw new Error("Generated image is larger than 50MB");
@@ -83,7 +85,7 @@ export async function uploadImageBytes(bytes: Buffer, contentType: string): Prom
         CacheControl: "public, max-age=31536000, immutable",
       }),
     );
-    return { url: await urlForStoredKey(key), key, backend: "s3" };
+    return { url: await urlForStoredKey(key, permanent), key, backend: "s3" };
   }
   const { put } = await import("@vercel/blob");
   const blob = await put(key, bytes, {
@@ -102,28 +104,48 @@ export async function uploadImageBytes(bytes: Buffer, contentType: string): Prom
  * With no storage configured, the original URL is returned.
  */
 export async function materializeImageUrl(url: string, deps: MaterializeDeps = {}): Promise<string> {
-  if (isOwnStorageUrl(url)) return url;
+  if (isOwnStorageUrl(url) && !deps.requireStored) return url;
   const remote = /^https?:\/\//i.test(url);
   const data = url.startsWith("data:");
-  if (!remote && !data) return url;
-  if (storageBackend() === "none" && !deps.upload) return url;
+  if (!remote && !data) {
+    if (deps.requireStored) throw new Error("Temporary artwork URL is invalid");
+    return url;
+  }
+  if (storageBackend() === "none" && !deps.upload) {
+    if (deps.requireStored) throw new Error("App object storage is required for temporary RunPod images");
+    return url;
+  }
 
   let bytes: Buffer;
   let contentType: string;
   if (data) {
     const decoded = decodeDataUrl(url);
-    if (!decoded) return url;
+    if (!decoded) {
+      if (deps.requireStored) throw new Error("Artwork image data was empty");
+      return url;
+    }
     bytes = decoded.bytes;
     contentType = decoded.contentType;
   } else {
-    const res = await (deps.fetchImpl ?? fetch)(url);
-    if (!res.ok) return url;
+    if (!isSafeArtworkUrl(url)) throw new Error("Unsafe artwork download URL");
+    const res = await (deps.fetchImpl ?? fetch)(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) {
+      if (deps.requireStored) throw new Error(`Artwork download ${res.status}`);
+      return url;
+    }
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0) return url;
+    if (buf.length === 0) {
+      if (deps.requireStored) throw new Error("Artwork download was empty");
+      return url;
+    }
     bytes = buf;
     contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
   }
-  const stored = await (deps.upload ?? uploadImageBytes)(bytes, contentType);
+  if (bytes.length > MAX_ARTWORK_BYTES) throw new Error("Generated image is larger than 50MB");
+  const stored = deps.upload
+    ? await deps.upload(bytes, contentType)
+    : await uploadImageBytes(bytes, contentType, deps.requireStored);
+  if (deps.requireStored && (!stored || stored.url === url)) throw new Error("Artwork upload did not return a permanent URL");
   return stored?.url ?? url;
 }
 
