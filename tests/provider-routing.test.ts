@@ -112,6 +112,32 @@ describe("image endpoint fallbacks", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("classifies an OpenRouter endpoint only when both image routes return 404", async () => {
+    const calls = installFetch(() => jsonResponse(404, "path not found"));
+    const provider = new OpenAIImageProvider({
+      apiKey: "image-test-key", baseUrl: "https://openrouter.ai/api/v1", model: "painter",
+    });
+    await expect(provider.generate({ prompt: "alpine poster", niche: "alpine", seed: 1 }))
+      .rejects.toBeInstanceOf(ImageProviderConfigurationError);
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([401, 500, 200])("preserves an earlier HTTP %s failure when the OpenRouter fallback returns 404", async (status) => {
+    const calls = installFetch((index) => index === 0
+      ? jsonResponse(status, status === 200 ? { data: [] } : "original provider failure")
+      : jsonResponse(404, "fallback route missing"));
+    const provider = new OpenAIImageProvider({
+      apiKey: "image-test-key", baseUrl: "https://openrouter.ai/api/v1", model: "painter",
+    });
+    const error = await provider.generate({ prompt: "alpine poster", niche: "alpine", seed: 1 })
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ImageProviderConfigurationError);
+    expect((error as Error).message).toContain(status === 200 ? "/images: no image in response" : `/images ${status}: original provider failure`);
+    expect((error as Error).message).toContain("/images/generations 404");
+    expect(calls).toHaveLength(2);
+  });
+
   it("rejects invalid image base URLs without sending a request", async () => {
     const calls = installFetch(() => jsonResponse(200, {}));
     for (const baseUrl of ["not-a-url", "ftp://images.example/v1"]) {

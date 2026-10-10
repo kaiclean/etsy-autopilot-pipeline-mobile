@@ -2,17 +2,21 @@ export type StageYield = "success" | "warning" | "failed";
 
 export class ImageProviderConfigurationError extends Error {}
 
-export function imageEndpointConfigurationError(baseUrl: string): string | null {
+export function imageEndpointConfigurationError(baseUrl: string, provider: "openai" | "omniroute" = "openai"): string | null {
+  const [baseSetting, keySetting, modelSetting] = provider === "omniroute"
+    ? ["OMNIROUTE_BASE_URL", "OMNIROUTE_API_KEY", "OMNIROUTE_IMAGE_MODEL"]
+    : ["IMAGE_BASE_URL", "IMAGE_API_KEY", "IMAGE_MODEL"];
   let hostname: string;
   try {
     const url = new URL(baseUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") return "Image provider base URL must use HTTP or HTTPS.";
     hostname = url.hostname;
   } catch {
-    return "Image provider base URL is invalid. Set IMAGE_BASE_URL to the provider's API base URL.";
+    return `Image provider base URL is invalid. Set ${baseSetting} to the provider's API base URL.`;
   }
   if (hostname !== "ollama.com" && !hostname.endsWith(".ollama.com")) return null;
-  return "Ollama Cloud has no image API. Set IMAGE_BASE_URL to an image-capable provider, IMAGE_API_KEY to that provider's key, and IMAGE_MODEL to its image model. Keep OPENAI_BASE_URL for text only.";
+  const textGuidance = provider === "omniroute" ? "" : " Keep OPENAI_BASE_URL for text only.";
+  return `Ollama Cloud has no image API. Set ${baseSetting} to an image-capable provider, ${keySetting} to that provider's key, and ${modelSetting} to its image model.${textGuidance}`;
 }
 
 /** OpenRouter/OpenAI 402, the provider body, and the dashboard wording. */

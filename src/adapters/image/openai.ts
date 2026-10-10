@@ -34,7 +34,7 @@ export class OpenAIImageProvider implements ImageProvider {
       aspectRatio === "1:1" ? "1024x1024" : aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
     const base = (defaults ? config.imageBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
     if (!base) throw new ImageProviderConfigurationError(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "IMAGE_BASE_URL missing");
-    const configurationError = imageEndpointConfigurationError(base);
+    const configurationError = imageEndpointConfigurationError(base, this.name === "omniroute" ? "omniroute" : "openai");
     if (configurationError) throw new ImageProviderConfigurationError(configurationError);
     const model = defaults ? config.imageModel : this.options?.model;
     if (!model) throw new ImageProviderConfigurationError(this.name === "omniroute" ? "OMNIROUTE_IMAGE_MODEL missing" : "IMAGE_MODEL missing");
@@ -58,18 +58,18 @@ export class OpenAIImageProvider implements ImageProvider {
 
     // Prefer OpenRouter dedicated /images when on OpenRouter; fall back to /images/generations.
     const paths = isOpenRouter ? ["/images", "/images/generations"] : ["/images/generations"];
-    let lastErr = "";
-    let lastStatus = 0;
+    const errors: string[] = [];
+    const statuses: number[] = [];
     for (const path of paths) {
       const res = await fetch(`${base}${path}`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
       });
+      statuses.push(res.status);
       if (!res.ok) {
-        lastStatus = res.status;
         const text = (await res.text()).slice(0, 300);
-        lastErr = `${path} ${res.status}: ${text}`;
+        errors.push(`${path} ${res.status}: ${text}`);
         if (res.status === 402 || isProviderCreditsError(text)) break;
         continue;
       }
@@ -82,8 +82,7 @@ export class OpenAIImageProvider implements ImageProvider {
       const url =
         item?.url ?? (item?.b64_json ? `data:${mime};base64,${item.b64_json}` : undefined);
       if (!url) {
-        lastStatus = 0;
-        lastErr = `${path}: no image in response`;
+        errors.push(`${path}: no image in response`);
         continue;
       }
       const costUsd = typeof json.usage?.cost === "number" ? json.usage.cost : undefined;
@@ -91,11 +90,12 @@ export class OpenAIImageProvider implements ImageProvider {
       const costChf = costUsd != null ? Math.max(costUsd, 0.01) : this.estimatedCostChf;
       return withStoredUrl({ url, costChf, provider: this.name });
     }
-    if (lastStatus === 404) {
+    const detail = errors.join("; ") || "unknown";
+    if (statuses.length > 0 && statuses.every((status) => status === 404)) {
       throw new ImageProviderConfigurationError(
-        `OpenAI images failed: ${lastErr}. Check the image provider's base URL and model (${this.name === "omniroute" ? "OMNIROUTE_BASE_URL and OMNIROUTE_IMAGE_MODEL" : "IMAGE_BASE_URL and IMAGE_MODEL"}); a chat-compatible endpoint may not support image generation.`,
+        `OpenAI images failed: ${detail}. Check the image provider's base URL and model (${this.name === "omniroute" ? "OMNIROUTE_BASE_URL and OMNIROUTE_IMAGE_MODEL" : "IMAGE_BASE_URL and IMAGE_MODEL"}); a chat-compatible endpoint may not support image generation.`,
       );
     }
-    throw new Error(`OpenAI images failed: ${lastErr || "unknown"}`);
+    throw new Error(`OpenAI images failed: ${detail}`);
   }
 }
