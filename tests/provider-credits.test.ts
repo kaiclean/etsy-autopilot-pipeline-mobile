@@ -9,7 +9,7 @@ import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { jobRuns, keywords, shops } from "@/db/schema";
 import { buildCockpitAlerts } from "@/lib/alerts";
-import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
+import { ImageProviderConfigurationError, isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { runStage } from "@/pipeline/runner";
 
 const push = vi.hoisted(() => {
@@ -113,6 +113,24 @@ describe("image credit alerts", () => {
 });
 
 describe("design credit failures", () => {
+  it("stops on an image endpoint configuration failure without cooling down keywords", async () => {
+    const db = await memoryDb();
+    const shop = await omnishop(db);
+    await selectedKeywords(db, shop.id);
+    const generate = vi.fn(async () => {
+      throw new ImageProviderConfigurationError("Image endpoint 404. Set IMAGE_BASE_URL and IMAGE_MODEL.");
+    });
+    setImageProviderForTests({ name: "test", estimatedCostChf: 0, generate });
+
+    const run = await runStage("design", "manual", { db, now: new Date(), random: () => 0.2 });
+    expect(run.status).toBe("failed");
+    expect(run.summary).toContain("IMAGE_BASE_URL");
+    expect(generate).toHaveBeenCalledTimes(1);
+    const rows = await db.select().from(keywords).where(eq(keywords.shopId, shop.id));
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.designFailures === 0 && row.status === "selected")).toBe(true);
+  });
+
   it("fails the daily cron after one 402 and sends one push", async () => {
     const db = await memoryDb();
     const shop = await omnishop(db);

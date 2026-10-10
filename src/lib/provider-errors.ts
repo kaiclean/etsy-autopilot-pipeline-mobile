@@ -1,5 +1,20 @@
 export type StageYield = "success" | "warning" | "failed";
 
+export class ImageProviderConfigurationError extends Error {}
+
+export function imageEndpointConfigurationError(baseUrl: string): string | null {
+  let hostname: string;
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return "Image provider base URL must use HTTP or HTTPS.";
+    hostname = url.hostname;
+  } catch {
+    return "Image provider base URL is invalid. Set IMAGE_BASE_URL to the provider's API base URL.";
+  }
+  if (hostname !== "ollama.com" && !hostname.endsWith(".ollama.com")) return null;
+  return "Ollama Cloud has no image API. Set IMAGE_BASE_URL to an image-capable provider, IMAGE_API_KEY to that provider's key, and IMAGE_MODEL to its image model. Keep OPENAI_BASE_URL for text only.";
+}
+
 /** OpenRouter/OpenAI 402, the provider body, and the dashboard wording. */
 export function isProviderCreditsError(message: string) {
   return /\b402\b|insufficient credits|out of credits/i.test(message);

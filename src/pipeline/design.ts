@@ -5,7 +5,7 @@ import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
-import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
+import { ImageProviderConfigurationError, isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile } from "./artwork";
@@ -79,6 +79,7 @@ export const runDesign: StageFn = async (ctx) => {
   let briefed = 0;
   let failures = 0;
   let creditsStopped = false;
+  let configurationStopped: string | null = null;
   const noteFailure = async (kw: (typeof queue)[number]) => {
     const next = kw.designFailures + 1;
     kw.designFailures = next;
@@ -213,8 +214,13 @@ export const runDesign: StageFn = async (ctx) => {
     } catch (e) {
       const message = (e as Error).message;
       failures++;
-      await noteFailure(kw);
       log(`Generation failed for “${kw.phrase}”: ${message}`, "error");
+      if (e instanceof ImageProviderConfigurationError) {
+        configurationStopped = message;
+        log("Image provider configuration error. Stopping this run; keywords remain available for retry.", "error");
+        break;
+      }
+      await noteFailure(kw);
       if (isProviderCreditsError(message)) {
         creditsStopped = true;
         log("Image provider out of credits. Stopping this run so the provider is not called again.", "error");
@@ -228,5 +234,5 @@ export const runDesign: StageFn = async (ctx) => {
   const summary = `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
   const status = yieldStatus(made, failures);
   if (status === "success") return summary;
-  return stageResult(creditsStopped ? `Image provider out of credits. ${summary}` : summary, status);
+  return stageResult(configurationStopped ? `${configurationStopped} ${summary}` : creditsStopped ? `Image provider out of credits. ${summary}` : summary, status);
 };

@@ -1,5 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
-import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
+import { imageEndpointConfigurationError, imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -329,12 +329,13 @@ function imageProviderCheck(): HealthCheck {
         envVars,
       };
     }
+    const configurationError = imageEndpointConfigurationError(config.imageBaseUrl);
     return {
       id: "images",
       name: "Image provider",
-      level: "green",
-      label: "Ready",
-      detail: `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`,
+      level: configurationError ? "red" : "green",
+      label: configurationError ? "Invalid endpoint" : "Ready",
+      detail: configurationError ?? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`,
       envVars,
     };
   }
