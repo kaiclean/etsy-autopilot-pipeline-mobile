@@ -336,6 +336,43 @@ describe("publish retry and dashboard", () => {
     expect(createAndPublish).toHaveBeenCalledTimes(1);
   });
 
+  it("does not overwrite a newer Etsy draft or upload files after losing its claim", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const [row] = await db.insert(listings).values({
+      shopId: shop.id, niche: "alpine", productType: "digital",
+      title: "Swiss Alps wall art printable poster", tags: TAGS,
+      description: withDisclosures("Swiss alpine printable artwork for a calm home.", "digital"),
+      imageUrl: "/api/preview/alpine", deliveryUrl: "/api/artwork/alpine",
+      fileManifest: { delivery: { filename: "art.png", width: 3000, height: 4000, bytes: 1000, sha256: "a".repeat(64) } },
+      priceChf: 8.9, netChf: 5, marginPct: 56, status: "approved", isDemo: true,
+    }).returning();
+    const uploadListingImage = vi.fn();
+    const uploadListingFile = vi.fn();
+    adapters.getEtsyAdapter.mockResolvedValue({
+      mode: "dry-run", uploadListingImage, uploadListingFile,
+      createDraftListing: vi.fn(async () => {
+        await db.update(listings).set({
+          status: "publishing", publishAttemptCount: 2, etsyListingId: "dry-new-draft",
+        }).where(eq(listings.id, row.id));
+        return { listingId: "dry-stale-draft" };
+      }),
+    });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run" });
+    const result = asStageResult(await runPublish({
+      db, shopId: shop.id, demo: true, trigger: "cron", random: () => 0,
+      now: new Date("2026-10-07T06:00:00.000Z"), log: () => {},
+    }));
+    const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
+    expect(after.etsyListingId).toBe("dry-new-draft");
+    expect(after.status).toBe("publishing");
+    expect(after.publishAttemptCount).toBe(2);
+    expect(after.publishError).toBeNull();
+    expect(uploadListingImage).not.toHaveBeenCalled();
+    expect(uploadListingFile).not.toHaveBeenCalled();
+    expect(result.summary).toContain("Published 0, failed 0");
+  });
+
   it("shows the publish error on the products page and the alert rail", () => {
     const alerts = buildCockpitAlerts({
       cronRuns: [],

@@ -177,7 +177,8 @@ export const runPublish: StageFn = async (ctx) => {
           const built = await buildFileManifest(l.deliveryUrl, l.imageUrl);
           if (manifestIsComplete(built)) {
             manifest = built;
-            await db.update(listings).set({ fileManifest: manifest, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+            const [saved] = await db.update(listings).set({ fileManifest: manifest, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+            if (!saved) throw new Error("Publish claim changed before recording the file manifest");
           }
         }
         const refusal = digitalDraftRefusal({
@@ -199,7 +200,8 @@ export const runPublish: StageFn = async (ctx) => {
             type: "download",
           });
           listingId = created.listingId;
-          await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+          const [saved] = await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+          if (!saved) throw new Error("Publish claim changed before recording the Etsy draft");
         }
         // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
         await etsy.uploadListingImage(listingId, absoluteUrl(l.imageUrl));
@@ -226,7 +228,8 @@ export const runPublish: StageFn = async (ctx) => {
         });
         const mockup = await fetchPrintifyMockupUrl(result.productId);
         if (mockup) {
-          await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(eq(listings.id, l.id));
+          const [saved] = await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+          if (!saved) throw new Error("Publish claim changed before recording the mockup");
         }
         printifyProductId = result.productId;
         podBlueprintId = result.blueprintId ?? null;
