@@ -415,7 +415,7 @@ export function repairTrivialCopy<T extends ListingDraft>(
     for (let i = 0; i < words.length - 1; i++) rememberTag(tags, seen, `${words[i]} ${words[i + 1]}`);
     let n = 1;
     while (tags.length < ETSY_LIMITS.tagCount && n < 40) {
-      rememberTag(tags, seen, `art style ${n}`);
+      rememberTag(tags, seen, `art detail ${n}`);
       n++;
     }
   }
@@ -431,7 +431,7 @@ export function repairTrivialCopy<T extends ListingDraft>(
       for (const filler of NEUTRAL_TAGS) rememberTag(tags, seen, filler);
       let n = 1;
       while (tags.length < ETSY_LIMITS.tagCount && n < 40) {
-        rememberTag(tags, seen, `art style ${n}`);
+        rememberTag(tags, seen, `art detail ${n}`);
         n++;
       }
     }

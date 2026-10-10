@@ -1,14 +1,13 @@
-import { isPlaceholderUrl, isSafeArtworkUrl, MIN_PRINT_EDGE } from "@/lib/art-quality";
-import { uploadImageBytes } from "@/lib/object-storage";
-import { colorVariance, decodePng, encodeRgbPng, placeholderPng, previewPng, scaleToLongEdge } from "@/lib/png";
-
-export const PRINT_LONG_EDGE = 2048;
+import { isSafeArtworkUrl } from "@/lib/art-quality";
+import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
+import { colorVariance, decodePng, encodeRgbPng, placeholderPng, previewPng, shrinkToLongEdge } from "@/lib/png";
 
 export type PreparedArt = {
   url: string;
   width: number | null;
   height: number | null;
   variance: number | null;
+  visionPreview?: string;
 };
 
 async function loadImageBytes(url: string): Promise<Buffer | null> {
@@ -25,26 +24,20 @@ async function loadImageBytes(url: string): Promise<Buffer | null> {
   const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(15000) });
   if (!res.ok) return null;
   const bytes = Buffer.from(await res.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > 15_000_000) return null;
+  if (bytes.length === 0 || bytes.length > MAX_ARTWORK_BYTES) return null;
   return bytes;
 }
 
 /**
  * Measure a generated print file. Placeholder URLs are left as-is so the gate can reject them.
- * A decoded PNG under 2000px is scaled to a 2048 long edge and stored on S3/Blob when storage exists.
- * Without storage the original URL and its real dimensions are kept, and the gate holds the draft.
+ * Print output is upscaled by the image provider; this measures its actual dimensions.
  */
 export async function preparePrintFile(url: string): Promise<PreparedArt> {
   const bytes = await loadImageBytes(url);
   const image = bytes ? decodePng(bytes) : null;
   if (!image) return { url, width: null, height: null, variance: null };
   const variance = Math.round(colorVariance(image) * 10) / 10;
-  const long = Math.max(image.width, image.height);
-  if (isPlaceholderUrl(url) || long >= MIN_PRINT_EDGE) {
-    return { url, width: image.width, height: image.height, variance };
-  }
-  const scaled = scaleToLongEdge(image, PRINT_LONG_EDGE);
-  const stored = await uploadImageBytes(encodeRgbPng(scaled), "image/png");
-  if (!stored) return { url, width: image.width, height: image.height, variance };
-  return { url: stored.url, width: scaled.width, height: scaled.height, variance };
+  const previewBytes = encodeRgbPng(shrinkToLongEdge(image, 512));
+  const visionPreview = previewBytes.length < 2_000_000 ? `data:image/png;base64,${previewBytes.toString("base64")}` : undefined;
+  return { url, width: image.width, height: image.height, variance, visionPreview };
 }

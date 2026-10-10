@@ -12,6 +12,7 @@ export async function ensureDesignBrief(
   ctx: StageContext,
   keyword: { id: number; phrase: string; niche: Niche },
   prompt: string,
+  concept?: string,
 ) {
   const [existing] = await ctx.db.select().from(designBriefs).where(eq(designBriefs.keywordId, keyword.id)).limit(1);
   if (existing) return { brief: existing, created: false };
@@ -24,6 +25,7 @@ export async function ensureDesignBrief(
       keywordId: keyword.id,
       niche: keyword.niche,
       prompt,
+      concept,
       productType: product.type,
       podPreset: product.pod ?? null,
       dayKey: utcDayKey(ctx.now),

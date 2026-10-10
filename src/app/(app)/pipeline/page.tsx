@@ -1,5 +1,6 @@
 import { Power } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { NicheTag, PageHeader, Panel, SectionTitle } from "@/components/common";
 import { StageCard } from "@/components/pipeline/stage-card";
 import { RunPipelineButton } from "@/components/run-button";
@@ -8,7 +9,7 @@ import { getPipelineData } from "@/lib/queries";
 export const metadata = { title: "Pipeline" };
 
 export default async function PipelinePage() {
-  const { stages, automation, keywords } = await getPipelineData();
+  const { stages, automation, keywords, recentDesigns } = await getPipelineData();
   return (
     <div className="space-y-6">
       <PageHeader
@@ -40,6 +41,19 @@ export default async function PipelinePage() {
         {stages.map((s) => (
           <StageCard key={s.id} id={s.id} label={s.label} description={s.description} settings={s.settings} runs={s.runs} killSwitch={automation.killSwitch} />
         ))}
+      </div>
+
+      <div>
+        <SectionTitle>Recent designs · before Listing</SectionTitle>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {recentDesigns.map((design) => (
+            <Panel key={design.id} className="overflow-hidden p-3">
+              {design.imageUrl && <Image src={design.imageUrl} alt={`${design.niche} design ${design.id}`} width={240} height={360} unoptimized className="aspect-[2/3] w-full rounded-lg object-cover" />}
+              <p className="mt-2 text-sm font-semibold">Design #{design.id} · {design.qualityScore == null ? "Not scored" : `${design.qualityScore}/10`}</p>
+              <p className="text-xs text-muted-foreground">{design.status}{design.qualityReasons.length ? ` · ${design.qualityReasons.join("; ")}` : ""}</p>
+            </Panel>
+          ))}
+        </div>
       </div>
 
       <div>

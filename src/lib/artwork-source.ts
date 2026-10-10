@@ -2,7 +2,7 @@ import { isPlaceholderUrl, isSafeArtworkUrl } from "@/lib/art-quality";
 import { decodeDataUrl, MEDIA_KEY, readStoredObject } from "@/lib/object-storage";
 import { decodePng, encodeRgbPng, shrinkToLongEdge, type RgbImage } from "@/lib/png";
 
-const MAX_BYTES = 15_000_000;
+const MAX_BYTES = 50 * 1024 * 1024;
 /** Gallery previews stay well under the 2048px print file so the deliverable is not given away. */
 export const PREVIEW_LONG_EDGE = 1200;
 

@@ -3,7 +3,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { keywords, listings, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
@@ -202,6 +202,7 @@ export async function triggerStage(stage: string, opts?: { force?: boolean }) {
   const force = stage === "daily" && opts?.force === true;
   const run = await runStage(stage as StageName, "manual", { force });
   revalidateAll();
+  refresh();
   return { ok: run.status !== "failed", status: run.status, summary: run.summary };
 }
 
@@ -242,6 +243,7 @@ export async function triggerFullPipeline() {
   await requireAuth();
   const runs = await runFullPipeline("manual");
   revalidateAll();
+  refresh();
   return runs.map((r) => ({ stage: r.stage, status: r.status, summary: r.summary }));
 }
 

@@ -283,13 +283,13 @@ export function decodePng(buf: Buffer): RgbImage | null {
     } else if (type === "IDAT") idat.push(Buffer.from(data));
     else if (type === "IEND") break;
   }
-  if (!width || !height || width > 8000 || height > 8000 || bitDepth !== 8 || interlace !== 0) return null;
+  if (!width || !height || width > 8000 || height > 8000 || width * height > 25_000_000 || bitDepth !== 8 || interlace !== 0) return null;
   if (colorType !== 2 && colorType !== 6) return null;
   const channels = colorType === 6 ? 4 : 3;
   const stride = width * channels;
   let inflated: Buffer;
   try {
-    inflated = inflateSync(Buffer.concat(idat));
+    inflated = inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
   } catch {
     return null;
   }
@@ -345,7 +345,7 @@ export function colorVariance(image: RgbImage) {
   return Math.sqrt(Math.max(0, sum2 / count - mean * mean));
 }
 
-/** Nearest-neighbor scale so the long edge is `edge` pixels. Already-large images are unchanged. */
+/** Bilinear scale so the long edge is `edge` pixels. Already-large images are unchanged. */
 export function scaleToLongEdge(image: RgbImage, edge: number): RgbImage {
   const long = Math.max(image.width, image.height);
   if (long >= edge || long < 1) return image;
@@ -353,14 +353,24 @@ export function scaleToLongEdge(image: RgbImage, edge: number): RgbImage {
   const height = Math.max(1, Math.round((image.height * edge) / long));
   const rgb = new Uint8Array(width * height * 3);
   for (let y = 0; y < height; y++) {
-    const sy = Math.min(image.height - 1, Math.floor((y * image.height) / height));
+    const fy = Math.max(0, Math.min(image.height - 1, (y + 0.5) * image.height / height - 0.5));
+    const y0 = Math.floor(fy);
+    const y1 = Math.min(image.height - 1, y0 + 1);
     for (let x = 0; x < width; x++) {
-      const sx = Math.min(image.width - 1, Math.floor((x * image.width) / width));
-      const s = (sy * image.width + sx) * 3;
+      const fx = Math.max(0, Math.min(image.width - 1, (x + 0.5) * image.width / width - 0.5));
+      const x0 = Math.floor(fx);
+      const x1 = Math.min(image.width - 1, x0 + 1);
       const d = (y * width + x) * 3;
-      rgb[d] = image.rgb[s] ?? 0;
-      rgb[d + 1] = image.rgb[s + 1] ?? 0;
-      rgb[d + 2] = image.rgb[s + 2] ?? 0;
+      const a = fx - x0;
+      const b = fy - y0;
+      for (let c = 0; c < 3; c++) {
+        rgb[d + c] = Math.round(
+          (image.rgb[(y0 * image.width + x0) * 3 + c] ?? 0) * (1 - a) * (1 - b) +
+          (image.rgb[(y0 * image.width + x1) * 3 + c] ?? 0) * a * (1 - b) +
+          (image.rgb[(y1 * image.width + x0) * 3 + c] ?? 0) * (1 - a) * b +
+          (image.rgb[(y1 * image.width + x1) * 3 + c] ?? 0) * a * b
+        );
+      }
     }
   }
   return { width, height, rgb };

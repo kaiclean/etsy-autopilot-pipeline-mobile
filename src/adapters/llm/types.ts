@@ -1,5 +1,6 @@
 import type { Niche, ProductType } from "@/db/schema";
 import type { PodPreset } from "@/lib/fees";
+import type { VisionAssessment } from "@/lib/design-quality";
 
 export type ListingBrief = {
   keyword: string;
@@ -7,6 +8,7 @@ export type ListingBrief = {
   productType: ProductType;
   podPreset?: PodPreset;
   seed: number;
+  artDirection?: string;
 };
 
 export type ListingCopy = {
@@ -21,4 +23,5 @@ export type ListingCopy = {
 export interface LLMProvider {
   readonly name: string;
   writeListing(brief: ListingBrief): Promise<ListingCopy>;
+  assessImage?(url: string): Promise<VisionAssessment>;
 }

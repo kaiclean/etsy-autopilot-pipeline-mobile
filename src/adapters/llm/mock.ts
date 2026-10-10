@@ -75,6 +75,10 @@ function fitTag(phrase: string) {
 export class MockLLMProvider implements LLMProvider {
   readonly name = "mock-template";
 
+  async assessImage(): Promise<import("@/lib/design-quality").VisionAssessment> {
+    return { score: 8, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false };
+  }
+
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {
     const copy = NICHE_COPY[brief.niche];
     let noun = PRODUCT_NOUN[brief.productType === "digital" ? "digital" : brief.podPreset ?? "posterA3"];

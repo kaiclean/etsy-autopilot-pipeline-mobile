@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setImageProviderForTests } from "@/adapters/image";
+import { setLLMProviderForTests } from "@/adapters/llm";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { designs, keywords, listings, shops } from "@/db/schema";
@@ -15,6 +16,16 @@ import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { digitalPreviewUrl } from "@/lib/png";
 import { runDesign } from "@/pipeline/design";
 import type { StageContext } from "@/pipeline/types";
+
+vi.mock("@/pipeline/artwork", () => ({
+  preparePrintFile: async (url: string) => ({ url, width: 3510, height: 5265, variance: 40 }),
+}));
+
+const vision = {
+  name: "test-vision",
+  assessImage: async () => ({ score: 9, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }),
+  writeListing: vi.fn(),
+};
 
 const ENV_KEYS = ["IMAGE_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_IMAGE_MODEL"] as const;
 const original = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -30,6 +41,7 @@ function restoreEnv() {
 afterEach(() => {
   restoreEnv();
   setImageProviderForTests(null);
+  setLLMProviderForTests(null);
   vi.unstubAllGlobals();
 });
 
@@ -117,6 +129,7 @@ describe("placeholder art queue", () => {
   });
 
   it("replaces placeholder art on the next design run and does not publish", async () => {
+    setLLMProviderForTests(vision);
     const client = new PGlite("memory://");
     const db = drizzle(client, { schema }) as unknown as DB;
     await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
@@ -201,6 +214,7 @@ describe("placeholder art queue", () => {
   });
 
   it("does not write live art onto seeded demo rows for the same keyword", async () => {
+    setLLMProviderForTests(vision);
     const client = new PGlite("memory://");
     const db = drizzle(client, { schema }) as unknown as DB;
     await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });

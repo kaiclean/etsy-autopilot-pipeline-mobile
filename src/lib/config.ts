@@ -111,6 +111,7 @@ export const config = {
       apiKey: env("RUNPOD_API_KEY"),
       endpointId: env("RUNPOD_ENDPOINT_ID"),
       workflow: env("RUNPOD_COMFY_WORKFLOW"),
+      upscaleModel: env("RUNPOD_UPSCALE_MODEL") ?? "4x-UltraSharp.pth",
       costPerImageChf: Number.isFinite(cost) && cost > 0 ? cost : 0.05,
     };
   },
@@ -125,6 +126,9 @@ export const config = {
     if (p === "ollama" && env("OLLAMA_API_KEY")) return "ollama";
     if (p === "omniroute" && env("OMNIROUTE_API_KEY")) return "omniroute";
     return "mock";
+  },
+  get visionModel() {
+    return env("VISION_MODEL");
   },
   get authSecret() {
     return env("AUTH_SECRET") ?? (process.env.NODE_ENV === "production" ? undefined : "dev-only-insecure-secret");
