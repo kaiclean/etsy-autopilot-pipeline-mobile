@@ -273,7 +273,7 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
         name: "Image generation",
         status: config.imageProvider === "mock" ? "mock" : (
           (config.imageProvider === "openai" && imageEndpointConfigurationError(config.imageBaseUrl)) ||
-          (config.imageProvider === "omniroute" && config.omniroute.baseUrl && imageEndpointConfigurationError(config.omniroute.baseUrl))
+          (config.imageProvider === "omniroute" && config.omniroute.baseUrl && imageEndpointConfigurationError(config.omniroute.baseUrl, "omniroute"))
         ) ? "missing" : "configured",
         detail:
           config.imageProvider === "mock"
@@ -281,7 +281,7 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
             : config.imageProvider === "openai"
               ? imageEndpointConfigurationError(config.imageBaseUrl) ?? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`
               : config.imageProvider === "omniroute"
-                ? (config.omniroute.baseUrl ? imageEndpointConfigurationError(config.omniroute.baseUrl) : null) ?? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
+                ? (config.omniroute.baseUrl ? imageEndpointConfigurationError(config.omniroute.baseUrl, "omniroute") : null) ?? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
                 : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
         envVars: [
           "IMAGE_PROVIDER",

@@ -196,7 +196,7 @@ function pushCheck(): HealthCheck {
 }
 
 function overlayCredits(check: HealthCheck, signal: ProviderCreditSignal, which: "images" | "llm"): HealthCheck {
-  if (signal === "ok" || check.label === "Key missing") return check;
+  if (signal === "ok" || check.label === "Key missing" || check.label === "Invalid endpoint") return check;
   const failed = signal === "failed";
   const who = which === "images" ? "Image generation" : "The listing writer";
   return {
@@ -352,7 +352,7 @@ function imageProviderCheck(): HealthCheck {
     }
     const base = config.omniroute.baseUrl;
     const model = config.omniroute.imageModel;
-    const configurationError = base ? imageEndpointConfigurationError(base) : null;
+    const configurationError = base ? imageEndpointConfigurationError(base, "omniroute") : null;
     const ready = Boolean(base && model);
     return {
       id: "images",
@@ -500,7 +500,7 @@ function authCheck(): HealthCheck {
 
 function overlayImageRun(check: HealthCheck, run: ImageRunFact | null | undefined): HealthCheck {
   const error = lastImageProviderError(run);
-  if (!error || check.label === "Key missing") return check;
+  if (!error || check.label === "Key missing" || check.label === "Invalid endpoint") return check;
   return {
     ...check,
     level: run?.status === "warning" ? "yellow" : "red",

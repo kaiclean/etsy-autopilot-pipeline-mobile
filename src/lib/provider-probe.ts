@@ -116,7 +116,7 @@ async function probeText(): Promise<ProbeResult> {
 async function probeImage(): Promise<ProbeResult> {
   const target = imageTarget();
   if ("skip" in target) return target.skip;
-  const configurationError = imageEndpointConfigurationError(target.base);
+  const configurationError = imageEndpointConfigurationError(target.base, config.imageProvider === "omniroute" ? "omniroute" : "openai");
   if (configurationError) return { target: "image", status: "error", detail: configurationError };
   const paths = target.openRouter ? ["/images", "/images/generations"] : ["/images/generations"];
   let last: { status: number; body: string } = { status: 0, body: "" };

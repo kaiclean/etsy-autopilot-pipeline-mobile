@@ -162,14 +162,52 @@ describe("image endpoint fallbacks", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("reports an invalid OmniRoute image endpoint as not ready", () => {
+  it.each(["https://ollama.com/v1", "not-a-url"])("uses OmniRoute-specific guidance for invalid endpoint %s", async (baseUrl) => {
     process.env.IMAGE_PROVIDER = "omniroute";
+    process.env.LLM_PROVIDER = "mock";
+    process.env.OMNIROUTE_API_KEY = "omni-test-key";
+    process.env.OMNIROUTE_BASE_URL = baseUrl;
+    process.env.OMNIROUTE_IMAGE_MODEL = "painter";
+    const calls = installFetch(() => jsonResponse(404, "path not found"));
+    const health = connectionHealth({ etsyConnected: false }).find((row) => row.id === "images");
+    const integration = integrationStatus(false).find((row) => row.id === "images");
+    const probes = await probeConnections();
+    expect(health).toMatchObject({ level: "red", label: "Invalid endpoint" });
+    expect(integration?.status).toBe("missing");
+    expect(probes.image.status).toBe("error");
+    await expect(getImageProvider().generate({ prompt: "alpine poster", niche: "alpine", seed: 1 }))
+      .rejects.toThrow(health?.detail);
+    for (const detail of [health?.detail, integration?.detail, probes.image.detail]) {
+      expect(detail).toContain("OMNIROUTE_BASE_URL");
+      expect(detail).not.toMatch(/\bIMAGE_(BASE_URL|API_KEY|MODEL)\b|OPENAI_BASE_URL/);
+      if (baseUrl.includes("ollama.com")) {
+        expect(detail).toContain("OMNIROUTE_API_KEY");
+        expect(detail).toContain("OMNIROUTE_IMAGE_MODEL");
+      }
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["openai", "omniroute"])("preserves invalid %s configuration over historical health overlays", (provider) => {
+    process.env.IMAGE_PROVIDER = provider;
+    process.env.IMAGE_API_KEY = "image-test-key";
+    process.env.IMAGE_BASE_URL = "https://ollama.com/v1";
     process.env.OMNIROUTE_API_KEY = "omni-test-key";
     process.env.OMNIROUTE_BASE_URL = "https://ollama.com/v1";
     process.env.OMNIROUTE_IMAGE_MODEL = "painter";
-    expect(connectionHealth({ etsyConnected: false }).find((row) => row.id === "images"))
-      .toMatchObject({ level: "red", label: "Invalid endpoint" });
-    expect(integrationStatus(false).find((row) => row.id === "images")?.status).toBe("missing");
+    const current = connectionHealth({ etsyConnected: false }).find((row) => row.id === "images");
+    expect(current).toMatchObject({ level: "red", label: "Invalid endpoint" });
+    for (const signal of ["failed", "warning"] as const) {
+      expect(connectionHealth({ etsyConnected: false, providerCredits: signal }).find((row) => row.id === "images"))
+        .toEqual(current);
+      for (const summary of ["/images 402: Insufficient credits", "/images/generations 404: path not found"]) {
+        const imageRun = { status: signal, summary };
+        expect(connectionHealth({ etsyConnected: false, imageRun }).find((row) => row.id === "images"))
+          .toEqual(current);
+        expect(connectionHealth({ etsyConnected: false, providerCredits: signal, imageRun }).find((row) => row.id === "images"))
+          .toEqual(current);
+      }
+    }
   });
 
   it("uses OPENAI_* when IMAGE_* is unset", () => {
