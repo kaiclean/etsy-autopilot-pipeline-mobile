@@ -203,6 +203,14 @@ describe("hot today query", () => {
     expect(result.demo).toBe(false);
   });
 
+  it("includes shared public observations without treating null-shop demo fixtures as live", async () => {
+    await seed({ shopId: null, phrase: "alpine public poster" });
+    await seed({ shopId: null, sourceUrl: "https://example.invalid/hot/alpine", phrase: "alpine fixture poster" });
+    const result = await getHotSignalsToday(now);
+    expect(result.items.map((entry) => entry.phrase)).toEqual(["alpine public poster"]);
+    expect(result.demo).toBe(false);
+  });
+
   it("excludes yesterday's still-fresh cache, future observations, another shop and null-shop fixtures", async () => {
     await seed({ phrase: "alpine yesterday poster", fetchedAt: new Date("2026-10-10T21:59:59Z") });
     await seed({ phrase: "alpine future poster", fetchedAt: new Date("2026-10-10T22:31:00Z") });

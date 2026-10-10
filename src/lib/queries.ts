@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
 import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
 import type { HotTodayItem } from "@/components/hot-today-card";
@@ -39,7 +39,8 @@ export function hotSignalsTodayQuery(db: DB, shopId: string, now = new Date()) {
     sourceUrl: hotSignals.sourceUrl,
     fetchedAt: hotSignals.fetchedAt,
   }).from(hotSignals).where(and(
-    eq(hotSignals.shopId, shopId),
+    // Public marketplace observations are shared; another shop's private rows are not.
+    or(eq(hotSignals.shopId, shopId), isNull(hotSignals.shopId)),
     sql`(${hotSignals.fetchedAt} AT TIME ZONE 'Europe/Zurich')::date = ${dayKey(now)}::date`,
     lte(hotSignals.fetchedAt, now),
   )).orderBy(desc(hotSignals.fetchedAt));

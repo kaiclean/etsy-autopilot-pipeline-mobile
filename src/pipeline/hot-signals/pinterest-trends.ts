@@ -6,9 +6,9 @@ import { hotKeywordSource, type HotSignal } from "./types";
 export const PINTEREST_GROWING_URL = "https://api.pinterest.com/v5/trends/keywords/US/top/growing";
 
 export function parsePinterestTrends(body: unknown, now: Date): HotSignal[] {
-  const keywords = object(body).keywords;
-  if (!Array.isArray(keywords)) return [];
-  return keywords.flatMap((raw): HotSignal[] => {
+  const trends = object(body).trends;
+  if (!Array.isArray(trends)) return [];
+  return trends.flatMap((raw): HotSignal[] => {
     const row = object(raw);
     if (typeof row.keyword !== "string" || !row.keyword.trim()) return [];
     const phrase = row.keyword.trim();

@@ -139,6 +139,7 @@ export function activeNiches() {
 
 export function mapSignalNiche(phrase: string): Niche | null {
   const text = phrase.toLowerCase();
+  if (!/\b(art|artwork|poster|print|prints|printable|decor|decoration|shirt|tshirt|mug|mugs|gift|gifts|sweatshirt|png|floral|botanical)\b/.test(text)) return null;
   if (/\b(christmas|hygge|winter|snowy cabin)\b/.test(text)) return "christmas";
   if (/\b(gothic|dark academia|halloween|witchy|moody botanical)\b/.test(text)) return "gothic";
   if (/\b(alpine|swiss|alps|matterhorn|mountain)\b/.test(text)) return "alpine";

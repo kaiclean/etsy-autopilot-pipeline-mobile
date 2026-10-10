@@ -66,7 +66,7 @@ export function robotsAllows(text: string, url: URL): boolean {
   }
   groups.push(group);
   const agent = HOT_USER_AGENT.toLowerCase();
-  const specificity = (agents: string[]) => Math.max(-1, ...agents.map((a) => a === "*" ? 0 : a && agent.startsWith(a) ? a.length : -1));
+  const specificity = (agents: string[]) => Math.max(-1, ...agents.map((a) => a === "*" ? 0 : a && agent.includes(a) ? a.length : -1));
   const best = Math.max(-1, ...groups.map((g) => specificity(g.agents)));
   if (best < 0) return true;
   const target = url.pathname + url.search;
@@ -150,7 +150,7 @@ export function createHotFetcher(deps: FetchDeps = {}) {
         const robotsUrl = approvedUrl(new URL("/robots.txt", approved), "robots");
         policy = { text: await request(robotsUrl, {}, opts.log), expires: clock() + 3600_000 };
         // A successful HTML challenge is not a robots policy; fail closed.
-        if (/<(?:html|script|body)\b/i.test(policy.text) || !/^\s*user-agent\s*:/im.test(policy.text)) {
+        if (/<(?:html|script|body)\b/i.test(policy.text) || !/^[ \t]*user-agent[ \t]*:[ \t]*(?:\*|[a-z][a-z0-9_-]*)(?:[ \t]*(?:#.*)?)?$/im.test(policy.text)) {
           const message = `Hot signals: ${approved.hostname} robots policy unavailable`;
           opts.log(message, "warn");
           throw new Error(message);

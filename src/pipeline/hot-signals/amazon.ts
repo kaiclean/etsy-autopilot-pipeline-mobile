@@ -34,7 +34,7 @@ export function parseAmazonApi(body: unknown, now: Date): HotSignal[] {
 export function parseAmazonHtml(html: string, opts: { now: Date; category: string }): HotSignal[] {
   const root = parseHtml(html);
   const isCard = (node: Parameters<typeof hasClass>[0]) => node.attrs.id === "gridItemRoot" || hasClass(node, "zg-item-immersion");
-  const cards = htmlNodes(root, isCard).filter((node) => !htmlNodes(node, isCard).length);
+  const cards = htmlNodes(root, isCard).filter((node) => node.closed && !htmlNodes(node, isCard).length);
   return cards.flatMap((card): HotSignal[] => {
     const links = htmlNodes(card, (node) => node.tag === "a" && productUrl(node.attrs.href, "amazon") !== null);
     if (new Set(links.map((link) => productUrl(link.attrs.href, "amazon"))).size !== 1) return [];

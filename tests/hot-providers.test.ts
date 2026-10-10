@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { activeNiches } from "@/lib/niches";
 import { amazonSource, createAmazonSource, parseAmazonApi, parseAmazonHtml, signAmazonSearch } from "@/pipeline/hot-signals/amazon";
 import { createEtsyBadgesSource, etsyBadgesSource, parseEtsyApi, parseEtsyHtml } from "@/pipeline/hot-signals/etsy-badges";
@@ -61,6 +61,10 @@ function fixtureFetcher(responses: (string | Response)[]) {
   return { fetcher, fetchImpl, times, sleeps };
 }
 
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Non-fixture network is forbidden"); }));
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -94,6 +98,12 @@ describe("observed Amazon products", () => {
     const html = `<div id="gridItemRoot"><span class="zg-bdg-text">#1</span>
       <a href="/dp/B000123456"><div class="p13n-sc-truncate">Mountain Poster</div></a>
       <a href="/dp/B000123457">Other product</a></div>`;
+    expect(parseAmazonHtml(html, { now, category: "Posters" })).toEqual([]);
+  });
+
+  it("ignores unclosed Amazon product cards", () => {
+    const html = `<div id="gridItemRoot"><span class="zg-bdg-text">#1</span>
+      <a href="/dp/B000123456"><div class="p13n-sc-truncate">Mountain Poster</div></a>`;
     expect(parseAmazonHtml(html, { now, category: "Posters" })).toEqual([]);
   });
 
@@ -160,6 +170,8 @@ describe("observed Etsy listing cards", () => {
 
   it("does not mix a mismatched listing's link and badges", () => {
     expect(parseEtsyHtml('<li data-listing-id="789"><a href="/listing/790"><h3>Mountain Poster</h3></a><span class="wt-badge">Bestseller</span></li>', now)).toEqual([]);
+    expect(parseEtsyHtml('<li data-listing-id="789"><a href="/listing/789"><h3>Mountain Poster</h3></a><a href="/listing/790">Other listing</a><span class="wt-badge">Bestseller</span></li>', now)).toEqual([]);
+    expect(parseEtsyHtml('<li data-listing-id="789"><a href="/listing/789"><h3>Mountain Poster</h3></a><span class="wt-badge">Bestseller</span>', now)).toEqual([]);
   });
 
   it("does not synthesize API badges, sales, ranks or metrics from score sorting", () => {
@@ -175,7 +187,7 @@ describe("observed Etsy listing cards", () => {
 
 describe("official Pinterest trends", () => {
   it("uses only pct_growth_wow numbers, never array order or predictions", () => {
-    const signals = parsePinterestTrends({ keywords: [
+    const signals = parsePinterestTrends({ trends: [
       { keyword: "Alpine Poster", pct_growth_wow: 42 },
       { keyword: "Gothic Floral", pct_growth_wow: null, predictions: [{ value: 99 }], rank: 1 },
       { keyword: "Christmas Mug", pct_growth_wow: "60" },
@@ -184,12 +196,13 @@ describe("official Pinterest trends", () => {
     expect(signals.map((signal) => signal.metric)).toEqual([42, null, null, -12]);
     expect(signals.every((signal) => signal.rank === null && signal.badge === null)).toBe(true);
     expect(signals.every((signal) => signal.source_url === PINTEREST_GROWING_URL)).toBe(true);
-    expect(parsePinterestTrends({ trends: [{ keyword: "wrong shape" }] }, now)).toEqual([]);
-    expect(parsePinterestTrends({ keywords: [{ keyword: "" }, { keyword: 12 }] }, now)).toEqual([]);
+    expect(signals.every((signal) => signal.fetched_at === now)).toBe(true);
+    expect(parsePinterestTrends({ keywords: [{ keyword: "wrong shape", pct_growth_wow: 50 }] }, now)).toEqual([]);
+    expect(parsePinterestTrends({ trends: [{ keyword: "" }, { keyword: 12 }] }, now)).toEqual([]);
   });
 
   it("calls the official US growing endpoint with auth and no predicted metric", async () => {
-    const fixture = fixtureFetcher([JSON.stringify({ keywords: [{ keyword: "mountain poster", pct_growth_wow: 35 }] })]);
+    const fixture = fixtureFetcher([JSON.stringify({ trends: [{ keyword: "mountain poster", pct_growth_wow: 35 }] })]);
     const source = createPinterestTrendsSource({ fetcher: fixture.fetcher, accessToken: () => "fixture-pinterest" });
     expect((await source.collectSignals(options()))[0].metric).toBe(35);
     const [url, init] = fixture.fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
@@ -243,6 +256,7 @@ describe("guarded network access", () => {
     new Response("denied fixture-secret-key", { status: 403 }),
     new Response("missing", { status: 404 }),
     new Response("", { status: 200 }),
+    new Response("User-agent:\nDisallow: /", { status: 200 }),
     new Response("<html>User-agent: *</html>", { status: 200 }),
   ])("fails closed on unavailable robots", async (response) => {
     const fixture = fixtureFetcher([response]);
@@ -305,6 +319,7 @@ describe("guarded network access", () => {
     expect(robotsAllows("User-agent: *\nAllow: /gp/\nDisallow: /gp/bestsellers/*", url)).toBe(false);
     expect(robotsAllows("User-agent: *\nDisallow: /gp/\nAllow: /gp/", url)).toBe(true);
     expect(robotsAllows("User-agent: *\nDisallow: /gp/$", url)).toBe(true);
+    expect(robotsAllows("User-agent: *\nAllow: /\nUser-agent: HotSignals\nDisallow: /gp/", url)).toBe(false);
   });
 });
 
@@ -369,6 +384,16 @@ describe("provider controls and failure propagation", () => {
     const urls = fixture.fetchImpl.mock.calls.map((call) => (call as unknown as [URL])[0].pathname);
     expect(urls).toEqual(["/robots.txt", ...AMAZON_POD_PAGES.map((page) => page.path)]);
     expect(fixture.times).toEqual([1000, 3000, 5000, 7000, 9000]);
+  });
+
+  it.each(["amazon", "etsy"])("stops %s HTML collection on HTTP 403 after an allowed robots policy", async (provider) => {
+    const fixture = fixtureFetcher(["User-agent: *\nAllow: /", new Response("fixture-secret-key", { status: 403 })]);
+    const source = provider === "amazon"
+      ? createAmazonSource({ settings: () => ({ scrapeEnabled: true, amazonMarketplace: "US" }), fetcher: fixture.fetcher })
+      : createEtsyBadgesSource({ apiKey: () => undefined, scrapeEnabled: () => true, fetcher: fixture.fetcher });
+    await expect(source.collectSignals(options())).rejects.toThrow("HTTP 403");
+    expect(fixture.fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fixture.times).toEqual([1000, 3000]);
   });
 
   it("queries Etsy's official active-listing API sorted by score without treating order as a sales badge", async () => {

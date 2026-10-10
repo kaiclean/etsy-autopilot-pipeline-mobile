@@ -21,9 +21,10 @@ export function parseEtsyApi(body: unknown, now: Date): HotSignal[] {
 
 export function parseEtsyHtml(html: string, now: Date): HotSignal[] {
   const isCard = (node: Parameters<typeof hasClass>[0]) => /^\d+$/.test(node.attrs["data-listing-id"] ?? "");
-  const cards = htmlNodes(parseHtml(html), isCard).filter((node) => !htmlNodes(node, isCard).length);
+  const cards = htmlNodes(parseHtml(html), isCard).filter((node) => node.closed && !htmlNodes(node, isCard).length);
   return cards.flatMap((card): HotSignal[] => {
     const id = card.attrs["data-listing-id"];
+    if (htmlNodes(card, (node) => node.tag === "a" && productUrl(node.attrs.href, "etsy") !== null && productUrl(node.attrs.href, "etsy") !== `https://www.etsy.com/listing/${id}`).length) return [];
     const links = htmlNodes(card, (node) => node.tag === "a" && productUrl(node.attrs.href, "etsy") === `https://www.etsy.com/listing/${id}`);
     const link = links[0] ?? (card.tag === "a" && productUrl(card.attrs.href, "etsy") === `https://www.etsy.com/listing/${id}` ? card : undefined);
     if (!link) return [];

@@ -42,6 +42,8 @@ describe("hot signal ranking", () => {
     const rows = rankHotSignals([
       signal({ rank: 2 }), signal({ rank: 2 }),
       signal({ phrase: "phone charger", rank: 1 }),
+      signal({ phrase: "mountain bike", rank: 1 }),
+      signal({ phrase: "alpine hiking boots", rank: 1 }),
       signal({ source_url: "http://www.amazon.com/dp/a", rank: 1 }),
       signal({ source_url: "https://evil.example/a", rank: 1 }),
       signal({ source_url: "https://www.amazon.com/dp/b", rank: -1 }),
@@ -49,6 +51,13 @@ describe("hot signal ranking", () => {
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0].score).toBeCloseTo(0.5 / Math.sqrt(2));
+  });
+
+  it("retains observed badges when the same listing was first returned by an unmeasured API", () => {
+    const api = signal({ provider: "etsy", source_url: "https://www.etsy.com/listing/123" });
+    const scraped = { ...api, badge: "Bestseller" };
+    expect(rankHotSignals([api, scraped])[0].badge).toBe("Bestseller");
+    expect(rankHotSignals([scraped, api])[0].badge).toBe("Bestseller");
   });
 });
 
@@ -108,6 +117,29 @@ describe("hot scan persistence and keyword integration", () => {
     expect(failure).toHaveBeenCalledTimes(2);
   });
 
+  it("reuses fresh stored observations even without a provider cache marker", async () => {
+    await db.insert(hotSignals).values({
+      provider: "amazon", title: "Swiss mountain print", phrase: signal().phrase,
+      rank: 1, sourceUrl: signal().source_url, fetchedAt: now,
+    });
+    const collect = vi.fn(async () => []);
+    const result = await scanHotSignals(ctx, [source("amazon", collect)]);
+    expect(collect).not.toHaveBeenCalled();
+    expect(result.signals).toHaveLength(1);
+  });
+
+  it("updates a same-UTC-day refresh instead of renewing a cache for expired evidence", async () => {
+    const first = new Date("2026-10-10T00:00:00Z");
+    const second = new Date("2026-10-10T21:00:00Z");
+    const collect = vi.fn(async (opts) => [signal({ rank: opts.now === first ? 10 : 1, fetched_at: opts.now })]);
+    await scanHotSignals({ ...ctx, now: first }, [source("amazon", collect)]);
+    await scanHotSignals({ ...ctx, now: second }, [source("amazon", collect)]);
+    const rows = await db.select().from(hotSignals);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ rank: 1, fetchedAt: second });
+    expect(await loadHotSignals(db, ctx.shopId, new Date("2026-10-11T03:00:00Z"))).toHaveLength(1);
+  });
+
   it("merges hot-only phrases without seed scores or changing lifecycle and scopes to the shop", async () => {
     const rows = rankHotSignals([signal({ rank: 1 })]);
     await mergeHotKeywords(ctx, rows);
@@ -140,6 +172,31 @@ describe("hot scan persistence and keyword integration", () => {
     } finally {
       await setSetting(db, "automation", automation);
     }
+  });
+
+  it("claims a demo keyword using only observed evidence and never demotes live keywords to demo", async () => {
+    const phrase = "swiss observed demo print";
+    const [demo] = await db.insert(keywords).values({
+      shopId: ctx.shopId, phrase, niche: "alpine", source: "seed-list",
+      score: 0.9, demandScore: 0.9, competitionScore: 0.5, seasonalityScore: 0.6, isDemo: true,
+    }).returning();
+    const real = rankHotSignals([signal({ phrase, rank: 1 })]);
+    await mergeHotKeywords(ctx, real);
+    expect((await db.select().from(keywords).where(eq(keywords.id, demo.id)))[0])
+      .toMatchObject({ source: "hot:amazon", score: 0.5, demandScore: 0, competitionScore: 0, seasonalityScore: 0, isDemo: false });
+    await mergeHotKeywords({ ...ctx, demo: true }, real);
+    expect((await db.select().from(keywords).where(eq(keywords.id, demo.id)))[0].isDemo).toBe(false);
+  });
+
+  it("promotes a hot-first keyword to ordinary research before merging its bounded boost", async () => {
+    const phrase = "swiss alps wall art";
+    await db.update(keywords).set({ source: "hot:google-trends", demandScore: 0, competitionScore: 0, score: 0.1 })
+      .where(eq(keywords.phrase, phrase));
+    await runResearch(ctx);
+    const [row] = await db.select().from(keywords).where(eq(keywords.phrase, phrase));
+    expect(row.source).not.toMatch(/^hot:/);
+    expect(row.demandScore).toBeGreaterThan(0);
+    expect(row.score).toBeGreaterThan(0.1);
   });
 });
 

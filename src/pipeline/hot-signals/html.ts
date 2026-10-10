@@ -2,6 +2,7 @@ export type HtmlNode = {
   tag: string;
   attrs: Record<string, string>;
   children: (HtmlNode | string)[];
+  closed?: boolean;
 };
 
 export function decodeHtml(value: string): string {
@@ -32,7 +33,10 @@ export function parseHtml(html: string): HtmlNode {
     if (!tag) continue;
     if (raw.startsWith("</")) {
       const index = stack.findLastIndex((node) => node.tag === tag);
-      if (index > 0) stack.length = index;
+      if (index > 0) {
+        stack[index].closed = true;
+        stack.length = index;
+      }
       continue;
     }
     const attrs: Record<string, string> = {};
@@ -40,7 +44,7 @@ export function parseHtml(html: string): HtmlNode {
     for (const match of attrText.matchAll(/([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
       attrs[match[1].toLowerCase()] = decodeHtml(match[2] ?? match[3] ?? match[4] ?? "");
     }
-    const node: HtmlNode = { tag, attrs, children: [] };
+    const node: HtmlNode = { tag, attrs, children: [], closed: voids.has(tag) || raw.endsWith("/>") };
     stack[stack.length - 1].children.push(node);
     if (!voids.has(tag) && !raw.endsWith("/>")) stack.push(node);
   }

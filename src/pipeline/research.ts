@@ -169,7 +169,11 @@ export const runResearch: StageFn = async (ctx) => {
           ...(trend != null ? { trendScore: trend } : {}),
           ...(measured
             ? { demandScore: demand, competitionScore: c.competition, source: c.source, niche: c.niche }
-            : {}),
+            : {
+              demandScore: sql`CASE WHEN ${keywords.source} LIKE 'hot:%' THEN ${demand} ELSE ${keywords.demandScore} END`,
+              competitionScore: sql`CASE WHEN ${keywords.source} LIKE 'hot:%' THEN ${c.competition} ELSE ${keywords.competitionScore} END`,
+              source: sql`CASE WHEN ${keywords.source} LIKE 'hot:%' THEN ${trend != null ? `${c.source}+google-trends` : c.source} ELSE ${keywords.source} END`,
+            }),
         },
       });
     upserted++;
