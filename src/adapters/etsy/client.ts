@@ -1,3 +1,4 @@
+import { loadArtworkBytes, ownMediaKey, renderArtworkPreview, isPreviewUrl } from "@/lib/artwork-source";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
 import { localAssetPng } from "@/lib/png";
@@ -78,6 +79,14 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   /** Own placeholder art is rendered here. Fetching it through the public tunnel throws "fetch failed". */
   private async fetchBlob(url: string) {
+    if (isPreviewUrl(url)) {
+      // A live gallery is the real artwork, downscaled. The flat niche card is never sent to Etsy.
+      const preview = await renderArtworkPreview(url);
+      if (!preview) throw new Error(`Gallery preview has no loadable artwork (${url.slice(0, 120)}). Configure S3 or Blob storage and regenerate the design.`);
+      return new Blob([new Uint8Array(preview)], { type: "image/png" });
+    }
+    const artwork = url.startsWith("data:") || ownMediaKey(url) ? await loadArtworkBytes(url) : null;
+    if (artwork) return new Blob([new Uint8Array(artwork)], { type: "image/png" });
     const png = localAssetPng(url);
     if (png) return new Blob([new Uint8Array(png)], { type: "image/png" });
     let res: Response;

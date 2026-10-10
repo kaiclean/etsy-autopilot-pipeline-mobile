@@ -44,16 +44,18 @@ export const runDesign: StageFn = async (ctx) => {
   const provider = getImageProvider({ demo: ctx.demo });
   log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
+  // Seeded demo keywords are never sent to a paid image provider for a live shop.
+  const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
   let queue = await db
     .select()
     .from(keywords)
-    .where(eq(keywords.status, "selected"))
+    .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), liveOnly))
     .orderBy(desc(keywords.score))
     .limit(automation.designsPerRun);
   if (queue.length === 0) {
     const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
     if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
-    queue = await db.select().from(keywords).where(eq(keywords.status, "new")).orderBy(desc(keywords.score)).limit(automation.designsPerRun);
+    queue = await db.select().from(keywords).where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly)).orderBy(desc(keywords.score)).limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");
   }
   if (queue.length === 0) return "No keywords to design for. Run Research first.";

@@ -246,7 +246,9 @@ export function integrationStatus(etsyConnected: boolean): IntegrationStatus[] {
       detail:
         config.llmProvider === "openai"
           ? `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`
-          : "Deterministic template writer.",
+          : env("LLM_PROVIDER") === "openai"
+            ? "LLM_PROVIDER=openai but OPENAI_API_KEY is missing. Demo shops use the template writer; a live shop's listing stage fails."
+            : "Demo-only template writer. Set LLM_PROVIDER=openai and OPENAI_API_KEY before a live shop drafts listings.",
       envVars: ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"],
     },
     {

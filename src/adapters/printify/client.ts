@@ -1,4 +1,6 @@
 import type { PodPreset } from "@/lib/fees";
+import { isSafeArtworkUrl } from "@/lib/art-quality";
+import { loadArtworkBytes, ownMediaKey } from "@/lib/artwork-source";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
 import { externalEtsyIdFromProduct } from "@/lib/pod-etsy-id";
@@ -88,8 +90,12 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     throw new Error(`${LIVE_PROVIDER_PIN_ERROR} Blocked preset: ${preset}.`);
   }
 
+  /** Printify cannot fetch `data:` URLs or this app's non-public media, so those bytes are sent inline. */
   private async uploadDesign(imageUrl: string) {
-    const png = localAssetPng(imageUrl);
+    const unreachable = imageUrl.startsWith("data:") || (ownMediaKey(imageUrl) != null && !isSafeArtworkUrl(imageUrl));
+    const inline = unreachable ? await loadArtworkBytes(imageUrl) : null;
+    const png = inline ?? localAssetPng(imageUrl);
+    if (!png && imageUrl.startsWith("data:")) throw new Error("Print file is an unreadable data URL");
     const body = png
       ? { file_name: "design.png", contents: png.toString("base64") }
       : { file_name: `design-${Date.now()}.png`, url: imageUrl };

@@ -70,9 +70,9 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 
 | Stage | Real today | Mock / dry-run fallback |
 | --- | --- | --- |
-| Research | Seed list, local long-tail modifiers, and `KEYWORD_SEEDS`. Etsy search volume comes from an operator CSV or `ETSY_DEMAND_SOURCE=fixture` (no etsy.com scraping). `ETSY_API_COMPETITION=true` reads listing counts from Open API v3. Google Trends is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is blocked and no export is configured |
-| Design | Higgsfield / OpenAI Images / Replicate adapters, capped by the daily and monthly AI budget | Niche-themed SVG placeholder art stamped "MOCK ART" |
-| Listing | OpenAI JSON writer, then sanitize, validate, and price with the fee engine | Deterministic niche templates |
+| Research | Seed list, local long-tail modifiers, and `KEYWORD_SEEDS`. Etsy search volume comes from an operator CSV, or `ETSY_DEMAND_SOURCE=fixture` in demo mode only (no etsy.com scraping). `ETSY_API_COMPETITION=true` reads listing counts from Open API v3. Google Trends is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is blocked and no export is configured |
+| Design | Higgsfield / OpenAI Images / Replicate adapters, capped by the daily and monthly AI budget | Demo only: niche-themed placeholder art. A live shop fails the stage until `IMAGE_PROVIDER` is set. |
+| Listing | OpenAI JSON writer, then sanitize, validate, and price with the fee engine. Digital galleries are a downscaled render of the real artwork. | Demo only: deterministic niche templates. A live shop fails the stage until `LLM_PROVIDER=openai` and `OPENAI_API_KEY` are set. |
 | Approval | Always a human gate: swipe, edit inline, undo | — |
 | Publish | Etsy draft plus preview image and delivery file. Printify product create only. Activate and Publish to Etsy are human actions. | Records payloads and returns `dry-…` ids |
 | Orders | Etsy `getShopReceipts`, Printify order status | Simulated receipts, fulfillment advances each sync |
