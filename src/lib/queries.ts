@@ -77,7 +77,7 @@ export async function getHotSignalsToday(now = new Date()) {
   });
   const groups = new Map<string, HotTodayItem>();
   for (const signal of rankHotSignals(signals)) {
-    if (signal.score <= 0) continue;
+    if (!Number.isFinite(signal.score) || signal.score <= 0) continue;
     const phrase = signal.phrase.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
     if (!phrase) continue;
     const item = groups.get(phrase) ?? { phrase, score: signal.score, providers: [] };

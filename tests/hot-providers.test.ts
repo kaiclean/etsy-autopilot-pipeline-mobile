@@ -325,6 +325,39 @@ describe("guarded network access", () => {
     await expect(badJson.fetcher.json(PINTEREST_GROWING_URL, { log: vi.fn() })).rejects.toThrow("invalid JSON");
   });
 
+  it("cancels oversized chunked responses before reading further chunks", async () => {
+    let chunks = 0;
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunks++;
+        controller.enqueue(new Uint8Array(1_000_001));
+      },
+      cancel,
+    }, { highWaterMark: 0 }));
+    const fixture = fixtureFetcher([response]);
+    const log = vi.fn();
+    await expect(fixture.fetcher.json(PINTEREST_GROWING_URL, { log })).rejects.toThrow("request failed");
+    expect(chunks).toBe(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith("Hot signals: api.pinterest.com request failed", "warn");
+  });
+
+  it("decodes UTF-8 split across streaming response chunks", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ trends: [{ keyword: "Alpen café", pct_growth_wow: 35 }] }));
+    const marker = bytes.findIndex((byte) => byte === 0xc3);
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, marker + 1));
+        controller.enqueue(bytes.slice(marker + 1));
+        controller.close();
+      },
+    }));
+    const fixture = fixtureFetcher([response]);
+    const body = await fixture.fetcher.json(PINTEREST_GROWING_URL, { log: vi.fn() });
+    expect(parsePinterestTrends(body, now)[0].title).toBe("Alpen café");
+  });
+
   it("aborts slow requests under the configured timeout", async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(new Error("fixture-secret-key timeout")), { once: true });

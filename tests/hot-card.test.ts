@@ -109,6 +109,7 @@ describe("hot today card", () => {
     "https://www.amazon.com@attacker.example/",
     "******www.amazon.com/",
     "https://www.amazon.com:444/",
+    "https://arbitrary.www.amazon.com/",
     "https://example.invalid/hot/alpine",
     "https://www.etsy.com/listing/123",
   ])("does not link unsafe or mismatched Amazon evidence: %s", (url) => {
@@ -121,8 +122,11 @@ describe("hot today card", () => {
   it("accepts HTTPS official provider evidence and only explicit invalid-domain demo links", () => {
     expect(safeHotSourceUrl("https://www.amazon.de/gp/bestsellers", "amazon")).toBeTruthy();
     expect(safeHotSourceUrl("https://www.etsy.com/listing/123", "etsy")).toBeTruthy();
+    expect(safeHotSourceUrl("https://openapi.etsy.com/v3/application/listings/123", "etsy")).toBeTruthy();
     expect(safeHotSourceUrl("https://trends.google.com/trends/explore", "google-trends")).toBeTruthy();
     expect(safeHotSourceUrl("https://trends.pinterest.com/", "pinterest")).toBeTruthy();
+    expect(safeHotSourceUrl("https://api.pinterest.com/v5/trends", "pinterest")).toBeTruthy();
+    expect(safeHotSourceUrl("https://arbitrary.etsy.com/listing/123", "etsy")).toBeNull();
     expect(safeHotSourceUrl("https://example.invalid/hot/alpine", "etsy", true)).toBeTruthy();
     expect(safeHotSourceUrl("https://example.invalid/other", "etsy", true)).toBeNull();
   });
@@ -209,6 +213,31 @@ describe("hot today query", () => {
     const result = await getHotSignalsToday(now);
     expect(result.items.map((entry) => entry.phrase)).toEqual(["alpine public poster"]);
     expect(result.demo).toBe(false);
+  });
+
+  it("does not rank null-only rows or trust a stored score as demand", async () => {
+    await seed({
+      shopId: null, provider: "amazon", phrase: "alpine empty poster",
+      rank: null, badge: null, labelText: null, metric: null, score: 999,
+    });
+    await seed({
+      shopId: null, provider: "etsy", phrase: "alpine empty poster",
+      rank: null, badge: null, labelText: null, metric: null, score: 999,
+      sourceUrl: "https://openapi.etsy.com/v3/application/listings/123",
+    });
+    const result = await getHotSignalsToday(now);
+    expect(result.items).toEqual([]);
+    expect(result.demo).toBe(false);
+  });
+
+  it("renders valid Etsy API evidence as a safe source link", async () => {
+    await seed({
+      provider: "etsy", rank: null, badge: "Bestseller", labelText: "Observed bestseller",
+      sourceUrl: "https://openapi.etsy.com/v3/application/listings/123",
+    });
+    const result = await getHotSignalsToday(now);
+    expect(result.items).toHaveLength(1);
+    expect(render(result.items)).toContain('href="https://openapi.etsy.com/v3/application/listings/123"');
   });
 
   it("excludes yesterday's still-fresh cache, future observations, another shop and null-shop fixtures", async () => {

@@ -25,10 +25,10 @@ const PROVIDER_LABELS: Record<HotProvider, string> = {
 };
 
 const PROVIDER_HOSTS: Record<HotProvider, readonly string[]> = {
-  amazon: ["amazon.com", "amazon.de", "amazon.co.uk", "amazon.fr", "amazon.it", "amazon.es", "amazon.ca", "amazon.com.au", "amazon.co.jp", "amazon.in"],
-  etsy: ["etsy.com"],
+  amazon: ["www.amazon.com", "www.amazon.de"],
+  etsy: ["www.etsy.com", "openapi.etsy.com"],
   "google-trends": ["trends.google.com"],
-  pinterest: ["pinterest.com"],
+  pinterest: ["trends.pinterest.com", "api.pinterest.com"],
 };
 
 export function safeHotSourceUrl(sourceUrl: string, provider: HotProvider, demo = false): string | null {
@@ -36,7 +36,7 @@ export function safeHotSourceUrl(sourceUrl: string, provider: HotProvider, demo 
     const url = new URL(sourceUrl);
     if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) return null;
     if (url.hostname === "example.invalid") return demo && url.pathname.startsWith("/hot/") ? url.href : null;
-    return PROVIDER_HOSTS[provider]?.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`)) ? url.href : null;
+    return PROVIDER_HOSTS[provider]?.includes(url.hostname) ? url.href : null;
   } catch {
     return null;
   }

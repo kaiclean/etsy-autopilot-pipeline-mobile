@@ -36,10 +36,10 @@ export function createGoogleTrendsSource(deps: {
     if (opts.demo || !(deps.enabled ?? (() => config.googleTrendsEnabled))()) return [];
     const out: HotSignal[] = [];
     for (const phrase of rotatedGoogleSeeds(opts.now)) {
-      await (deps.waitForHost ?? hotFetcher.waitForHost)("trends.google.com");
       let metric: number | null;
       try {
         if (deps.score) {
+          await (deps.waitForHost ?? hotFetcher.waitForHost)("trends.google.com");
           metric = await deps.score(phrase);
         } else {
           const transport = createHotGoogleAgent(deps.waitForHost);
