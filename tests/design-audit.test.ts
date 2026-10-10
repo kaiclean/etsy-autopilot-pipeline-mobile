@@ -16,13 +16,14 @@ describe("design audit", () => {
     expect(prompt).toMatch(/pictorial rather than typography/i);
   });
 
-  it("avoids recent and same-run concepts and exhausts duplicates", () => {
+  it("avoids recent and same-run concepts across a larger pool", () => {
     const first = chooseConcept("gothic", []);
     expect(first).toBeTruthy();
     const second = chooseConcept("gothic", [first!]);
     expect(second).not.toBe(first);
     expect(chooseConcept("gothic", [first!, second!])).toBeTruthy();
     expect(chooseConcept("gothic", [first!, second!])).not.toBeNull();
+    expect(chooseConcept("gothic", [first!.toUpperCase()])).not.toBe(first);
   });
 
   it("holds artifacts, text and low scores even when dimensions are sufficient", () => {
@@ -32,17 +33,11 @@ describe("design audit", () => {
     expect(assessArtwork({ score: 8, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }, PRINT_WIDTH, PRINT_HEIGHT).pass).toBe(true);
   });
 
-  it("resamples an undersized non-RunPod PNG into a stored A3 master", async () => {
+  it("keeps native image size while making a compact vision preview", async () => {
     const image = `data:image/png;base64,${rgbPng(4, 6, [80, 90, 100]).toString("base64")}`;
-    const prepared = await preparePrintFile(image, {
-      upload: async (bytes, type) => {
-        expect(type).toBe("image/png");
-        expect(bytes.readUInt32BE(16)).toBe(PRINT_WIDTH);
-        expect(bytes.readUInt32BE(20)).toBe(PRINT_HEIGHT);
-        return { url: "https://cdn.example/print.png", key: "print.png", backend: "s3" };
-      },
-    });
-    expect(prepared).toMatchObject({ url: "https://cdn.example/print.png", width: PRINT_WIDTH, height: PRINT_HEIGHT });
+    const prepared = await preparePrintFile(image);
+    expect(prepared).toMatchObject({ url: image, width: 4, height: 6 });
+    expect(prepared.visionPreview?.length).toBeLessThan(2_000_000);
   });
 
   it("uses one correct noun and deduplicates sibling copy", () => {

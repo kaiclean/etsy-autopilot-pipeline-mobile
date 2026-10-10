@@ -61,7 +61,8 @@ export function chooseConcept(niche: string, recent: string[]) {
 }
 
 export function buildPrompt(phrase: string, style: string, niche?: string, concept?: string) {
-  const look = (niche && NICHE_PROMPTS[niche]) || style;
+  const look = ((niche && NICHE_PROMPTS[niche]) || style)
+    .replace(/\bno (?:text|lettering|frames?|interface chrome)\b/gi, "clean pictorial detail");
   return `${look}. Subject: ${productKeyword(phrase) || "original art"}. ${concept ? `Concept: ${concept}. ` : ""}Original unframed full-bleed artwork with clean edges, a detailed central subject, high contrast, crisp detail and rich color variation. All marks are pictorial rather than typography; the corners contain clean artwork continuous with the composition. Opaque background with meaningful visual detail throughout.`;
 }
 
@@ -169,7 +170,7 @@ export const runDesign: StageFn = async (ctx) => {
           note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`, isDemo: ctx.demo,
         });
         const print = brief.brief?.productType === "pod" && brief.brief.podPreset === "posterA3";
-        const prepared = await preparePrintFile(img.url, { print });
+        const prepared = await preparePrintFile(img.url);
         let reviewReason: string | null = null;
         const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
@@ -202,7 +203,7 @@ export const runDesign: StageFn = async (ctx) => {
         }
         const check = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { pass: true, reasons: [] }
-          : assessArtwork(assessment, prepared.width, prepared.height, print);
+          : assessArtwork(assessment, prepared.width, prepared.height, print && img.provider === "runpod");
         if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV && !ctx.demo) check.reasons.push("Flat artwork.");
         check.pass = check.reasons.length === 0;
         rejected = { img, prepared, score: assessment.score, reasons: check.reasons };
