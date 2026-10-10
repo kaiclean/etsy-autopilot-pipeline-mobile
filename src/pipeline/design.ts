@@ -47,10 +47,12 @@ export const runDesign: StageFn = async (ctx) => {
   const provider = getImageProvider({ demo: ctx.demo });
   log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
+  // Seeded demo keywords are never sent to a paid image provider for a live shop.
+  const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
   let queue = await db
     .select()
     .from(keywords)
-    .where(eq(keywords.status, "selected"))
+    .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), liveOnly))
     .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(automation.designsPerRun);
   if (queue.length === 0) {
@@ -59,7 +61,7 @@ export const runDesign: StageFn = async (ctx) => {
     queue = await db
       .select()
       .from(keywords)
-      .where(eq(keywords.status, "new"))
+      .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly))
       .orderBy(asc(keywords.designFailures), desc(keywords.score))
       .limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");

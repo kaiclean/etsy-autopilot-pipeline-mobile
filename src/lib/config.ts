@@ -310,7 +310,9 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
               ? `Ollama Cloud · ${config.ollama.model} · ${config.ollama.baseUrl}`
               : config.llmProvider === "omniroute"
                 ? `OmniRoute · ${config.omniroute.model ?? "OMNIROUTE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
-                : "Deterministic template writer.",
+                : env("LLM_PROVIDER") === "openai" || env("LLM_PROVIDER") === "ollama" || env("LLM_PROVIDER") === "omniroute"
+                  ? `LLM_PROVIDER=${env("LLM_PROVIDER")} but its API key is missing. Demo shops use the template writer; a live shop's listing stage fails.`
+                  : "Demo-only template writer. Set LLM_PROVIDER (openai, ollama, or omniroute) and its API key before a live shop drafts listings.",
         envVars: [
           "LLM_PROVIDER",
           "OPENAI_API_KEY",

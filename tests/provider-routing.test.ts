@@ -139,7 +139,8 @@ describe("provider selection", () => {
 
     delete process.env.OLLAMA_API_KEY;
     expect(config.llmProvider).toBe("mock");
-    expect(getLLMProvider().name).toBe("mock-template");
+    expect(getLLMProvider({ demo: true }).name).toBe("mock-template");
+    expect(() => getLLMProvider({ demo: false })).toThrow(/OLLAMA_API_KEY/);
   });
 
   it("selects OmniRoute for chat and for /images/generations only", async () => {

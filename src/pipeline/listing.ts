@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
@@ -57,8 +57,10 @@ export async function draftListing(opts: {
   /** Ladder price. When set, fees include the 15% offsite-ads line so the stored net matches that price. */
   priceChf?: number;
   llm?: LLMProvider;
+  /** Demo shops may use the template writer. Live shops require a real LLM provider. */
+  demo?: boolean;
 }) {
-  const llm = opts.llm ?? getLLMProvider();
+  const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
   const keyword = leadPhrase(opts.keyword, opts.niche, opts.product.type);
   const copy = await llm.writeListing({
     keyword,
@@ -113,6 +115,7 @@ async function listRung(
   rung: LadderRung,
   artworkUrl: string,
   automation: { podTargetMarginPct?: number; digitalTargetMarginPct?: number; assumeOffsiteAds: boolean },
+  llm: LLMProvider,
 ) {
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
@@ -123,6 +126,7 @@ async function listRung(
     digitalTargetMarginPct: automation.digitalTargetMarginPct,
     assumeOffsiteAds: automation.assumeOffsiteAds,
     priceChf: rung.priceChf,
+    llm,
   });
   const image = await listingImageForProduct({
     productType: rung.product.type,
@@ -196,9 +200,11 @@ export const runListing: StageFn = async (ctx) => {
     .select({ design: designs, phrase: keywords.phrase })
     .from(designs)
     .leftJoin(keywords, eq(designs.keywordId, keywords.id))
-    .where(eq(designs.status, "generated"))
+    .where(and(eq(designs.shopId, ctx.shopId), eq(designs.status, "generated"), ctx.demo ? undefined : eq(designs.isDemo, false)))
     .limit(10);
   if (pending.length === 0) return "No new designs waiting for listings.";
+  const llm = getLLMProvider({ demo: ctx.demo });
+  log(`Listing writer: ${llm.name}${llm.name === "mock-template" ? " (DEMO template copy)" : ""}`);
 
   let created = 0;
   let held = 0;
@@ -219,7 +225,7 @@ export const runListing: StageFn = async (ctx) => {
     let listed = 0;
     for (const rung of quoteLadder(design.niche)) {
       try {
-        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation);
+        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm);
         if (made.fixes.length) log(`Auto-fixed design #${design.id} ${rung.label} before the quality gate: ${made.fixes.join("; ")}`);
         if (made.errors.length) {
           invalid++;

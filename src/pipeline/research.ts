@@ -16,7 +16,7 @@ export const runResearch: StageFn = async (ctx) => {
   const candidates: KeywordCandidate[] = [];
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
-      const found = await source.collect();
+      const found = await source.collect({ demo: ctx.demo });
       log(`Source ${source.name}: ${found.length} candidates`);
       candidates.push(...found);
     } catch (e) {
@@ -42,6 +42,9 @@ export const runResearch: StageFn = async (ctx) => {
     log("Google Trends disabled (RESEARCH_GOOGLE_TRENDS=false)");
   }
 
+  // A live run re-scores a seeded demo phrase as real research, so it can be selected.
+  const claim = ctx.demo ? {} : { isDemo: false };
+  const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
   let upserted = 0;
   for (const c of preferMeasuredDemand(candidates)) {
     if (isNichePaused(c.niche)) {
@@ -61,7 +64,7 @@ export const runResearch: StageFn = async (ctx) => {
         })
         .onConflictDoUpdate({
           target: keywords.phrase,
-          set: { status: "rejected", updatedAt: ctx.now },
+          set: { status: "rejected", updatedAt: ctx.now, ...claim },
         });
       log(`Paused niche “${c.phrase}” (${c.niche}); not selected`);
       continue;
@@ -97,6 +100,7 @@ export const runResearch: StageFn = async (ctx) => {
           seasonalityScore: season,
           score,
           updatedAt: ctx.now,
+          ...claim,
           ...(trend != null ? { trendScore: trend } : {}),
           ...(measured
             ? { demandScore: demand, competitionScore: c.competition, source: c.source, niche: c.niche }
@@ -110,7 +114,9 @@ export const runResearch: StageFn = async (ctx) => {
   const top = await db
     .select({ id: keywords.id, phrase: keywords.phrase, score: keywords.score })
     .from(keywords)
-    .where(and(eq(keywords.status, "new"), inArray(keywords.niche, activeNiches().map((n) => n.id))))
+    .where(
+      and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), inArray(keywords.niche, activeNiches().map((n) => n.id)), liveOnly),
+    )
     .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(designsPerRun);
   if (top.length) {
@@ -119,7 +125,7 @@ export const runResearch: StageFn = async (ctx) => {
       .set({ status: "selected", updatedAt: ctx.now })
       .where(and(inArray(keywords.id, top.map((t) => t.id)), eq(keywords.status, "new")));
   }
-  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(keywords).where(eq(keywords.status, "new"));
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(keywords).where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly));
   log(`Selected for design: ${top.map((t) => `${t.phrase} (${t.score})`).join(", ") || "none"}`);
 
   if (top.length) {

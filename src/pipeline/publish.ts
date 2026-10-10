@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
@@ -46,7 +46,14 @@ export const runPublish: StageFn = async (ctx) => {
   const approved = await db
     .select()
     .from(listings)
-    .where(inArray(listings.status, ["approved", "failed"]))
+    .where(
+      and(
+        eq(listings.shopId, ctx.shopId),
+        inArray(listings.status, ["approved", "failed"]),
+        // Seeded demo rows never reach a live Etsy or Printify shop.
+        ctx.demo ? undefined : eq(listings.isDemo, false),
+      ),
+    )
     .limit(10);
   if (approved.length === 0) return "Nothing approved to publish.";
 
