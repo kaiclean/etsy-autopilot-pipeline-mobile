@@ -71,13 +71,6 @@
       "when": 1791657287303,
       "tag": "0010_pipeline_feedback",
       "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1791658152000,
-      "tag": "0011_publish_claim_version",
-      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, gte, inArray, lte, notLike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, notLike, sql } from "drizzle-orm";
 import { keywords, listings, orders } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
+import { realPublishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
@@ -11,8 +12,7 @@ import type { StageFn } from "./types";
 
 const TRENDS_LOOKUPS_PER_RUN = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const PERFORMANCE_ANALYTICS_DAYS = 30;
-const PERFORMANCE_SALES_DAYS = 90;
+const PERFORMANCE_ANALYTICS_FRESHNESS_DAYS = 30;
 
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
@@ -30,7 +30,7 @@ export const runResearch: StageFn = async (ctx) => {
   const trends = new Map<string, number>();
   if (config.googleTrendsEnabled) {
     // Rotate through candidates so each run refreshes a different slice.
-    const offset = Math.floor(ctx.now.getTime() / 864e5) % Math.max(1, candidates.length);
+    const offset = Math.floor(ctx.now.getTime() / DAY_MS) % Math.max(1, candidates.length);
     const slice = [...candidates.slice(offset), ...candidates.slice(0, offset)].slice(0, TRENDS_LOOKUPS_PER_RUN);
     for (const c of slice) {
       const t = await googleTrendScore(c.phrase);
@@ -57,16 +57,8 @@ export const runResearch: StageFn = async (ctx) => {
     : [];
   const keywordIdByPhrase = new Map(existingKeywords.map((keyword) => [keyword.phrase, keyword.id]));
   const performanceKeywordIds = existingKeywords.map((keyword) => keyword.id);
-  const performanceCutoff = new Date(ctx.now.getTime() - PERFORMANCE_ANALYTICS_DAYS * DAY_MS);
-  const realListing = and(
-    eq(listings.shopId, ctx.shopId),
-    eq(listings.status, "published"),
-    eq(listings.isDemo, false),
-    eq(listings.publishMode, "live"),
-    gte(listings.analyticsCheckedAt, performanceCutoff),
-    notLike(listings.etsyListingId, "dry-%"),
-    notLike(listings.etsyListingId, "demo-%"),
-  );
+  const performanceCutoff = new Date(ctx.now.getTime() - PERFORMANCE_ANALYTICS_FRESHNESS_DAYS * DAY_MS);
+  const realListing = realPublishedListingsWhere(ctx.shopId, performanceCutoff);
   const listingPerformance =
     performanceKeywordIds.length > 0
       ? await db
@@ -79,6 +71,7 @@ export const runResearch: StageFn = async (ctx) => {
           .where(and(realListing, inArray(listings.keywordId, performanceKeywordIds)))
           .groupBy(listings.keywordId)
       : [];
+  // Views and favorites are lifetime listing counters, so conversion uses lifetime matched sales too.
   const orderPerformance =
     performanceKeywordIds.length > 0
       ? await db
@@ -94,7 +87,6 @@ export const runResearch: StageFn = async (ctx) => {
               eq(orders.shopId, ctx.shopId),
               eq(orders.matchStatus, "matched"),
               eq(orders.isDemo, false),
-              gte(orders.createdAt, new Date(ctx.now.getTime() - PERFORMANCE_SALES_DAYS * DAY_MS)),
               lte(orders.createdAt, ctx.now),
             ),
           )

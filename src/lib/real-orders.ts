@@ -48,6 +48,41 @@ export function publishedListingsWhere(shopId: string): SQL {
   );
 }
 
+/** Actual live Etsy listings eligible for performance feedback, excluding demos and dry-run ids. */
+export function realPublishedListingsWhere(shopId: string, analyticsSince?: Date): SQL {
+  return defined(
+    and(
+      eq(listings.shopId, shopId),
+      eq(listings.status, "published"),
+      eq(listings.isDemo, false),
+      eq(listings.publishMode, "live"),
+      isNotNull(listings.etsyListingId),
+      notFakeListingWhere(),
+      analyticsSince ? gte(listings.analyticsCheckedAt, analyticsSince) : undefined,
+    ),
+  );
+}
+
+export function isRealPublishedListing(row: {
+  status: string;
+  isDemo: boolean;
+  publishMode: string | null;
+  etsyListingId: string | null;
+}) {
+  return (
+    row.status === "published" &&
+    !row.isDemo &&
+    row.publishMode === "live" &&
+    Boolean(row.etsyListingId) &&
+    !row.etsyListingId!.startsWith("dry-") &&
+    !row.etsyListingId!.startsWith("demo-")
+  );
+}
+
+function notFakeListingWhere(): SQL {
+  return defined(and(notLike(listings.etsyListingId, "dry-%"), notLike(listings.etsyListingId, "demo-%")));
+}
+
 /**
  * Fetch start when no real receipt exists.
  * The earlier of the shop row's `created_at` and a 60-day window is used so a

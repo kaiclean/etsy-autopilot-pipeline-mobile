@@ -32,7 +32,8 @@ export function absoluteUrl(url: string) {
 
 /** Same stored error is not sent again until this long after the last attempt. */
 export const PUBLISH_RETRY_MS = 24 * 60 * 60 * 1000;
-export const PUBLISH_STALE_MS = 15 * 60 * 1000;
+// Both publish routes have a 300-second max duration; four times that leaves room for cleanup.
+export const PUBLISH_STALE_MS = 20 * 60 * 1000;
 export const AMBIGUOUS_PUBLISH_ERROR_PREFIX = "Publish attempt ended without a recorded provider result.";
 export const AMBIGUOUS_PUBLISH_ERROR = `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} Check Etsy or Printify before retrying.`;
 
@@ -62,7 +63,7 @@ export const runPublish: StageFn = async (ctx) => {
         isNull(listings.podPublishedAt),
         isNotNull(listings.publishAttemptedAt),
         lt(listings.publishAttemptedAt, staleAttemptCutoff),
-        ctx.demo ? undefined : eq(listings.isDemo, false),
+        eq(listings.isDemo, ctx.demo),
       ),
     )
     .returning({ id: listings.id });

@@ -33,9 +33,9 @@ export const runAnalytics: StageFn = async (ctx) => {
     const df = Math.max(0, s.favorites - l.favorites);
     if (s.views !== l.views || s.favorites !== l.favorites) {
       await db.update(listings).set({ views: s.views, favorites: s.favorites }).where(eq(listings.id, l.id));
+      dViews += dv;
+      dFavs += df;
     }
-    dViews += dv;
-    dFavs += df;
   }
   if (checkedIds.length) {
     await db.update(listings).set({ analyticsCheckedAt: ctx.now }).where(inArray(listings.id, checkedIds));

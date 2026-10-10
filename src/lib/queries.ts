@@ -12,7 +12,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
-import { dashboardOrdersWhere, notFakeReceiptWhere } from "./real-orders";
+import { dashboardOrdersWhere, isRealPublishedListing, notFakeReceiptWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, loadPublishFailures, railwayDeploySha } from "./alerts";
@@ -372,15 +372,7 @@ export async function getAnalytics() {
   const views = series.reduce((s, x) => s + x.views, 0);
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
   const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads_actual + costByKind.other;
-  const publishedListings = allListings.filter(
-    (listing) =>
-      listing.status === "published" &&
-      listing.publishMode === "live" &&
-      !listing.isDemo &&
-      listing.etsyListingId &&
-      !listing.etsyListingId.startsWith("dry-") &&
-      !listing.etsyListingId.startsWith("demo-"),
-  );
+  const publishedListings = allListings.filter(isRealPublishedListing);
   const analyticsFreshCutoff = Date.now() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
   const freshAnalyticsListings = publishedListings.filter(
     (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,

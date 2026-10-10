@@ -26,7 +26,7 @@ export default async function AnalyticsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Analytics"
-        subtitle={`Last 30 days · ${freshnessSummary}`}
+        subtitle={`Last 30 days · all amounts in CHF · ${freshnessSummary}`}
         action={
           <AnalyticsExport
             rows={a.series.map((row) => ({
