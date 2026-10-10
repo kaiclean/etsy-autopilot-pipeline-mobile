@@ -37,7 +37,7 @@ export function podMockupUrl(preset: PodPreset, niche: string, artworkUrl?: stri
   return `/api/mockup/${preset}?${params.toString()}`;
 }
 
-/** PNG product scene (frame, mug, tee). Served by `/api/mockup/[preset]`, which composites `src` when it is real art. */
+/** PNG scene for every POD preset. `/api/mockup/[preset]` composites `src` when it is real art. */
 export const templateMockupProvider: MockupProvider = {
   name: "template-mockup",
   async tryCompose(req) {

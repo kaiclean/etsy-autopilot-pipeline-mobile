@@ -1,13 +1,20 @@
 import type { PodPreset } from "@/lib/fees";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 
-const PRODUCT_WORDS = /\b(?:t-?shirts?|shirts?|sweatshirts?|tees?|mugs?|posters?|prints?|printables?|digital|download|wall art)\b/gi;
+const PRODUCT_WORDS = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|t-?shirts?|shirts?|sweatshirts?|tees?|mugs?|posters?|prints?|printables?|digital|download|wall art)\b/gi;
 const NOUN: Record<PodPreset | "digital", string> = {
   digital: "Printable Wall Art",
   posterA3: "Poster",
   mug: "Mug",
   tshirt: "T-Shirt",
   sweatshirt: "Sweatshirt",
+  tote: "Tote Bag",
+  phoneCase: "Phone Case",
+  canvas: "Canvas",
+  sticker: "Sticker",
+  blanket: "Blanket",
+  hoodie: "Hoodie",
+  ornament: "Ornament",
 };
 
 export function productKeyword(keyword: string) {

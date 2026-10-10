@@ -85,6 +85,13 @@
       "when": 1791663600000,
       "tag": "0012_design_concept",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791671460000,
+      "tag": "0014_suppliers",
+      "breakpoints": true
     }
   ]
 }

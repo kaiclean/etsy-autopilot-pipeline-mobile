@@ -4,16 +4,17 @@ import { Bell, BellOff, Loader2, Moon, Power, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useOptimistic, useState, useSyncExternalStore, useTransition } from "react";
 import { toast } from "sonner";
-import { saveAutomation, savePushPrefs, setKillSwitch, setStagePaused } from "@/app/actions";
+import { saveAutomation, savePodProducts, savePushPrefs, setKillSwitch, setStagePaused } from "@/app/actions";
 import { Panel, STAGE_ICONS } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { StageName } from "@/db/schema";
 import { describeCron } from "@/lib/cron";
+import { POD_PRESETS, podCostChf, type PodPreset } from "@/lib/fees";
 import { relTime } from "@/lib/format";
 import { PUSH_PREF_OPTIONS, type PushPrefKey, type PushPrefs } from "@/lib/push-prefs";
-import type { AutomationSettings, StageSettings } from "@/lib/settings";
+import type { AutomationSettings, PodProductSettings, StageSettings } from "@/lib/settings";
 import { STAGES } from "@/pipeline/types";
 import { cn } from "@/lib/utils";
 
@@ -140,6 +141,92 @@ export function BudgetsForm({ automation }: { automation: AutomationSettings }) 
           }
         >
           {pending ? <Loader2 className="animate-spin" /> : "Save budgets"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
+export function PodProductsForm({ podProducts, gelatoConfigured }: { podProducts: PodProductSettings; gelatoConfigured: boolean }) {
+  const [values, setValues] = useState(podProducts);
+  const [saved, setSaved] = useState(podProducts);
+  const [pending, start] = useTransition();
+  const presets = Object.keys(POD_PRESETS) as PodPreset[];
+  const dirty = presets.some((preset) =>
+    values.enabledPresets.includes(preset) !== saved.enabledPresets.includes(preset) ||
+    (values.suppliers[preset] ?? "printify") !== (saved.suppliers[preset] ?? "printify"),
+  );
+
+  return (
+    <Panel className="divide-y divide-border">
+      <div className="space-y-2 px-4 py-3 text-xs text-muted-foreground">
+        <p>Printify is the default supplier. Only the original four products are enabled by default.</p>
+        <p>Numeric costs for the original four products are legacy plan estimates, not verified live catalog quotes. — means unknown cost. Products without known production and shipping costs are skipped when drafting listings. Gelato costs are unverified and its writes remain dry-run only. These settings do not enable publishing.</p>
+        <p>Gelato and the seven new product types are draft previews held for review, not live fulfillment. Approval remains blocked for these previews even when costs become available.</p>
+        {!gelatoConfigured && <p>Set GELATO_API_KEY on the host to select Gelato. The key is never shown here.</p>}
+      </div>
+      {presets.map((preset) => {
+        const supplier = values.suppliers[preset] ?? "printify";
+        const cost = supplier === "gelato" ? null : podCostChf(preset);
+        return (
+          <div key={preset} className="space-y-2 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <label htmlFor={`pod-${preset}`} className="flex-1 text-sm font-medium">{POD_PRESETS[preset].label}</label>
+              <Switch
+                id={`pod-${preset}`}
+                checked={values.enabledPresets.includes(preset)}
+                disabled={pending}
+                onCheckedChange={(enabled) => setValues((current) => ({
+                  ...current,
+                  enabledPresets: enabled
+                    ? [...current.enabledPresets, preset]
+                    : current.enabledPresets.filter((item) => item !== preset),
+                }))}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <select
+                aria-label={`Supplier for ${POD_PRESETS[preset].label}`}
+                className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
+                value={supplier}
+                disabled={pending}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (next === "printify" || (next === "gelato" && gelatoConfigured)) {
+                    setValues((current) => ({ ...current, suppliers: { ...current.suppliers, [preset]: next } }));
+                  }
+                }}
+              >
+                <option value="printify">Printify (default)</option>
+                <option value="gelato" disabled={!gelatoConfigured}>Gelato (dry-run only)</option>
+              </select>
+              <span className="text-xs text-muted-foreground">
+                {cost === null ? "Cost + shipping" : "Legacy plan estimate (cost + shipping)"}: <span className="tabular">{cost === null ? "—" : `CHF ${cost.toFixed(2)}`}</span>
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex justify-end p-3">
+        <Button
+          disabled={!dirty || pending}
+          className="h-10 rounded-xl px-5"
+          onClick={() => start(async () => {
+            try {
+              const result = await savePodProducts(values);
+              if (!result.ok) {
+                toast.error(result.error);
+                return;
+              }
+              setValues(result.podProducts);
+              setSaved(result.podProducts);
+              toast.success("POD products saved");
+            } catch {
+              toast.error("Could not save POD products. Try again.");
+            }
+          })}
+        >
+          {pending ? <Loader2 className="animate-spin" /> : "Save POD products"}
         </Button>
       </div>
     </Panel>

@@ -208,12 +208,28 @@ export const POD_PRESETS = {
   mug: { label: "Mug 11oz", baseUsd: 5.9, shippingUsd: 5.49, marketAnchorChf: 19.9 },
   tshirt: { label: "Unisex tee", baseUsd: 9.25, shippingUsd: 4.75, marketAnchorChf: 24.9 },
   sweatshirt: { label: "Crewneck sweatshirt", baseUsd: 17.5, shippingUsd: 6.99, marketAnchorChf: 36.9 },
+  // Unverified placeholders, not prices. Source: https://api.printify.com/v1/catalog/blueprints.json
+  tote: { label: "Tote bag", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  phoneCase: { label: "Phone case", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  canvas: { label: "Canvas", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  sticker: { label: "Sticker", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  blanket: { label: "Blanket", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  hoodie: { label: "Hoodie", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
+  ornament: { label: "Ornament", baseUsd: null, shippingUsd: null, marketAnchorChf: undefined },
 } as const;
 
 export type PodPreset = keyof typeof POD_PRESETS;
+export const DEFAULT_POD_PRESETS: readonly PodPreset[] = ["posterA3", "mug", "tshirt", "sweatshirt"];
 
-export function podCostChf(preset: PodPreset) {
+export function isPodPreset(value: string): value is PodPreset {
+  return Object.hasOwn(POD_PRESETS, value);
+}
+
+export function podCostChf(preset: "posterA3" | "mug" | "tshirt" | "sweatshirt"): number;
+export function podCostChf(preset: PodPreset): number | null;
+export function podCostChf(preset: PodPreset): number | null {
   const p = POD_PRESETS[preset];
+  if (p.baseUsd == null || p.shippingUsd == null) return null;
   return round2(usdToChf(p.baseUsd + p.shippingUsd));
 }
 

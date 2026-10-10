@@ -1,4 +1,5 @@
 import { deflateSync, inflateSync } from "node:zlib";
+import { isPodPreset, type PodPreset } from "@/lib/fees";
 
 type RGB = [number, number, number];
 
@@ -135,7 +136,7 @@ const ACCENT: Record<string, RGB> = {
  * Lifestyle product PNG. When `artwork` is set, it is cover-cropped into the print
  * window (mug, garment chest, poster opening). Without it, the window stays a flat accent.
  */
-export function podMockupPng(preset: "posterA3" | "mug" | "tshirt" | "sweatshirt", niche: string, artwork?: RgbImage | null) {
+export function podMockupPng(preset: PodPreset, niche: string, artwork?: RgbImage | null) {
   const accent = ACCENT[niche] ?? ACCENT.alpine!;
   const wall: RGB = niche === "gothic" ? [32, 24, 36] : niche === "christmas" ? [245, 236, 228] : [236, 230, 222];
   const print = (blit: (image: RgbImage, x: number, y: number, w: number, h: number) => void, fill: (x: number, y: number, w: number, h: number, color: RGB) => void, x: number, y: number, w: number, h: number) => {
@@ -154,14 +155,62 @@ export function podMockupPng(preset: "posterA3" | "mug" | "tshirt" | "sweatshirt
       fill(150, 440, 186, 16, [160, 130, 104]);
       return;
     }
-    if (preset === "tshirt" || preset === "sweatshirt") {
-      const bulky = preset === "sweatshirt";
+    if (preset === "tshirt" || preset === "sweatshirt" || preset === "hoodie") {
+      const bulky = preset !== "tshirt";
+      if (preset === "hoodie") {
+        fill(160, 90, 160, 110, [248, 246, 242]);
+        fill(195, 115, 90, 60, wall);
+      }
       fill(0, 520, 480, 120, [214, 208, 200]);
       fill(90, bulky ? 150 : 170, 300, bulky ? 360 : 320, [248, 246, 242]);
       fill(40, 190, 70, 110, [248, 246, 242]);
       fill(370, 190, 70, 110, [248, 246, 242]);
       print(blit, fill, 150, bulky ? 230 : 250, 180, bulky ? 140 : 120);
       if (bulky) fill(90, 480, 300, 30, [230, 226, 220]);
+      return;
+    }
+    if (preset === "tote") {
+      fill(145, 150, 190, 160, [232, 220, 198]);
+      fill(170, 175, 140, 135, wall);
+      fill(100, 280, 280, 240, [232, 220, 198]);
+      print(blit, fill, 145, 315, 190, 170);
+      return;
+    }
+    if (preset === "phoneCase") {
+      fill(142, 135, 196, 390, [40, 40, 42]);
+      print(blit, fill, 152, 145, 176, 370);
+      fill(165, 160, 64, 74, [40, 40, 42]);
+      fill(175, 170, 18, 18, [90, 90, 94]);
+      fill(201, 203, 18, 18, [90, 90, 94]);
+      return;
+    }
+    if (preset === "canvas") {
+      fill(98, 100, 300, 410, [188, 176, 160]);
+      print(blit, fill, 82, 85, 300, 410);
+      return;
+    }
+    if (preset === "sticker") {
+      fill(125, 190, 244, 244, [180, 174, 166]);
+      fill(115, 180, 244, 244, [255, 255, 255]);
+      print(blit, fill, 127, 192, 220, 220);
+      return;
+    }
+    if (preset === "blanket") {
+      fill(45, 170, 390, 350, [212, 206, 198]);
+      print(blit, fill, 55, 180, 370, 330);
+      for (let x = 65; x < 425; x += 20) fill(x, 510, 8, 20, [242, 238, 230]);
+      return;
+    }
+    if (preset === "ornament") {
+      fill(235, 55, 10, 145, [164, 126, 58]);
+      fill(225, 190, 30, 25, [164, 126, 58]);
+      print(blit, fill, 130, 215, 220, 220);
+      // Mask the artwork into a round ceramic ornament.
+      for (let y = 0; y < 220; y++) {
+        const inset = Math.ceil(110 - Math.sqrt(Math.max(0, 110 ** 2 - (y - 110) ** 2)));
+        fill(130, 215 + y, inset, 1, wall);
+        fill(350 - inset, 215 + y, inset, 1, wall);
+      }
       return;
     }
     fill(0, 560, 480, 80, [214, 206, 196]);
@@ -216,12 +265,12 @@ export function localAssetPng(url: string): Buffer | null {
   } catch {
     return null;
   }
-  const preset = parsed.pathname.match(/\/api\/mockup\/(posterA3|mug|tshirt|sweatshirt)/)?.[1];
-  if (!preset) return null;
+  const preset = parsed.pathname.match(/^\/api\/mockup\/([^/]+)$/)?.[1];
+  if (!preset || !isPodPreset(preset)) return null;
   const src = parsed.searchParams.get("src");
   const nested = src && !src.includes("/api/mockup/") ? (placeholderPng(src) ?? previewPng(src)) : null;
   const artwork = nested ? decodePng(nested) : null;
-  return podMockupPng(preset as "posterA3" | "mug" | "tshirt" | "sweatshirt", parsed.searchParams.get("niche") ?? "alpine", artwork);
+  return podMockupPng(preset, parsed.searchParams.get("niche") ?? "alpine", artwork);
 }
 
 export function previewPng(url: string): Buffer | null {

@@ -20,6 +20,13 @@ const RULES: Record<PodPreset, { title: RegExp; avoid: RegExp; variant: RegExp }
   mug: { title: /\bmug\b/i, avoid: /travel|tumbler|latte|magic/i, variant: /11\s?oz/i },
   tshirt: { title: /t-?shirt|\btee\b/i, avoid: /long sleeve|tank|youth|kids|toddler|baby|v-neck|polo|hoodie|sweat/i, variant: /\bM\b|\bmedium\b/i },
   sweatshirt: { title: /sweatshirt|crewneck/i, avoid: /hoodie|youth|kids|zip/i, variant: /\bM\b|\bmedium\b/i },
+  tote: { title: /\btote\b/i, avoid: /backpack|pouch/i, variant: /15\s*[x×]\s*16|one size|medium/i },
+  phoneCase: { title: /phone case|tough case|snap case/i, avoid: /sleeve|wallet/i, variant: /iphone 15\b/i },
+  canvas: { title: /\bcanvas\b/i, avoid: /framed|floating|bag/i, variant: /12\s*[x×]\s*18/i },
+  sticker: { title: /\bstickers?\b/i, avoid: /sheet|roll/i, variant: /3\s*[x×]\s*3/i },
+  blanket: { title: /\bblanket\b/i, avoid: /baby|hooded/i, variant: /50\s*[x×]\s*60/i },
+  hoodie: { title: /hoodie|hooded sweatshirt/i, avoid: /youth|kids|zip/i, variant: /\bM\b|\bmedium\b/i },
+  ornament: { title: /\bornaments?\b/i, avoid: /pack|set/i, variant: /round|circle/i },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,9 +64,8 @@ export function pickBlueprint(preset: PodPreset, rows: BlueprintRow[]): Blueprin
   const rule = RULES[preset];
   const ranked = rows
     .map((row) => {
-      if (!rule.title.test(row.title)) return undefined;
+      if (!rule.title.test(row.title) || rule.avoid.test(row.title)) return undefined;
       let score = 10;
-      if (rule.avoid.test(row.title)) score -= 6;
       if (/unisex/i.test(row.title)) score += 3;
       if (score <= 0) return undefined;
       return { row, score };
@@ -74,7 +80,7 @@ export function pickProvider(rows: ProviderRow[]): ProviderRow | undefined {
 }
 
 function variantText(row: VariantRow) {
-  return `${row.title} ${Object.values(row.options ?? {}).join(" ")}`;
+  return `${row.title} ${Object.values(row.options ?? {}).join(" ")}`.replace(/["″]/g, "");
 }
 
 /** One enabled variant: the preset's size, white when that color exists, with a front print area. */

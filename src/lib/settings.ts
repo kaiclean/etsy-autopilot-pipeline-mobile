@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
 import { settings } from "@/db/schema";
 import type { StageName } from "@/db/schema";
-import { MARGIN_TARGETS } from "@/lib/fees";
+import { DEFAULT_POD_PRESETS, isPodPreset, MARGIN_TARGETS, type PodPreset } from "@/lib/fees";
 import { DEFAULT_PUSH_PREFS, type PushPrefs } from "@/lib/push-prefs";
 
 export type AutomationSettings = {
@@ -27,6 +27,33 @@ export type AutomationSettings = {
 };
 
 export type StageSettings = Record<StageName, { paused: boolean; cron: string }>;
+
+export type PodProductSettings = {
+  enabledPresets: PodPreset[];
+  suppliers: Partial<Record<PodPreset, "printify" | "gelato">>;
+};
+
+export const DEFAULT_POD_PRODUCTS: PodProductSettings = {
+  enabledPresets: [...DEFAULT_POD_PRESETS],
+  suppliers: {},
+};
+
+/** Stored JSON is untrusted; absent fields preserve the existing four-product behavior. */
+export function normalizePodProductSettings(value: unknown): PodProductSettings {
+  const input = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const enabledPresets = Array.isArray(input.enabledPresets)
+    ? [...new Set(input.enabledPresets.filter((preset): preset is PodPreset => typeof preset === "string" && isPodPreset(preset)))]
+    : [...DEFAULT_POD_PRESETS];
+  const suppliers: PodProductSettings["suppliers"] = {};
+  if (input.suppliers && typeof input.suppliers === "object" && !Array.isArray(input.suppliers)) {
+    for (const [preset, supplier] of Object.entries(input.suppliers)) {
+      if (isPodPreset(preset) && (supplier === "printify" || supplier === "gelato")) suppliers[preset] = supplier;
+    }
+  }
+  return { enabledPresets, suppliers };
+}
 
 export type EtsyTokens = {
   accessToken: string;
@@ -87,6 +114,7 @@ type SettingMap = {
   pushPrefs: PushPrefs;
   catalogDraft: CatalogDraftSetting;
   manifestBackfill: ManifestBackfillCursor;
+  podProducts: PodProductSettings;
 };
 
 const DEFAULTS: SettingMap = {
@@ -96,10 +124,12 @@ const DEFAULTS: SettingMap = {
   pushPrefs: DEFAULT_PUSH_PREFS,
   catalogDraft: DEFAULT_CATALOG_DRAFT,
   manifestBackfill: { afterId: 0 },
+  podProducts: DEFAULT_POD_PRODUCTS,
 };
 
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {
   const [row] = await db.select().from(settings).where(eq(settings.key, key));
+  if (key === "podProducts") return normalizePodProductSettings(row?.value) as SettingMap[K];
   if (!row) return DEFAULTS[key];
   const def = DEFAULTS[key];
   if (def && typeof def === "object" && !Array.isArray(def)) {
