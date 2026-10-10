@@ -38,6 +38,7 @@ describe("design audit", () => {
     expect(buildProductTitle("gothic floral shirt", title, "tshirt")).toMatch(/^Gothic Floral T-Shirt/i);
     expect(buildProductTitle("gothic floral shirt", title, "sweatshirt")).toMatch(/^Gothic Floral Sweatshirt/i);
     expect(buildProductTitle("gothic floral shirt", title, "digital")).toMatch(/^Gothic Floral Printable Wall Art/i);
+    expect(buildProductTitle("shirt", title, "mug")).not.toMatch(/shirt/i);
     expect(buildProductTitle("gothic floral shirt", title.repeat(5), "mug").length).toBeLessThanOrEqual(140);
   });
 });

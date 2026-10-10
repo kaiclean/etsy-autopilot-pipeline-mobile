@@ -1,5 +1,5 @@
 import { isPlaceholderUrl, isSafeArtworkUrl, MIN_PRINT_EDGE } from "@/lib/art-quality";
-import { uploadImageBytes } from "@/lib/object-storage";
+import { MAX_ARTWORK_BYTES, uploadImageBytes } from "@/lib/object-storage";
 import { colorVariance, decodePng, encodeRgbPng, placeholderPng, previewPng, scaleToLongEdge } from "@/lib/png";
 
 export const PRINT_LONG_EDGE = 2048;
@@ -25,7 +25,7 @@ async function loadImageBytes(url: string): Promise<Buffer | null> {
   const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(15000) });
   if (!res.ok) return null;
   const bytes = Buffer.from(await res.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > 15_000_000) return null;
+  if (bytes.length === 0 || bytes.length > MAX_ARTWORK_BYTES) return null;
   return bytes;
 }
 

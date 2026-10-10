@@ -194,8 +194,8 @@ describe("paused digital mixes and image style", () => {
     for (const niche of Object.values(NICHES)) {
       expect(niche.style).not.toMatch(/hand lettering|transparent|editable|template/i);
       const prompt = buildPrompt("sample subject", niche.style);
-      expect(prompt).toMatch(/no text/i);
-      expect(prompt).toMatch(/not transparent/i);
+      expect(prompt).toMatch(/without text|no text/i);
+      expect(prompt).toMatch(/opaque background/i);
       expect(prompt).not.toMatch(/hand lettering|transparent png/i);
     }
   });

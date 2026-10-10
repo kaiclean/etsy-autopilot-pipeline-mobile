@@ -52,7 +52,7 @@ describe("artwork compositing and the art gate", () => {
     const flat = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 2400, printHeight: 3000, colorVariance: colorVariance(solid) });
     expect(flat.reasons.map((reason) => reason.code)).toContain("flat_art");
 
-    const ok = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 2400, printHeight: 3000, colorVariance: 40 });
+    const ok = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 3510, printHeight: 5265, colorVariance: 40 });
     expect(ok.pass).toBe(true);
   });
 });

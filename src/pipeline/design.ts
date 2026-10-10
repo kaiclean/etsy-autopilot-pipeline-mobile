@@ -27,14 +27,14 @@ export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
 
 const NICHE_PROMPTS: Record<string, string> = {
   alpine:
-    "Bestselling Etsy alpine wall art: layered Swiss mountain ridges, a quiet lake, soft film grain, muted sage and stone, generous negative space, painterly but crisp, print-ready",
+    "Alpine wall art with a clear mountain or landscape focal subject, painterly but crisp and print-ready",
   gothic: "Dark botanical art with a clearly readable focal subject",
   christmas:
-    "Bestselling Etsy cozy Christmas illustration: warm candlelight, pine green and deep red, a snowy cabin, hygge still life, hand-drawn texture, gift-ready and highly detailed",
+    "Cozy winter illustration with a clearly readable seasonal focal subject and hand-drawn texture",
   birthday:
-    "Bestselling Etsy birthday illustration: playful pastel shapes, soft paper texture, a small celebration still life, opaque background, charming and print-ready",
+    "Playful birthday illustration with a clear celebration still life, opaque background and paper texture",
   stream:
-    "Bestselling Etsy neon scene: saturated purple and cyan light, a solid opaque background, crisp shapes, high contrast, no frames and no interface chrome",
+    "Neon scene with crisp shapes, high contrast and an opaque background without interface chrome",
 };
 
 /** After this many provider failures, the keyword returns to the backlog so research can pick another. */
@@ -54,15 +54,13 @@ export function chooseConcept(niche: string, recent: string[]) {
 
 export function buildPrompt(phrase: string, style: string, niche?: string, concept?: string) {
   const look = (niche && NICHE_PROMPTS[niche]) || style;
-  return `${look}. Subject: ${productKeyword(phrase) || phrase}. ${concept ? `Concept: ${concept}. ` : ""}Original full-bleed composition with a detailed central subject and high contrast, crisp detail and rich color variation throughout the whole image. Clean finished artwork without text, letters, lettering, signatures, stamps, watermarks, logos, frames, borders or bevels unless the brief explicitly asks for them. Opaque background with meaningful visual detail, not an empty or solid color block. No brand names or trademarked characters.`;
+  return `${look}. Subject: ${productKeyword(phrase) || "original art"}. ${concept ? `Concept: ${concept}. ` : ""}Original full-bleed composition with a detailed central subject and high contrast, crisp detail and rich color variation throughout the whole image. Clean finished artwork without text, letters, lettering, signatures, stamps, watermarks, logos, frames, borders or bevels unless the brief explicitly asks for them. Opaque background with meaningful visual detail, not an empty or solid color block. No brand names or trademarked characters.`;
 }
 
 export const runDesign: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const automation = await getSetting(db, "automation");
   const provider = getImageProvider({ demo: ctx.demo });
-  const vision = getLLMProvider({ demo: ctx.demo });
-  if (!vision.assessImage) throw new Error("Configured LLM does not support image assessment");
   log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
   // Seeded demo keywords are never sent to a paid image provider for a live shop.
@@ -85,6 +83,8 @@ export const runDesign: StageFn = async (ctx) => {
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");
   }
   if (queue.length === 0) return "No keywords to design for. Run Research first.";
+  const vision = getLLMProvider({ demo: ctx.demo });
+  if (!vision.assessImage) throw new Error("Configured LLM does not support image assessment");
 
   const dayStart = new Date(ctx.now);
   dayStart.setUTCHours(0, 0, 0, 0);

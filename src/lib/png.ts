@@ -283,13 +283,13 @@ export function decodePng(buf: Buffer): RgbImage | null {
     } else if (type === "IDAT") idat.push(Buffer.from(data));
     else if (type === "IEND") break;
   }
-  if (!width || !height || width > 8000 || height > 8000 || bitDepth !== 8 || interlace !== 0) return null;
+  if (!width || !height || width > 8000 || height > 8000 || width * height > 25_000_000 || bitDepth !== 8 || interlace !== 0) return null;
   if (colorType !== 2 && colorType !== 6) return null;
   const channels = colorType === 6 ? 4 : 3;
   const stride = width * channels;
   let inflated: Buffer;
   try {
-    inflated = inflateSync(Buffer.concat(idat));
+    inflated = inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
   } catch {
     return null;
   }

@@ -64,7 +64,7 @@ export async function draftListing(opts: {
   artDirection?: string;
 }) {
   const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
-  const keyword = leadPhrase(productKeyword(opts.keyword) || opts.keyword, opts.niche, opts.product.type);
+  const keyword = leadPhrase(productKeyword(opts.keyword) || "original art", opts.niche, opts.product.type);
   const copy = await llm.writeListing({
     keyword,
     niche: opts.niche,
@@ -76,7 +76,7 @@ export async function draftListing(opts: {
   const product = opts.product.type === "digital" ? "digital" : opts.product.pod ?? "posterA3";
   const title = buildProductTitle(opts.keyword, copy.title, product);
   const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
-  const tags = copy.tags.filter((tag) => !styleClaims.test(tag) || opts.artDirection?.toLowerCase().includes(tag.toLowerCase()));
+  const tags = copy.tags.filter((tag) => !styleClaims.test(tag));
   const preset = opts.product.pod ?? "posterA3";
   const pod = opts.product.type === "pod" ? podCostChf(preset) : 0;
   const band = NICHES[opts.niche].priceBand[opts.product.type];

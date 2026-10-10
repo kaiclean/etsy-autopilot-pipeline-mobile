@@ -8,7 +8,7 @@ export type MaterializeDeps = {
 };
 
 const DATA_URL = /^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/;
-const MAX_BYTES = 15 * 1024 * 1024;
+export const MAX_ARTWORK_BYTES = 50 * 1024 * 1024;
 
 /** Keys the media proxy is willing to stream. Untrusted path segments are rejected. */
 export const MEDIA_KEY = /^designs\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.(png|jpe?g|webp|gif)$/i;
@@ -70,7 +70,7 @@ async function urlForStoredKey(key: string): Promise<string> {
 export async function uploadImageBytes(bytes: Buffer, contentType: string): Promise<StoredObject | null> {
   const backend = storageBackend();
   if (backend === "none") return null;
-  if (bytes.length > MAX_BYTES) throw new Error("Generated image is larger than 15MB");
+  if (bytes.length > MAX_ARTWORK_BYTES) throw new Error("Generated image is larger than 50MB");
   const key = newObjectKey(contentType);
   if (backend === "s3") {
     const { PutObjectCommand } = await import("@aws-sdk/client-s3");
