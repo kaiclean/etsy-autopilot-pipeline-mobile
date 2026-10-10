@@ -3,6 +3,7 @@ import { HiggsfieldImageProvider } from "./higgsfield";
 import { MockImageProvider } from "./mock";
 import { OpenAIImageProvider } from "./openai";
 import { ReplicateImageProvider } from "./replicate";
+import { RunPodImageProvider } from "./runpod";
 import type { ImageProvider } from "./types";
 
 let providerOverride: ImageProvider | null = null;
@@ -36,9 +37,11 @@ export function getImageProvider(opts?: { demo?: boolean }): ImageProvider {
     }
     case "replicate":
       return new ReplicateImageProvider();
+    case "runpod":
+      return new RunPodImageProvider();
     default:
       if (opts?.demo) return new MockImageProvider();
-      throw new Error("IMAGE_PROVIDER must be openai, replicate, higgsfield, or omniroute. Mock artwork is only used in demo mode.");
+      throw new Error("IMAGE_PROVIDER must be openai, replicate, higgsfield, omniroute, or runpod. Mock artwork is only used in demo mode.");
   }
 }
 

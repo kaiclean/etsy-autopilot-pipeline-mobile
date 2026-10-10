@@ -105,9 +105,18 @@ export const config = {
   get replicateToken() {
     return env("REPLICATE_API_TOKEN");
   },
-  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" | "omniroute" {
+  get runpod() {
+    const cost = Number(env("RUNPOD_COST_PER_IMAGE_CHF") ?? "0.05");
+    return {
+      apiKey: env("RUNPOD_API_KEY"),
+      endpointId: env("RUNPOD_ENDPOINT_ID"),
+      workflow: env("RUNPOD_COMFY_WORKFLOW"),
+      costPerImageChf: Number.isFinite(cost) && cost > 0 ? cost : 0.05,
+    };
+  },
+  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" | "omniroute" | "runpod" {
     const p = env("IMAGE_PROVIDER");
-    if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute") return p;
+    if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute" || p === "runpod") return p;
     return "mock";
   },
   get llmProvider(): "mock" | "openai" | "ollama" | "omniroute" {
@@ -271,14 +280,24 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
       {
         id: "images",
         name: "Image generation",
-        status: config.imageProvider === "mock" ? "mock" : "configured",
+        status:
+          config.imageProvider === "mock"
+            ? "mock"
+            : config.imageProvider === "runpod" &&
+                (!config.runpod.apiKey || !config.runpod.endpointId || !config.runpod.workflow)
+              ? "missing"
+              : "configured",
         detail:
           config.imageProvider === "mock"
-            ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute."
+            ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute|runpod."
             : config.imageProvider === "openai"
               ? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`
               : config.imageProvider === "omniroute"
                 ? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
+                : config.imageProvider === "runpod"
+                ? !config.runpod.apiKey || !config.runpod.endpointId || !config.runpod.workflow
+                  ? "RunPod needs RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW. Secret values are hidden."
+                  : `RunPod Serverless · endpoint ${config.runpod.endpointId}. API key and workflow are hidden.`
                 : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
         envVars: [
           "IMAGE_PROVIDER",
@@ -294,6 +313,9 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
           "HIGGSFIELD_API_KEY",
           "HIGGSFIELD_API_SECRET",
           "REPLICATE_API_TOKEN",
+          "RUNPOD_API_KEY",
+          "RUNPOD_ENDPOINT_ID",
+          "RUNPOD_COMFY_WORKFLOW",
         ],
       },
       opts?.providerCredits,

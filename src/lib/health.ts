@@ -316,6 +316,9 @@ function imageProviderCheck(): HealthCheck {
     "HIGGSFIELD_API_KEY",
     "HIGGSFIELD_API_SECRET",
     "REPLICATE_API_TOKEN",
+    "RUNPOD_API_KEY",
+    "RUNPOD_ENDPOINT_ID",
+    "RUNPOD_COMFY_WORKFLOW",
   ];
   const provider = config.imageProvider;
   if (provider === "openai") {
@@ -401,12 +404,33 @@ function imageProviderCheck(): HealthCheck {
       envVars,
     };
   }
+  if (provider === "runpod") {
+    const runpod = config.runpod;
+    if (!runpod.apiKey || !runpod.endpointId || !runpod.workflow) {
+      return {
+        id: "images",
+        name: "Image provider",
+        level: "red",
+        label: "Incomplete",
+        detail: "RunPod needs RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW. Secret values are hidden.",
+        envVars,
+      };
+    }
+    return {
+      id: "images",
+      name: "Image provider",
+      level: "green",
+      label: "Ready",
+      detail: `RunPod Serverless · endpoint ${runpod.endpointId}. API key and workflow are hidden.`,
+      envVars,
+    };
+  }
   return {
     id: "images",
     name: "Image provider",
     level: "yellow",
     label: "Mock",
-    detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, replicate, or omniroute. IMAGE_BASE_URL falls back to OPENAI_BASE_URL.",
+    detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, replicate, omniroute, or runpod. IMAGE_BASE_URL falls back to OPENAI_BASE_URL.",
     envVars,
   };
 }

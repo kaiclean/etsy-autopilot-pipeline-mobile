@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { RunPodImageProvider } from "@/adapters/image/runpod";
 
 export type ProbeStatus = "ok" | "401" | "402" | "404" | "model not found" | "skipped" | "error";
 
@@ -113,6 +114,20 @@ async function probeText(): Promise<ProbeResult> {
 }
 
 async function probeImage(): Promise<ProbeResult> {
+  if (config.imageProvider === "runpod") {
+    try {
+      await new RunPodImageProvider().generate({
+        prompt: "a small red square",
+        niche: "alpine",
+        seed: 1,
+        aspectRatio: "1:1",
+      });
+      return result("image", "ok", 200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "RunPod image request failed";
+      return result("image", "error", undefined, message);
+    }
+  }
   const target = imageTarget();
   if ("skip" in target) return target.skip;
   const paths = target.openRouter ? ["/images", "/images/generations"] : ["/images/generations"];

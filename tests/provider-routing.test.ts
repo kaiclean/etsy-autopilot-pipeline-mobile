@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getImageProvider, setImageProviderForTests } from "@/adapters/image";
 import { OpenAIImageProvider } from "@/adapters/image/openai";
+import { RunPodImageProvider } from "@/adapters/image/runpod";
 import { getLLMProvider } from "@/adapters/llm";
 import { OpenAILLMProvider } from "@/adapters/llm/openai";
 import { config, integrationStatus } from "@/lib/config";
@@ -24,6 +25,9 @@ const ENV_KEYS = [
   "OMNIROUTE_BASE_URL",
   "OMNIROUTE_MODEL",
   "OMNIROUTE_IMAGE_MODEL",
+  "RUNPOD_API_KEY",
+  "RUNPOD_ENDPOINT_ID",
+  "RUNPOD_COMFY_WORKFLOW",
   "APP_URL",
   "PUBLISH_MODE",
 ] as const;
@@ -112,6 +116,67 @@ describe("image endpoint fallbacks", () => {
 });
 
 describe("provider selection", () => {
+  it("runs a ComfyUI workflow on RunPod and extracts the generated image", async () => {
+    process.env.IMAGE_PROVIDER = "runpod";
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "endpoint-test";
+    process.env.RUNPOD_COMFY_WORKFLOW = JSON.stringify({
+      "6": { inputs: { text: "{{PROMPT}}" } },
+      "5": { inputs: { seed: "{{SEED}}", width: "{{WIDTH}}", height: "{{HEIGHT}}" } },
+    });
+    const calls = installFetch((index) =>
+      index === 0
+        ? jsonResponse(200, { id: "job-test", status: "IN_QUEUE" })
+        : jsonResponse(200, {
+            id: "job-test",
+            status: "COMPLETED",
+            output: { images: [{ type: "base64", data: "cG5n" }] },
+          }),
+    );
+
+    expect(getImageProvider().name).toBe("runpod");
+    const image = await new RunPodImageProvider({ pollMs: 0 }).generate({
+      prompt: "a test poster",
+      niche: "alpine",
+      seed: 123,
+      aspectRatio: "1:1",
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://api.runpod.ai/v2/endpoint-test/run",
+      "https://api.runpod.ai/v2/endpoint-test/status/job-test",
+    ]);
+    expect(calls[0].init?.headers?.Authorization).toBe(["Bearer", "runpod-test-key"].join(" "));
+    expect(JSON.parse(String(calls[0].init?.body)).input.workflow).toEqual({
+      "6": { inputs: { text: "a test poster" } },
+      "5": { inputs: { seed: 123, width: 1024, height: 1024 } },
+    });
+    expect(image).toMatchObject({
+      url: "data:image/png;base64,cG5n",
+      provider: "runpod",
+      costChf: 0.05,
+    });
+    expect(integrationStatus(false).find((row) => row.id === "images")?.detail).toContain("RunPod Serverless");
+    expect(connectionHealth({ etsyConnected: false }).find((row) => row.id === "images")?.label).toBe("Ready");
+  });
+
+  it("tests RunPod image generation with the configured workflow", async () => {
+    process.env.IMAGE_PROVIDER = "runpod";
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "endpoint-test";
+    process.env.RUNPOD_COMFY_WORKFLOW = JSON.stringify({ "6": { inputs: { text: "{{PROMPT}}" } } });
+    const calls = installFetch(() =>
+      jsonResponse(200, { status: "COMPLETED", output: { images: [{ type: "base64", data: "cG5n" }] } }),
+    );
+
+    const probes = await probeConnections();
+
+    expect(probes.image).toMatchObject({ status: "ok", httpStatus: 200 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.runpod.ai/v2/endpoint-test/run");
+    expect(JSON.stringify(probes)).not.toContain("runpod-test-key");
+  });
+
   it("selects Ollama Cloud for text and leaves images on their own host", async () => {
     process.env.LLM_PROVIDER = "ollama";
     process.env.OLLAMA_API_KEY = "ollama-test-key";

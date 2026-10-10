@@ -104,13 +104,17 @@ export const SETUP_STEPS: SetupStep[] = [
       "OMNIROUTE_API_KEY",
       "OMNIROUTE_MODEL",
       "OMNIROUTE_IMAGE_MODEL",
+      "RUNPOD_API_KEY",
+      "RUNPOD_ENDPOINT_ID",
+      "RUNPOD_COMFY_WORKFLOW",
     ],
     bullets: [
       "Ollama Cloud text: LLM_PROVIDER=ollama, OLLAMA_API_KEY, and OLLAMA_MODEL (default gemma4:31b). The base is fixed at https://ollama.com/v1. Chat calls POST /chat/completions.",
       "Do not send images to that host. Set IMAGE_BASE_URL, IMAGE_API_KEY, and IMAGE_MODEL. Each one falls back to OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_IMAGE_MODEL when it is empty.",
       "OmniRoute for both: LLM_PROVIDER=omniroute and IMAGE_PROVIDER=omniroute, plus OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY, OMNIROUTE_MODEL, and OMNIROUTE_IMAGE_MODEL. Text POSTs /chat/completions. Images POST /images/generations and accept url or b64_json.",
       "OpenAI or OpenRouter still work with LLM_PROVIDER=openai and IMAGE_PROVIDER=openai. OpenRouter uses OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
-      "Connections → Test connection sends one tiny text request and, when an OpenAI-compatible image provider is set, one low-cost image request. The result is ok, 401, 402, 404, or model not found. Keys are not shown.",
+      "RunPod Serverless ComfyUI: set IMAGE_PROVIDER=runpod, RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW to the endpoint ID and ComfyUI API-format workflow JSON. Use {{PROMPT}} in the positive prompt node; {{SEED}}, {{WIDTH}}, and {{HEIGHT}} are optional placeholders. Keep the API key in deployment secrets.",
+      "Connections → Test connection sends one tiny text request and one image request for OpenAI-compatible image providers. For RunPod it runs the configured workflow, which may incur GPU charges. Keys are not shown.",
     ],
   },
   {
@@ -184,7 +188,7 @@ export function stepStatus(step: SetupStep, presence: Record<string, boolean>, e
     return "missing";
   }
   if (step.id === "llm") {
-    const keys = ["OPENAI_API_KEY", "OLLAMA_API_KEY", "OMNIROUTE_API_KEY"];
+    const keys = ["OPENAI_API_KEY", "OLLAMA_API_KEY", "OMNIROUTE_API_KEY", "RUNPOD_API_KEY"];
     if (keys.some((name) => presence[name])) return "ready";
     if (step.optionalEnvVars.some((name) => presence[name])) return "partial";
     return "missing";
@@ -238,6 +242,10 @@ export function setupChecklist(): string {
     "OMNIROUTE_BASE_URL=",
     "OMNIROUTE_MODEL=",
     "OMNIROUTE_IMAGE_MODEL=",
+    "RUNPOD_API_KEY=",
+    "RUNPOD_ENDPOINT_ID=",
+    "RUNPOD_COMFY_WORKFLOW=",
+    "RUNPOD_COST_PER_IMAGE_CHF=0.05",
     "PUBLISH_MODE=dry-run",
     "DEMO_MODE=",
   ].join("\n");
