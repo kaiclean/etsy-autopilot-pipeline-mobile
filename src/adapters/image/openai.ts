@@ -42,8 +42,8 @@ export class OpenAIImageProvider implements ImageProvider {
       prompt: req.prompt,
       n: 1,
       size,
-      aspect_ratio: aspectRatio,
     };
+    if (isOpenRouter) body.aspect_ratio = aspectRatio;
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${key}`,
