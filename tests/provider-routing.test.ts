@@ -116,6 +116,23 @@ describe("image endpoint fallbacks", () => {
 });
 
 describe("provider selection", () => {
+  it("upscales the saved RunPod image without enlarging the diffusion latent", async () => {
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "endpoint-test";
+    process.env.RUNPOD_COMFY_WORKFLOW = JSON.stringify({
+      "6": { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } },
+      "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } },
+    });
+    const calls = installFetch(() => jsonResponse(200, { status: "COMPLETED", output: { images: [{ type: "base64", data: "cG5n" }] } }));
+    await new RunPodImageProvider().generate({ prompt: "clean art", niche: "gothic", seed: 1 });
+    const workflow = JSON.parse(String(calls[0].init?.body)).input.workflow;
+    expect(workflow["9"].inputs.images).toEqual(["10", 0]);
+    expect(workflow["10"]).toMatchObject({
+      class_type: "ImageScale",
+      inputs: { image: ["8", 0], width: 3510, height: 5265, crop: "disabled" },
+    });
+  });
+
   it("runs a ComfyUI workflow on RunPod and extracts the generated image", async () => {
     process.env.IMAGE_PROVIDER = "runpod";
     process.env.RUNPOD_API_KEY = "runpod-test-key";

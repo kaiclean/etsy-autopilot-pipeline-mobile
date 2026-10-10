@@ -1,5 +1,6 @@
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
+import { PRINT_HEIGHT, PRINT_WIDTH } from "@/lib/design-quality";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
 type RunPodResponse = {
@@ -50,6 +51,24 @@ function workflowForRequest(raw: string, req: ImageRequest) {
 
   const result = replace(workflow);
   if (!promptFound) throw new Error("RUNPOD_COMFY_WORKFLOW needs a {{PROMPT}} value in its positive prompt node");
+  // Scale only the saved output, not the diffusion latent, so Flux still runs at its native size.
+  const nodes = result as Record<string, { class_type?: string; inputs?: Record<string, unknown> }>;
+  const save = Object.values(nodes).filter((node) => node.class_type === "SaveImage" && Array.isArray(node.inputs?.images));
+  for (const node of save) {
+    const id = String(Math.max(0, ...Object.keys(nodes).map(Number).filter(Number.isFinite)) + 1);
+    const wide = ratio === "16:9";
+    nodes[id] = {
+      class_type: "ImageScale",
+      inputs: {
+        image: node.inputs!.images,
+        upscale_method: "lanczos",
+        width: wide ? Math.ceil(PRINT_WIDTH * 16 / 9) : ratio === "1:1" ? PRINT_HEIGHT : PRINT_WIDTH,
+        height: wide ? PRINT_WIDTH : PRINT_HEIGHT,
+        crop: "disabled",
+      },
+    };
+    node.inputs!.images = [id, 0];
+  }
   return result;
 }
 

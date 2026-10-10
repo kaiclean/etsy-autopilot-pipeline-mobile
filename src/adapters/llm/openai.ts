@@ -2,6 +2,8 @@ import { config } from "@/lib/config";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { NICHES } from "@/lib/niches";
 import { PROMISE_RULES } from "@/lib/delivery";
+import { isSafeArtworkUrl } from "@/lib/art-quality";
+import type { VisionAssessment } from "@/lib/design-quality";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
 export type CompatibleChatOptions = {
@@ -21,6 +23,38 @@ export class OpenAILLMProvider implements LLMProvider {
     this.options = options;
   }
 
+  async assessImage(url: string): Promise<VisionAssessment> {
+    const key = !this.options ? config.openaiKey : this.options.apiKey;
+    const base = (!this.options ? config.openaiBaseUrl : this.options.baseUrl ?? "").replace(/\/$/, "");
+    const model = !this.options ? config.openaiModel : this.options.model;
+    if (!key || !base || !model) throw new Error("Vision LLM configuration missing");
+    if (!isSafeArtworkUrl(url) && !/^data:image\/(?:png|jpeg|webp);base64,/i.test(url)) {
+      throw new Error("Vision assessment requires an HTTPS artwork URL or image data");
+    }
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), reasons (short strings), text (true for any letters, fake signature, stamp or watermark), empty (true for large empty/solid areas), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels or murky contrast). Be strict; do not assume defects are absent." },
+          { role: "user", content: [{ type: "text", text: "Assess this image for sale as printed art." }, { type: "image_url", image_url: { url } }] },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`Vision LLM ${res.status}`);
+    const json = await res.json();
+    const parsed = parseListingJson(json?.choices?.[0]?.message?.content) as Record<string, unknown>;
+    if (!Number.isInteger(parsed.score) || Number(parsed.score) < 1 || Number(parsed.score) > 10 ||
+        !Array.isArray(parsed.reasons) || !parsed.reasons.every((s) => typeof s === "string") ||
+        ["text", "empty", "frameOnly", "artifacts"].some((field) => typeof parsed[field] !== "boolean")) {
+      throw new Error("Vision LLM returned an invalid assessment");
+    }
+    return parsed as VisionAssessment;
+  }
+
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {
     const defaults = !this.options;
     const key = defaults ? config.openaiKey : this.options?.apiKey;
@@ -32,13 +66,13 @@ export class OpenAILLMProvider implements LLMProvider {
       `Title: max ${ETSY_LIMITS.titleMax} characters, Title Case, front-load the main keyword, at most 3 ALL-CAPS words and prefer none, use each of % : & at most once.`,
       `Tags: exactly ${ETSY_LIMITS.tagCount} lowercase tags, each at most ${ETSY_LIMITS.tagMax} characters, letters/numbers/spaces only, no duplicates.`,
       "Body: 2 short paragraphs plus a bullet list of what the buyer gets. Do NOT include AI or production disclosures (they are appended automatically).",
-      "The shop delivers one opaque PNG (about 1024x1536, or 1536x1024 for wide art) or one physical print-on-demand item. Nothing is editable, a template, a bundle, transparent, animated, or a set.",
+      "The shop delivers one opaque PNG or one physical print-on-demand item. Nothing is editable, a template, a bundle, transparent, animated, or a set.",
       `Do not use these claims unless they are literally true of that one file: ${PROMISE_RULES.map((rule) => rule.label).join(", ")}.`,
       "Do not use empty praise (unique, stunning, premium, perfect, beautiful, gift idea).",
       "Start the title with the keyword exactly as given. Do not put a different phrase first.",
       "Never use trademarked brands or characters.",
     ].join("\n");
-    const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nStyle: ${niche.style}\nDeliverable: ${brief.productType === "digital" ? "one opaque PNG, instant download, no physical item" : "one made-to-order physical item, printed and shipped"}`;
+    const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nArt direction: ${brief.artDirection ?? niche.style}\nUse style tags only if supported by the art direction.\nDeliverable: ${brief.productType === "digital" ? "one opaque PNG, instant download, no physical item" : "one made-to-order physical item, printed and shipped"}`;
 
     const base = (defaults ? config.openaiBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
     if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "LLM base URL missing");

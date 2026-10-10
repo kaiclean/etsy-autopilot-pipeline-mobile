@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, events, healthReports, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, designs, events, healthReports, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
@@ -162,7 +162,7 @@ export async function getLastRuns() {
 
 export async function getPipelineData() {
   const db = await getDb();
-  const [runs, stageSettings, automation, kw] = await Promise.all([
+  const [runs, stageSettings, automation, kw, recentDesigns] = await Promise.all([
     db.select().from(jobRuns).where(visible(jobRuns.isDemo)).orderBy(desc(jobRuns.id)).limit(300),
     getSetting(db, "stages"),
     getSetting(db, "automation"),
@@ -172,13 +172,18 @@ export async function getPipelineData() {
       .where(and(inArray(keywords.status, ["new", "selected"]), visible(keywords.isDemo)))
       .orderBy(desc(keywords.score))
       .limit(12),
+    db.select({
+      id: designs.id, niche: designs.niche, status: designs.status,
+      qualityScore: designs.qualityScore, qualityReasons: designs.qualityReasons,
+      imageUrl: displayImageUrlSql(designs.imageUrl, designs.niche),
+    }).from(designs).where(visible(designs.isDemo)).orderBy(desc(designs.id)).limit(12),
   ]);
   const byStage = STAGES.map((s) => ({
     ...s,
     settings: stageSettings[s.id],
     runs: runs.filter((r) => r.stage === s.id).slice(0, 8),
   }));
-  return { stages: byStage, automation, keywords: kw };
+  return { stages: byStage, automation, keywords: kw, recentDesigns };
 }
 
 /** List views never project a raw base64 `image_url` or `delivery_url`. */

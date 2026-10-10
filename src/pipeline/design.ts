@@ -1,14 +1,18 @@
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
+import { getLLMProvider } from "@/adapters/llm";
+import type { GeneratedImage } from "@/adapters/image/types";
 import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
+import { assessArtwork } from "@/lib/design-quality";
+import { productKeyword } from "@/lib/product-title";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { digitalPreviewUrl } from "@/lib/png";
-import { preparePrintFile } from "./artwork";
+import { preparePrintFile, type PreparedArt } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
 import { stageResult, type StageFn } from "./types";
@@ -24,8 +28,7 @@ export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
 const NICHE_PROMPTS: Record<string, string> = {
   alpine:
     "Bestselling Etsy alpine wall art: layered Swiss mountain ridges, a quiet lake, soft film grain, muted sage and stone, generous negative space, painterly but crisp, print-ready",
-  gothic:
-    "Bestselling Etsy dark botanical: dense gothic florals, plum, burgundy and near-black, vintage engraving texture, candlelit contrast, autumn leaves, ornate and readable at mug size",
+  gothic: "Dark botanical art with a clearly readable focal subject",
   christmas:
     "Bestselling Etsy cozy Christmas illustration: warm candlelight, pine green and deep red, a snowy cabin, hygge still life, hand-drawn texture, gift-ready and highly detailed",
   birthday:
@@ -37,15 +40,29 @@ const NICHE_PROMPTS: Record<string, string> = {
 /** After this many provider failures, the keyword returns to the backlog so research can pick another. */
 export const DESIGN_FAILURE_COOLDOWN = 2;
 
-export function buildPrompt(phrase: string, style: string, niche?: string) {
+const CONCEPTS: Record<string, string[]> = {
+  gothic: ["ink botanical in ivory and charcoal", "moonlit herbarium in teal and copper", "wildflower silhouette in ochre and midnight", "thorn and moth study in indigo and silver"],
+  alpine: ["layered mountain lake in sage and cream", "snow ridge at sunrise in apricot and blue", "pine valley in jade and stone", "alpine meadow in gold and slate"],
+  christmas: ["winter cabin in evergreen and amber", "pine still life in cream and ruby", "snowy village in cobalt and gold", "candlelit forest in spruce and coral"],
+  birthday: ["confetti still life in coral and mint", "balloon garden in lilac and cream", "cake illustration in peach and teal", "party ribbons in lemon and sky blue"],
+  stream: ["neon city in cyan and violet", "cosmic shapes in magenta and black", "electric landscape in lime and indigo", "abstract light in orange and navy"],
+};
+
+export function chooseConcept(niche: string, recent: string[]) {
+  return (CONCEPTS[niche] ?? CONCEPTS.alpine!).find((concept) => !recent.some((used) => used.toLowerCase().includes(concept.toLowerCase()))) ?? null;
+}
+
+export function buildPrompt(phrase: string, style: string, niche?: string, concept?: string) {
   const look = (niche && NICHE_PROMPTS[niche]) || style;
-  return `${look}. Subject: ${phrase}. Original composition in a bestselling Etsy style. High detail, rich color variation across the whole image, opaque background, not a flat color block, not a simple rectangle, not stripes, not transparent, no text, no lettering, no watermark, no logos, no brand names, no trademarked characters.`;
+  return `${look}. Subject: ${productKeyword(phrase) || phrase}. ${concept ? `Concept: ${concept}. ` : ""}Original full-bleed composition with a detailed central subject and high contrast, crisp detail and rich color variation throughout the whole image. Clean finished artwork without text, letters, lettering, signatures, stamps, watermarks, logos, frames, borders or bevels unless the brief explicitly asks for them. Opaque background with meaningful visual detail, not an empty or solid color block. No brand names or trademarked characters.`;
 }
 
 export const runDesign: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const automation = await getSetting(db, "automation");
   const provider = getImageProvider({ demo: ctx.demo });
+  const vision = getLLMProvider({ demo: ctx.demo });
+  if (!vision.assessImage) throw new Error("Configured LLM does not support image assessment");
   log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
   // Seeded demo keywords are never sent to a paid image provider for a live shop.
@@ -79,6 +96,10 @@ export const runDesign: StageFn = async (ctx) => {
   let briefed = 0;
   let failures = 0;
   let creditsStopped = false;
+  const recentBriefs = await db.select({ prompt: designBriefs.prompt }).from(designBriefs)
+    .where(and(eq(designBriefs.shopId, ctx.shopId), ctx.demo ? undefined : eq(designBriefs.isDemo, false)))
+    .orderBy(desc(designBriefs.id)).limit(30);
+  const usedConcepts = recentBriefs.map((row) => row.prompt);
   const noteFailure = async (kw: (typeof queue)[number]) => {
     const next = kw.designFailures + 1;
     kw.designFailures = next;
@@ -90,48 +111,87 @@ export const runDesign: StageFn = async (ctx) => {
     if (release) log(`Returned “${kw.phrase}” to the backlog after ${next} provider failures`, "warn");
   };
   for (const kw of queue) {
-    if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf) {
-      log(`Daily AI cap reached (CHF ${spentToday.toFixed(2)} / ${automation.dailyAiCapChf}); stopping`, "warn");
-      break;
-    }
-    if (spentMonth + provider.estimatedCostChf > automation.monthlyAiBudgetChf) {
-      log(`Monthly AI budget reached (CHF ${automation.monthlyAiBudgetChf}); stopping`, "warn");
-      break;
-    }
     if (isNichePaused(kw.niche)) {
       await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       log(`Skipped “${kw.phrase}”: ${NICHES[kw.niche].pausedReason}`, "warn");
       continue;
     }
     const niche = NICHES[kw.niche];
-    const prompt = buildPrompt(kw.phrase, niche.style, kw.niche);
+    const previous = await db.select({ prompt: designBriefs.prompt }).from(designBriefs).where(eq(designBriefs.keywordId, kw.id)).limit(1);
+    const concept = previous[0] ? null : chooseConcept(kw.niche, usedConcepts);
+    if (!previous[0] && !concept) {
+      await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      log(`Rejected duplicate brief for “${kw.phrase}”: no unused concept/palette among recent designs`, "warn");
+      continue;
+    }
+    const prompt = previous[0]?.prompt ?? buildPrompt(kw.phrase, niche.style, kw.niche, concept!);
     const brief = await ensureDesignBrief(ctx, kw, prompt);
     if (brief.created) {
+      usedConcepts.push(prompt);
       briefed++;
       log(`Design brief for “${kw.phrase}” (${brief.brief?.productType ?? "listing"}${brief.brief?.podPreset ? `/${brief.brief.podPreset}` : ""})`);
     }
     try {
-      const img = await provider.generate({
-        prompt,
-        niche: kw.niche,
-        seed: Math.floor(ctx.random() * 1e9),
-        aspectRatio: kw.niche === "stream" ? "16:9" : "2:3",
-        label: kw.phrase,
-      });
-      const prepared = await preparePrintFile(img.url);
+      type Candidate = { img: GeneratedImage; prepared: PreparedArt; score: number; reasons: string[] };
+      let accepted: Candidate | null = null;
+      let rejected: Candidate | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf ||
+            spentMonth + provider.estimatedCostChf > automation.monthlyAiBudgetChf) {
+          log(`Daily AI cap reached or monthly AI budget reached before attempt ${attempt + 1} for “${kw.phrase}”`, "warn");
+          break;
+        }
+        const img = await provider.generate({
+          prompt,
+          niche: kw.niche,
+          seed: Math.floor(ctx.random() * 1e9) + attempt,
+          aspectRatio: kw.niche === "stream" ? "16:9" : "2:3",
+          label: kw.phrase,
+        });
+        spentToday += img.costChf;
+        spentMonth += img.costChf;
+        if (img.costChf > 0) await db.insert(costs).values({
+          shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf,
+          note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`, isDemo: ctx.demo,
+        });
+        const prepared = await preparePrintFile(img.url);
+        const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
+          ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
+          : await vision.assessImage!(prepared.url);
+        const check = ctx.demo && isPlaceholderUrl(prepared.url)
+          ? { pass: true, reasons: [] }
+          : assessArtwork(assessment, prepared.width, prepared.height);
+        if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) check.reasons.push("Placeholder art.");
+        if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV && !ctx.demo) check.reasons.push("Flat artwork.");
+        check.pass = check.reasons.length === 0;
+        rejected = { img, prepared, score: assessment.score, reasons: check.reasons };
+        if (check.pass) {
+          accepted = rejected;
+          break;
+        }
+        log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: ${check.reasons.join("; ")}`, "warn");
+      }
+      if (!accepted && !rejected) break;
+      const result = accepted ?? rejected!;
+      const { img, prepared } = result;
+      if (!accepted) {
+        const imageUrl = await persistableImageUrl(prepared.url).catch(() => `/api/placeholder/${kw.id}?niche=${kw.niche}`);
+        await db.insert(designs).values({
+          shopId: ctx.shopId, keywordId: kw.id, niche: kw.niche, prompt, provider: img.provider,
+          imageUrl, imageWidth: prepared.width, imageHeight: prepared.height,
+          colorVariance: prepared.variance, costChf: img.costChf,
+          qualityScore: result.score, qualityReasons: result.reasons, status: "rejected", isDemo: ctx.demo,
+        });
+        failures++;
+        await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+        log(`Rejected design for “${kw.phrase}”: ${result.reasons.join("; ")}`, "warn");
+        continue;
+      }
       if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
         failures++;
         await noteFailure(kw);
         log(`Refusing placeholder art for “${kw.phrase}”`, "error");
         continue;
-      }
-      if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV) {
-        log(`Rejected flat artwork for “${kw.phrase}” (variation ${prepared.variance.toFixed(1)})`, "error");
-        if (!ctx.demo) {
-          failures++;
-          await noteFailure(kw);
-          continue;
-        }
       }
       const imageUrl = await persistableImageUrl(prepared.url);
       if (ctx.demo && isPlaceholderUrl(imageUrl)) {
@@ -150,6 +210,8 @@ export const runDesign: StageFn = async (ctx) => {
           imageWidth: prepared.width,
           imageHeight: prepared.height,
           colorVariance: prepared.variance,
+          qualityScore: result.score,
+          qualityReasons: result.reasons,
           costChf: img.costChf,
         };
         for (const listing of placeholders) {
@@ -177,11 +239,6 @@ export const runDesign: StageFn = async (ctx) => {
           if (!isPlaceholderUrl(design.imageUrl)) continue;
           await db.update(designs).set(refreshed).where(eq(designs.id, design.id));
         }
-        if (img.costChf > 0) {
-          await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: ctx.demo });
-        }
-        spentToday += img.costChf;
-        spentMonth += img.costChf;
         await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
         await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
         made++;
@@ -198,14 +255,11 @@ export const runDesign: StageFn = async (ctx) => {
         imageWidth: prepared.width,
         imageHeight: prepared.height,
         colorVariance: prepared.variance,
+        qualityScore: result.score,
+        qualityReasons: result.reasons,
         costChf: img.costChf,
         isDemo: ctx.demo,
       });
-      if (img.costChf > 0) {
-        await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: ctx.demo });
-      }
-      spentToday += img.costChf;
-      spentMonth += img.costChf;
       await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
       made++;

@@ -16,6 +16,8 @@ import { isNichePaused, NICHES } from "@/lib/niches";
 import { yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
+import { buildProductTitle, productKeyword } from "@/lib/product-title";
+import { MIN_DESIGN_SCORE } from "@/lib/design-quality";
 import { stageResult, type StageContext, type StageFn } from "./types";
 
 export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?: PodPreset } {
@@ -59,16 +61,22 @@ export async function draftListing(opts: {
   llm?: LLMProvider;
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
+  artDirection?: string;
 }) {
   const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
-  const keyword = leadPhrase(opts.keyword, opts.niche, opts.product.type);
+  const keyword = leadPhrase(productKeyword(opts.keyword) || opts.keyword, opts.niche, opts.product.type);
   const copy = await llm.writeListing({
     keyword,
     niche: opts.niche,
     productType: opts.product.type,
     podPreset: opts.product.pod,
     seed: opts.seed,
+    artDirection: opts.artDirection,
   });
+  const product = opts.product.type === "digital" ? "digital" : opts.product.pod ?? "posterA3";
+  const title = buildProductTitle(opts.keyword, copy.title, product);
+  const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
+  const tags = copy.tags.filter((tag) => !styleClaims.test(tag) || opts.artDirection?.toLowerCase().includes(tag.toLowerCase()));
   const preset = opts.product.pod ?? "posterA3";
   const pod = opts.product.type === "pod" ? podCostChf(preset) : 0;
   const band = NICHES[opts.niche].priceBand[opts.product.type];
@@ -87,8 +95,8 @@ export async function draftListing(opts: {
     });
   const repaired = repairTrivialCopy(
     {
-      title: copy.title,
-      tags: copy.tags,
+      title,
+      tags,
       description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type), opts.product.type),
       priceChf,
       productType: opts.product.type,
@@ -127,6 +135,7 @@ async function listRung(
     assumeOffsiteAds: automation.assumeOffsiteAds,
     priceChf: rung.priceChf,
     llm,
+    artDirection: design.prompt,
   });
   const image = await listingImageForProduct({
     productType: rung.product.type,
@@ -212,6 +221,11 @@ export const runListing: StageFn = async (ctx) => {
   let rungFailures = 0;
   const notes: string[] = [];
   for (const { design, phrase } of pending) {
+    if (!ctx.demo && (design.qualityScore == null || design.qualityScore < MIN_DESIGN_SCORE || design.qualityReasons.length)) {
+      await db.update(designs).set({ status: "rejected", qualityReasons: [...design.qualityReasons, "No passing image quality assessment."] }).where(eq(designs.id, design.id));
+      log(`Rejected unassessed design #${design.id} before Listing`, "warn");
+      continue;
+    }
     if (isNichePaused(design.niche)) {
       await db.update(designs).set({ status: "discarded" }).where(eq(designs.id, design.id));
       log(`Skipped design #${design.id}: ${NICHES[design.niche].pausedReason}`, "warn");
