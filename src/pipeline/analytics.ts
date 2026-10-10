@@ -29,10 +29,9 @@ export const runAnalytics: StageFn = async (ctx) => {
     if (!s) continue;
     const dv = Math.max(0, s.views - l.views);
     const df = Math.max(0, s.favorites - l.favorites);
-    if (dv || df) {
-      await db.update(listings).set({ views: s.views, favorites: s.favorites }).where(eq(listings.id, l.id));
-      dViews += dv;
-      dFavs += df;
+    await db.update(listings).set({ views: s.views, favorites: s.favorites, analyticsCheckedAt: ctx.now }).where(eq(listings.id, l.id));
+    dViews += dv;
+    dFavs += df;
     }
   }
 
@@ -58,10 +57,10 @@ export const runAnalytics: StageFn = async (ctx) => {
     const [already] = await db
       .select({ id: costs.id })
       .from(costs)
-      .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
+      .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads_estimate"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
-      log(`Booked Etsy Ads daily budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (set in Etsy UI; no Ads API)`);
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      log(`Recorded estimated Etsy Ads budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (actual spend is not available from the Etsy Ads API)`);
     }
   }
 

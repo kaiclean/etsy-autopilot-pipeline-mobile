@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { keywords } from "@/db/schema";
+import { and, asc, desc, eq, gte, inArray, lte, notLike, sql } from "drizzle-orm";
+import { keywords, listings, orders } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
@@ -45,8 +45,54 @@ export const runResearch: StageFn = async (ctx) => {
   // A live run re-scores a seeded demo phrase as real research, so it can be selected.
   const claim = ctx.demo ? {} : { isDemo: false };
   const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
+  const performanceCutoff = new Date(ctx.now.getTime() - 30 * 864e5);
+  const realListing = and(
+    eq(listings.shopId, ctx.shopId),
+    eq(listings.status, "published"),
+    eq(listings.isDemo, false),
+    eq(listings.publishMode, "live"),
+    gte(listings.analyticsCheckedAt, performanceCutoff),
+    notLike(listings.etsyListingId, "dry-%"),
+    notLike(listings.etsyListingId, "demo-%"),
+  );
+  const listingPerformance = await db
+    .select({
+      keywordId: listings.keywordId,
+      views: sql<number>`coalesce(sum(${listings.views}), 0)::int`,
+      favorites: sql<number>`coalesce(sum(${listings.favorites}), 0)::int`,
+    })
+    .from(listings)
+    .where(and(realListing, sql`${listings.keywordId} is not null`))
+    .groupBy(listings.keywordId);
+  const orderPerformance = await db
+    .select({
+      keywordId: listings.keywordId,
+      sales: sql<number>`count(${orders.id})::int`,
+    })
+    .from(listings)
+    .innerJoin(orders, and(eq(orders.listingId, listings.id), eq(orders.isDemo, false), gte(orders.createdAt, new Date(ctx.now.getTime() - 90 * 864e5)), lte(orders.createdAt, ctx.now)))
+    .where(and(realListing, sql`${listings.keywordId} is not null`, notLike(orders.etsyReceiptId, "dry-%"), notLike(orders.etsyReceiptId, "demo-%")))
+    .groupBy(listings.keywordId);
+  const performance = new Map<number, { views: number; favorites: number; sales: number }>();
+  for (const row of listingPerformance) {
+    if (row.keywordId == null) continue;
+    performance.set(row.keywordId, { views: Number(row.views), favorites: Number(row.favorites), sales: 0 });
+  }
+  for (const row of orderPerformance) {
+    if (row.keywordId == null) continue;
+    const current = performance.get(row.keywordId);
+    if (current) current.sales = Number(row.sales);
+  }
+  const rankedCandidates = preferMeasuredDemand(candidates);
+  const existingKeywords = rankedCandidates.length
+    ? await db
+        .select({ id: keywords.id, phrase: keywords.phrase })
+        .from(keywords)
+        .where(inArray(keywords.phrase, rankedCandidates.map((candidate) => candidate.phrase)))
+    : [];
+  const keywordIdByPhrase = new Map(existingKeywords.map((keyword) => [keyword.phrase, keyword.id]));
   let upserted = 0;
-  for (const c of preferMeasuredDemand(candidates)) {
+  for (const c of rankedCandidates) {
     if (isNichePaused(c.niche)) {
       await db
         .insert(keywords)
@@ -79,6 +125,7 @@ export const runResearch: StageFn = async (ctx) => {
       seasonality: season,
       trend,
       searchVolume: c.searchVolume,
+      performance: performance.get(keywordIdByPhrase.get(c.phrase) ?? -1),
     });
     await db
       .insert(keywords)

@@ -162,8 +162,20 @@ export function scoreKeyword(k: {
   trend?: number | null;
   /** Measured Etsy search volume. When set, it replaces seed demand and is not blended with Google Trends. */
   searchVolume?: number | null;
+  /** Real listing outcomes, used only when recent analytics and a meaningful view sample exist. */
+  performance?: { views: number; favorites: number; sales: number };
 }) {
   const measured = k.searchVolume != null ? normalizeEtsyVolume(k.searchVolume) : null;
   const demand = measured != null ? measured : k.trend != null ? k.demand * 0.6 + k.trend * 0.4 : k.demand;
-  return Math.round((0.45 * demand + 0.3 * (1 - k.competition) + 0.25 * k.seasonality) * 100) / 100;
+  const base = 0.45 * demand + 0.3 * (1 - k.competition) + 0.25 * k.seasonality;
+  const performance = k.performance;
+  let lift = 0;
+  if (performance && performance.views >= 20) {
+    const confidence = Math.min(1, performance.views / 100);
+    const conversionRate = performance.sales / performance.views;
+    const favoriteRate = performance.favorites / performance.views;
+    const conversionLift = Math.max(-0.08, Math.min(0.08, (conversionRate - 0.02) * 2));
+    lift = (conversionLift + Math.min(0.02, favoriteRate * 0.1)) * confidence;
+  }
+  return Math.round(Math.max(0, Math.min(1, base + lift)) * 100) / 100;
 }

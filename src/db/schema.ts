@@ -203,6 +203,7 @@ export const listings = pgTable("listings", {
   etsyIdWaitAlertedAt: timestamp("etsy_id_wait_alerted_at", { withTimezone: true }),
   views: integer("views").notNull().default(0),
   favorites: integer("favorites").notNull().default(0),
+  analyticsCheckedAt: timestamp("analytics_checked_at", { withTimezone: true }),
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -345,7 +346,7 @@ export const costs = pgTable("costs", {
     .notNull()
     .default(omnishopId)
     .references(() => shops.id),
-  kind: text("kind").$type<"ai_image" | "ai_text" | "ads" | "listing_fee" | "other">().notNull(),
+  kind: text("kind").$type<"ai_image" | "ai_text" | "ads_estimate" | "ads_actual" | "listing_fee" | "other">().notNull(),
   amountChf: doublePrecision("amount_chf").notNull(),
   note: text("note"),
   isDemo: boolean("is_demo").notNull().default(false),
