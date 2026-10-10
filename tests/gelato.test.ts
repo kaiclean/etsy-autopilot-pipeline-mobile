@@ -70,9 +70,9 @@ describe("Gelato official API client", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it("reads v4 fulfillment statuses but never requests synthetic orders", async () => {
+  it.each(["shipped", "in_transit"])("maps %s to shipped but never requests synthetic orders", async (fulfillmentStatus) => {
     vi.stubEnv("GELATO_API_KEY", "fixture-gelato-key");
-    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ fulfillmentStatus: "shipped" }));
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ fulfillmentStatus }));
     expect(await new GelatoSupplier(fetchImpl).getOrderStatuses(["dry-order", "real-order"]))
       .toEqual({ "dry-order": "pending", "real-order": "shipped" });
     expect(fetchImpl.mock.calls[0][0]).toBe("https://order.gelatoapis.com/v4/orders/real-order");

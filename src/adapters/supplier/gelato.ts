@@ -85,7 +85,7 @@ export class GelatoSupplier extends GelatoDryRunSupplier {
       if (!config.gelato.apiKey) throw new Error("GELATO_API_KEY missing");
       const order = await this.ordersHttp.request<{ fulfillmentStatus?: string }>(`/orders/${encodeURIComponent(id)}`);
       out[id] = order.fulfillmentStatus === "delivered" ? "delivered"
-        : order.fulfillmentStatus === "shipped" ? "shipped"
+        : order.fulfillmentStatus === "shipped" || order.fulfillmentStatus === "in_transit" ? "shipped"
           : order.fulfillmentStatus === "in_production" || order.fulfillmentStatus === "printed" ? "in_production" : "pending";
     }
     return out;
