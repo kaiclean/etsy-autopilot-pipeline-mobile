@@ -420,8 +420,8 @@ describe("db:clear-fake-orders", () => {
       createdAt: NOW,
     });
     await db.insert(costs).values([
-      { shopId: shop.id, kind: "ads", amountChf: 1, isDemo: false },
-      { shopId: shop.id, kind: "ads", amountChf: 2, isDemo: true },
+      { shopId: shop.id, kind: "ads_estimate", amountChf: 1, isDemo: false },
+      { shopId: shop.id, kind: "ads_estimate", amountChf: 2, isDemo: true },
     ]);
     await db.insert(dailyStats).values([
       { date: "2026-10-01", views: 3, favorites: 0, isDemo: false },

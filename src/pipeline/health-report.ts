@@ -1,4 +1,4 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { DB } from "@/db";
 import { costs, dailyStats, healthReports, listings, orders, type HealthReportPayload, type HealthSuggestion } from "@/db/schema";
 import { emit } from "@/lib/events";
@@ -72,7 +72,7 @@ export async function buildHealthReport(db: DB, shopId: string, now: Date): Prom
     db
       .select()
       .from(costs)
-      .where(and(eq(costs.shopId, shopId), eq(costs.kind, "ads"), eq(costs.isDemo, false), gte(costs.createdAt, window.start), lte(costs.createdAt, window.end))),
+      .where(and(eq(costs.shopId, shopId), inArray(costs.kind, ["ads_estimate", "ads_actual"]), eq(costs.isDemo, false), gte(costs.createdAt, window.start), lte(costs.createdAt, window.end))),
     db.select().from(listings).where(eq(listings.shopId, shopId)),
   ]);
   const orderRows = realOrders.filter((order) => order.createdAt >= window.start && order.createdAt <= window.end);
@@ -130,6 +130,8 @@ export async function buildHealthReport(db: DB, shopId: string, now: Date): Prom
     vatChf: round2(vat),
     podCostChf: round2(pod),
     adsChf: round2(adRows.reduce((sum, row) => sum + row.amountChf, 0)),
+    adsEstimateChf: round2(adRows.filter((row) => row.kind === "ads_estimate").reduce((sum, row) => sum + row.amountChf, 0)),
+    adsActualChf: round2(adRows.filter((row) => row.kind === "ads_actual").reduce((sum, row) => sum + row.amountChf, 0)),
     suggestions,
   };
 }
@@ -156,7 +158,7 @@ export async function publishHealthReport(db: DB, shopId: string, now: Date) {
       {
         type: "health.report",
         title: "Weekly shop health",
-        body: `${payload.views} views · ${payload.favorites} favorites · ${payload.sales} sales · profit CHF ${payload.profitChf.toFixed(2)} after fees. VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ads CHF ${payload.adsChf.toFixed(2)}. ${refresh} to refresh, ${retire} to retire.`,
+        body: `${payload.views} views · ${payload.favorites} favorites · ${payload.sales} sales · profit CHF ${payload.profitChf.toFixed(2)} after fees. VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${(payload.adsEstimateChf ?? payload.adsChf).toFixed(2)}, actual ads CHF ${(payload.adsActualChf ?? 0).toFixed(2)}. ${refresh} to refresh, ${retire} to retire.`,
         severity: "info",
         href: "/",
         shopId,

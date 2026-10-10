@@ -2,26 +2,30 @@ import { AnalyticsExport } from "@/components/analytics/export-csv";
 import { NicheChart, RevenueChart, TrafficChart } from "@/components/analytics/charts";
 import { NicheTag, PageHeader, Panel, SectionTitle, Thumb } from "@/components/common";
 import { chf, num, pct } from "@/lib/format";
-import { getAnalytics } from "@/lib/queries";
+import { ANALYTICS_FRESHNESS_HOURS, getAnalytics } from "@/lib/queries";
 
 export const metadata = { title: "Analytics" };
 
 export default async function AnalyticsPage() {
   const a = await getAnalytics();
   const t = a.totals;
+  const lastCheckedAt = a.analyticsFreshness.lastCheckedAt
+    ? `${a.analyticsFreshness.lastCheckedAt.toISOString().replace("T", " ").slice(0, 16)} UTC`
+    : "no analytics check yet";
+  const freshnessSummary = `Stats checked for ${a.analyticsFreshness.checked}/${a.analyticsFreshness.total} live listings in the last ${ANALYTICS_FRESHNESS_HOURS}h · last check ${lastCheckedAt}`;
   const waterfall: [string, number, string?][] = [
     ["Gross revenue", t.revenue],
     ["Etsy fees (listing, transaction, processing, VAT)", -t.etsyFees],
     ["Offsite Ads (15%, attributed)", -t.offsiteAds],
     ["POD production + shipping", -t.podCosts],
     ["AI generation", -(a.costByKind.ai_image + a.costByKind.ai_text)],
-    ["Etsy Ads budget", -a.costByKind.ads],
+    ["Etsy Ads actual spend", -a.costByKind.ads_actual],
   ];
   return (
     <div className="space-y-5">
       <PageHeader
         title="Analytics"
-        subtitle="Last 30 days · all amounts in CHF"
+        subtitle={`Last 30 days · all amounts in CHF · ${freshnessSummary}`}
         action={
           <AnalyticsExport
             rows={a.series.map((row) => ({
@@ -71,10 +75,10 @@ export default async function AnalyticsPage() {
               <span className="font-semibold">Net profit</span>
               <span className="tabular font-semibold text-success">{chf(t.netProfit)}</span>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              Listing fees paid at publish time: {chf(a.costByKind.listing_fee)} (dry-run listings are tracked but not charged).
-            </p>
           </div>
+          <p className="mt-2.5 text-[11px] text-muted-foreground">
+            Etsy Ads estimate (not actual spend): {chf(a.costByKind.ads_estimate)}. Actual ad spend is included in net profit; estimates are not deducted. Listing fees tracked: {chf(a.costByKind.listing_fee)}.
+          </p>
         </Panel>
       </div>
 

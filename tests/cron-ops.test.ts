@@ -12,11 +12,12 @@ import { OpsCards } from "@/components/home/ops-cards";
 import { ProductsList } from "@/components/products/products-list";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
-import { jobRuns, listings, shops, type Listing } from "@/db/schema";
+import { costs, events, jobRuns, listings, shops, type Listing } from "@/db/schema";
 import { buildCockpitAlerts } from "@/lib/alerts";
 import { withDisclosures } from "@/lib/disclosures";
 import { draftListing } from "@/pipeline/listing";
-import { PUBLISH_RETRY_MS, publishRetryBlocked } from "@/pipeline/publish";
+import { AMBIGUOUS_PUBLISH_ERROR, PUBLISH_RETRY_MS, PUBLISH_STALE_MS, publishRetryBlocked, runPublish } from "@/pipeline/publish";
+import { asStageResult, type StageContext } from "@/pipeline/types";
 import { runStage } from "@/pipeline/runner";
 import { maskSecrets } from "@/pipeline/stage-log";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
@@ -173,15 +174,20 @@ describe("publish retry and dashboard", () => {
       expect(failed.publishError).not.toContain(token);
       expect(failed.publishError).toContain("[redacted]");
       expect(failed.publishAttemptedAt).toEqual(firstNow);
+      expect(failed.publishAttemptCount).toBe(1);
 
       const second = await runStage("publish", "cron", { db, now: new Date(firstNow.getTime() + 60 * 60_000), random: () => 0 });
       expect(second.status).toBe("success");
       expect(second.summary).toMatch(/skipped 1 \(same error within 24h\)/);
       expect(createAndPublish).toHaveBeenCalledTimes(1);
+      const [notRetried] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(notRetried.publishAttemptCount).toBe(1);
 
       const third = await runStage("publish", "cron", { db, now: new Date(firstNow.getTime() + PUBLISH_RETRY_MS), random: () => 0 });
       expect(third.status).toBe("failed");
       expect(createAndPublish).toHaveBeenCalledTimes(2);
+      const [retried] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(retried.publishAttemptCount).toBe(2);
     } finally {
       spy.mockRestore();
     }
@@ -195,6 +201,176 @@ describe("publish retry and dashboard", () => {
     expect(publishRetryBlocked({ status: "failed", publishError: "same", publishAttemptedAt: due }, now)).toBe(false);
     expect(publishRetryBlocked({ status: "failed", publishError: null, publishAttemptedAt: recent }, now)).toBe(false);
     expect(publishRetryBlocked({ status: "approved", publishError: "same", publishAttemptedAt: recent }, now)).toBe(false);
+    expect(
+      publishRetryBlocked(
+        { status: "failed", publishError: "Publish attempt ended without a recorded provider result. Check Etsy.", publishAttemptedAt: due },
+        new Date(now.getTime() + 10 * PUBLISH_RETRY_MS),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not retry an interrupted external publish without operator reconciliation", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const attemptedAt = new Date("2026-10-07T06:00:00.000Z");
+    const [row] = await db
+      .insert(listings)
+      .values({
+        shopId: shop.id,
+        niche: "alpine",
+        productType: "pod",
+        podProvider: "printify:posterA3",
+        title: "Swiss Alps wall art poster",
+        tags: TAGS,
+        description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
+        imageUrl: "/api/mockup/posterA3?niche=alpine",
+        priceChf: 24.9,
+        podCostChf: 8,
+        netChf: 5,
+        marginPct: 20,
+        validation: [],
+        status: "publishing",
+        publishAttemptedAt: attemptedAt,
+        isDemo: true,
+      })
+      .returning();
+    adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish: vi.fn() });
+
+    const result = await runStage("publish", "cron", {
+      db,
+      now: new Date(attemptedAt.getTime() + PUBLISH_STALE_MS + 60_000),
+      random: () => 0,
+    });
+    const [recovered] = await db.select().from(listings).where(eq(listings.id, row.id));
+
+    expect(result.status).toBe("warning");
+    expect(recovered.status).toBe("failed");
+    expect(recovered.publishError).toMatch(/check Etsy or Printify/i);
+    expect(result.summary).toMatch(/held 1 for operator reconciliation/);
+  });
+
+  it.each(["success", "failure", "newer attempt"] as const)("does not let a stale worker record a late %s", async (outcome) => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const [row] = await db.insert(listings).values({
+      shopId: shop.id,
+      niche: "alpine",
+      productType: "pod",
+      podProvider: "printify:posterA3",
+      title: "Swiss Alps wall art poster",
+      tags: TAGS,
+      description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
+      imageUrl: "/api/mockup/posterA3?niche=alpine",
+      priceChf: 24.9,
+      netChf: 5,
+      marginPct: 20,
+      status: "approved",
+      isDemo: true,
+    }).returning();
+    const ctx: StageContext = {
+      db, shopId: shop.id, demo: true, trigger: "cron", random: () => 0,
+      now: new Date("2026-10-07T06:00:00.000Z"), log: () => {},
+    };
+    const createAndPublish = vi.fn(async () => {
+      const recovery = asStageResult(await runPublish({
+        ...ctx, now: new Date(ctx.now.getTime() + PUBLISH_STALE_MS + 1),
+      }));
+      expect(recovery.status).toBe("warning");
+      if (outcome === "newer attempt") {
+        await db.update(listings).set({
+          status: "publishing", publishAttemptCount: 2, publishError: null,
+        }).where(eq(listings.id, row.id));
+      }
+      if (outcome === "failure") throw new Error("Late provider failure");
+      return { productId: "dry-late-product" };
+    });
+    adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish });
+
+    const result = asStageResult(await runPublish(ctx));
+    const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
+    expect(after.status).toBe(outcome === "newer attempt" ? "publishing" : "failed");
+    expect(after.publishAttemptCount).toBe(outcome === "newer attempt" ? 2 : 1);
+    expect(after.publishError).toBe(outcome === "newer attempt" ? null : AMBIGUOUS_PUBLISH_ERROR);
+    expect(after.printifyProductId).toBeNull();
+    expect(result.summary).toContain("Published 0, failed 0");
+    expect(await db.select().from(costs)).toHaveLength(0);
+    expect(await db.select().from(events)).toHaveLength(0);
+    expect(createAndPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes new work even when ten ambiguous failures are held", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const draft = {
+      shopId: shop.id,
+      niche: "alpine" as const,
+      productType: "pod" as const,
+      title: "Swiss Alps wall art poster",
+      tags: TAGS,
+      description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
+      imageUrl: "/api/mockup/posterA3?niche=alpine",
+      priceChf: 24.9,
+      netChf: 5,
+      marginPct: 20,
+      isDemo: true,
+    };
+    await db.insert(listings).values(Array.from({ length: 10 }, () => ({
+      ...draft, status: "failed" as const, publishError: AMBIGUOUS_PUBLISH_ERROR,
+      publishAttemptedAt: new Date("2026-10-01T00:00:00.000Z"),
+    })));
+    const [row] = await db.insert(listings).values({ ...draft, status: "approved" }).returning();
+    const createAndPublish = vi.fn(async () => ({ productId: "dry-new-product" }));
+    adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish });
+
+    const result = asStageResult(await runPublish({
+      db, shopId: shop.id, demo: true, trigger: "cron", random: () => 0,
+      now: new Date("2026-10-07T06:00:00.000Z"), log: () => {},
+    }));
+    const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
+    expect(after.status).toBe("pod_created");
+    expect(result.status).toBe("warning");
+    expect(result.summary).toContain("Published 1, failed 0, held 10");
+    expect(createAndPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overwrite a newer Etsy draft or upload files after losing its claim", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const [row] = await db.insert(listings).values({
+      shopId: shop.id, niche: "alpine", productType: "digital",
+      title: "Swiss Alps wall art printable poster", tags: TAGS,
+      description: withDisclosures("Swiss alpine printable artwork for a calm home.", "digital"),
+      imageUrl: "/api/preview/alpine", deliveryUrl: "/api/artwork/alpine",
+      fileManifest: { delivery: { filename: "art.png", width: 3000, height: 4000, bytes: 1000, sha256: "a".repeat(64) } },
+      priceChf: 8.9, netChf: 5, marginPct: 56, status: "approved", isDemo: true,
+    }).returning();
+    const uploadListingImage = vi.fn();
+    const uploadListingFile = vi.fn();
+    adapters.getEtsyAdapter.mockResolvedValue({
+      mode: "dry-run", uploadListingImage, uploadListingFile,
+      createDraftListing: vi.fn(async () => {
+        await db.update(listings).set({
+          status: "publishing", publishAttemptCount: 2, etsyListingId: "dry-new-draft",
+        }).where(eq(listings.id, row.id));
+        return { listingId: "dry-stale-draft" };
+      }),
+    });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run" });
+    const result = asStageResult(await runPublish({
+      db, shopId: shop.id, demo: true, trigger: "cron", random: () => 0,
+      now: new Date("2026-10-07T06:00:00.000Z"), log: () => {},
+    }));
+    const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
+    expect(after.etsyListingId).toBe("dry-new-draft");
+    expect(after.status).toBe("publishing");
+    expect(after.publishAttemptCount).toBe(2);
+    expect(after.publishError).toBeNull();
+    expect(uploadListingImage).not.toHaveBeenCalled();
+    expect(uploadListingFile).not.toHaveBeenCalled();
+    expect(result.summary).toContain("Published 0, failed 0");
   });
 
   it("shows the publish error on the products page and the alert rail", () => {

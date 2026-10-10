@@ -115,7 +115,8 @@ export function OpsCards({
               <Stat label="Profit after fees" value={chf(payload.profitChf)} />
               <Stat label="VAT" value={chf(payload.vatChf)} />
               <Stat label="POD cost" value={chf(payload.podCostChf)} />
-              <Stat label="Ads" value={chf(payload.adsChf)} />
+              <Stat label="Ad estimate" value={chf(payload.adsEstimateChf ?? payload.adsChf ?? 0)} />
+              <Stat label="Actual ads" value={chf(payload.adsActualChf ?? 0)} />
             </div>
             {payload.suggestions.length === 0 ? (
               <p className="text-xs text-muted-foreground">No refresh or retire suggestions. Demo and dry-run rows are excluded.</p>

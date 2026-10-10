@@ -199,10 +199,12 @@ export const listings = pgTable("listings", {
   publishError: text("publish_error"),
   /** Last time publish actually called Etsy or Printify. Same-error retries wait 24h from here. */
   publishAttemptedAt: timestamp("publish_attempted_at", { withTimezone: true }),
+  publishAttemptCount: integer("publish_attempt_count").notNull().default(0),
   /** Set once, when a POD row has waited >24h for an Etsy id, so the alert does not repeat. */
   etsyIdWaitAlertedAt: timestamp("etsy_id_wait_alerted_at", { withTimezone: true }),
   views: integer("views").notNull().default(0),
   favorites: integer("favorites").notNull().default(0),
+  analyticsCheckedAt: timestamp("analytics_checked_at", { withTimezone: true }),
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -281,6 +283,9 @@ export type HealthReportPayload = {
   vatChf: number;
   podCostChf: number;
   adsChf: number;
+  /** Optional for health reports saved before ad estimates and actuals were split. */
+  adsEstimateChf?: number;
+  adsActualChf?: number;
   suggestions: HealthSuggestion[];
 };
 
@@ -345,7 +350,7 @@ export const costs = pgTable("costs", {
     .notNull()
     .default(omnishopId)
     .references(() => shops.id),
-  kind: text("kind").$type<"ai_image" | "ai_text" | "ads" | "listing_fee" | "other">().notNull(),
+  kind: text("kind").$type<"ai_image" | "ai_text" | "ads_estimate" | "ads_actual" | "listing_fee" | "other">().notNull(),
   amountChf: doublePrecision("amount_chf").notNull(),
   note: text("note"),
   isDemo: boolean("is_demo").notNull().default(false),

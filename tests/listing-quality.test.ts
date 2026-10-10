@@ -81,6 +81,14 @@ swiss alps wall art,100,0.45,alpine
     expect(normalizeEtsyVolume(10000)).toBe(0.8);
   });
 
+  it("uses sufficiently sampled real listing outcomes to tune keyword scores", () => {
+    const base = { demand: 0.6, competition: 0.4, seasonality: 0.6 };
+    const baseline = scoreKeyword(base);
+    expect(scoreKeyword({ ...base, performance: { views: 12, favorites: 8, sales: 4 } })).toBe(baseline);
+    expect(scoreKeyword({ ...base, performance: { views: 100, favorites: 0, sales: 0 } })).toBeLessThan(baseline);
+    expect(scoreKeyword({ ...base, performance: { views: 100, favorites: 8, sales: 8 } })).toBeGreaterThan(baseline);
+  });
+
   it("keeps seed demand and overlays official API competition", () => {
     const [row] = preferMeasuredDemand([
       { phrase: "cozy christmas mug", niche: "christmas", source: "seed-list", demand: 0.76, competition: 0.2 },

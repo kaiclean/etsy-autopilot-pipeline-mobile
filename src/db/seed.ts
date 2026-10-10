@@ -222,7 +222,7 @@ export async function seedDemo(db: DB, now = new Date()) {
 
   // Ads budget (USD 1/day, last 20 days) and listing-copy costs
   const adRows = Array.from({ length: 20 }, (_, i) => ({
-    kind: "ads" as const,
+    kind: "ads_estimate" as const,
     amountChf: round2(1 * FEES.usdToChf),
     note: `Etsy Ads budget ${dayKey(ago(i))} (demo)`,
     isDemo: true,

@@ -1,4 +1,4 @@
-import { and, eq, like, sql } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
@@ -24,16 +24,21 @@ export const runAnalytics: StageFn = async (ctx) => {
   );
   let dViews = 0;
   let dFavs = 0;
+  const checkedIds: number[] = [];
   for (const l of published) {
     const s = stats[l.etsyListingId!];
     if (!s) continue;
+    checkedIds.push(l.id);
     const dv = Math.max(0, s.views - l.views);
     const df = Math.max(0, s.favorites - l.favorites);
-    if (dv || df) {
+    if (s.views !== l.views || s.favorites !== l.favorites) {
       await db.update(listings).set({ views: s.views, favorites: s.favorites }).where(eq(listings.id, l.id));
       dViews += dv;
       dFavs += df;
     }
+  }
+  if (checkedIds.length) {
+    await db.update(listings).set({ analyticsCheckedAt: ctx.now }).where(inArray(listings.id, checkedIds));
   }
 
   const today = dayKey(ctx.now);
@@ -58,10 +63,10 @@ export const runAnalytics: StageFn = async (ctx) => {
     const [already] = await db
       .select({ id: costs.id })
       .from(costs)
-      .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads"), like(costs.note, `${note}%`)));
+      .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads_estimate"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
-      log(`Booked Etsy Ads daily budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (set in Etsy UI; no Ads API)`);
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      log(`Recorded estimated Etsy Ads budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (actual spend is not available from the Etsy Ads API)`);
     }
   }
 

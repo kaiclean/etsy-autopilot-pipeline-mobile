@@ -103,6 +103,8 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
 
     const a = await runStage("analytics", "manual", { db, random });
     expect(a.status).toBe("success");
+    const [syncedListing] = await db.select().from(listings).where(eq(listings.id, target.id));
+    expect(syncedListing.analyticsCheckedAt).toBeInstanceOf(Date);
     const after = await getAnalytics();
     expect(after.totals.orders).toBeGreaterThan(before.totals.orders);
     expect(after.totals.revenue).toBeGreaterThan(before.totals.revenue);
@@ -154,6 +156,8 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     expect(p.summary).toMatch(/Published 0, failed/);
     const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
     expect(after.status).toBe("pending_approval");
+    expect(after.publishAttemptCount).toBe(0);
+    expect(after.publishAttemptedAt).toBeNull();
   });
 
   it("daily AI cap stops paid image generation", async () => {

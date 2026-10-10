@@ -12,7 +12,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
-import { dashboardOrdersWhere, notFakeReceiptWhere } from "./real-orders";
+import { dashboardOrdersWhere, isRealPublishedListing, notFakeReceiptWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, loadPublishFailures, railwayDeploySha } from "./alerts";
@@ -21,6 +21,7 @@ import { resolveRequestShop } from "./shops";
 import { getSetting } from "./settings";
 
 const DAY = 864e5;
+export const ANALYTICS_FRESHNESS_HOURS = 36;
 
 function lastNDays(n: number, now = new Date()) {
   return Array.from({ length: n }, (_, i) => dayKey(new Date(now.getTime() - (n - 1 - i) * DAY)));
@@ -75,9 +76,9 @@ export async function getCockpitAlerts() {
 
 type RangeKey = "today" | "7d" | "30d";
 
-async function loadWindow(days: number) {
+async function loadWindow(days: number, now = new Date()) {
   const db = await getDb();
-  const since = new Date(Date.now() - days * DAY);
+  const since = new Date(now.getTime() - days * DAY);
   const [o, c, s] = await Promise.all([
     db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere())),
     db.select().from(costs).where(and(gte(costs.createdAt, since), visible(costs.isDemo))),
@@ -105,7 +106,7 @@ export async function getHomeData() {
   }
   for (const x of c) {
     const b = byDay.get(dayKey(x.createdAt));
-    if (b && x.kind !== "listing_fee") b.costs += x.amountChf;
+    if (b && x.kind !== "listing_fee" && x.kind !== "ads_estimate") b.costs += x.amountChf;
   }
   for (const s of stats) {
     const b = byDay.get(s.date);
@@ -212,6 +213,10 @@ export function analyticsListingsQuery(db: DB) {
       status: listings.status,
       niche: listings.niche,
       views: listings.views,
+      analyticsCheckedAt: listings.analyticsCheckedAt,
+      publishMode: listings.publishMode,
+      isDemo: listings.isDemo,
+      etsyListingId: listings.etsyListingId,
       title: listings.title,
       imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
     })
@@ -306,12 +311,12 @@ export async function getOrders() {
   return { rows, summary };
 }
 
-export async function getAnalytics() {
+export async function getAnalytics(now = new Date()) {
   const db = await getDb();
-  const { orders: o, costs: c, stats } = await loadWindow(30);
+  const { orders: o, costs: c, stats } = await loadWindow(30, now);
   const allListings = await analyticsListingsQuery(db);
   const listingById = new Map(allListings.map((l) => [l.id, l]));
-  const days = lastNDays(30);
+  const days = lastNDays(30, now);
 
   const series = days.map((date) => ({ date, revenue: 0, profit: 0, orders: 0, views: 0, favorites: 0 }));
   const idx = new Map(days.map((d, i) => [d, i]));
@@ -359,20 +364,30 @@ export async function getAnalytics() {
     p.profit += x.profitChf;
     products.set(l.id, p);
   }
-  const costByKind = { ai_image: 0, ai_text: 0, ads: 0, listing_fee: 0, other: 0 };
+  const costByKind = { ai_image: 0, ai_text: 0, ads_estimate: 0, ads_actual: 0, listing_fee: 0, other: 0 };
   for (const x of c) costByKind[x.kind] += x.amountChf;
 
   const revenue = o.reduce((s, x) => s + x.totalChf, 0);
   const profitAfterFees = o.reduce((s, x) => s + x.profitChf, 0);
   const views = series.reduce((s, x) => s + x.views, 0);
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
-  const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads + costByKind.other;
+  const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads_actual + costByKind.other;
+  const publishedListings = allListings.filter(isRealPublishedListing);
+  const analyticsFreshCutoff = now.getTime() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
+  const freshAnalyticsListings = publishedListings.filter(
+    (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,
+  );
+  const latestAnalyticsCheck = publishedListings.reduce<Date | null>((latest, listing) => {
+    if (!listing.analyticsCheckedAt) return latest;
+    return !latest || listing.analyticsCheckedAt > latest ? listing.analyticsCheckedAt : latest;
+  }, null);
 
   return {
     series,
     niches,
     topProducts: [...products.values()].sort((a, b) => b.profit - a.profit).slice(0, 8),
     costByKind,
+    analyticsFreshness: { checked: freshAnalyticsListings.length, total: publishedListings.length, lastCheckedAt: latestAnalyticsCheck },
     totals: {
       revenue,
       profitAfterFees,

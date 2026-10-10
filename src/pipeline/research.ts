@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { keywords } from "@/db/schema";
+import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { keywords, listings, orders } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
+import { notFakeReceiptWhere, realPublishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
@@ -10,6 +11,8 @@ import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sour
 import type { StageFn } from "./types";
 
 const TRENDS_LOOKUPS_PER_RUN = 5;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const PERFORMANCE_ANALYTICS_FRESHNESS_DAYS = 30;
 
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
@@ -27,7 +30,7 @@ export const runResearch: StageFn = async (ctx) => {
   const trends = new Map<string, number>();
   if (config.googleTrendsEnabled) {
     // Rotate through candidates so each run refreshes a different slice.
-    const offset = Math.floor(ctx.now.getTime() / 864e5) % Math.max(1, candidates.length);
+    const offset = Math.floor(ctx.now.getTime() / DAY_MS) % Math.max(1, candidates.length);
     const slice = [...candidates.slice(offset), ...candidates.slice(0, offset)].slice(0, TRENDS_LOOKUPS_PER_RUN);
     for (const c of slice) {
       const t = await googleTrendScore(c.phrase);
@@ -45,8 +48,63 @@ export const runResearch: StageFn = async (ctx) => {
   // A live run re-scores a seeded demo phrase as real research, so it can be selected.
   const claim = ctx.demo ? {} : { isDemo: false };
   const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
+  const rankedCandidates = preferMeasuredDemand(candidates);
+  const existingKeywords = rankedCandidates.length
+    ? await db
+        .select({ id: keywords.id, phrase: keywords.phrase })
+        .from(keywords)
+        .where(inArray(keywords.phrase, rankedCandidates.map((candidate) => candidate.phrase)))
+    : [];
+  const keywordIdByPhrase = new Map(existingKeywords.map((keyword) => [keyword.phrase, keyword.id]));
+  const performanceKeywordIds = existingKeywords.map((keyword) => keyword.id);
+  const performanceCutoff = new Date(ctx.now.getTime() - PERFORMANCE_ANALYTICS_FRESHNESS_DAYS * DAY_MS);
+  const realListing = realPublishedListingsWhere(ctx.shopId, performanceCutoff);
+  const listingPerformance =
+    performanceKeywordIds.length > 0
+      ? await db
+          .select({
+            keywordId: listings.keywordId,
+            views: sql<number>`coalesce(sum(${listings.views}), 0)::int`,
+            favorites: sql<number>`coalesce(sum(${listings.favorites}), 0)::int`,
+          })
+          .from(listings)
+          .where(and(realListing, inArray(listings.keywordId, performanceKeywordIds)))
+          .groupBy(listings.keywordId)
+      : [];
+  // Views and favorites are lifetime listing counters, so conversion uses lifetime matched sales too.
+  const orderPerformance =
+    performanceKeywordIds.length > 0
+      ? await db
+          .select({
+            keywordId: listings.keywordId,
+            sales: sql<number>`count(${orders.id})::int`,
+          })
+          .from(listings)
+          .innerJoin(
+            orders,
+            and(
+              eq(orders.listingId, listings.id),
+              eq(orders.shopId, ctx.shopId),
+              eq(orders.matchStatus, "matched"),
+              eq(orders.isDemo, false),
+              lte(orders.createdAt, ctx.now),
+            ),
+          )
+          .where(and(realListing, inArray(listings.keywordId, performanceKeywordIds), notFakeReceiptWhere()))
+          .groupBy(listings.keywordId)
+      : [];
+  const performance = new Map<number, { views: number; favorites: number; sales: number }>();
+  for (const row of listingPerformance) {
+    if (row.keywordId == null) continue;
+    performance.set(row.keywordId, { views: Number(row.views), favorites: Number(row.favorites), sales: 0 });
+  }
+  for (const row of orderPerformance) {
+    if (row.keywordId == null) continue;
+    const current = performance.get(row.keywordId);
+    if (current) current.sales = Number(row.sales);
+  }
   let upserted = 0;
-  for (const c of preferMeasuredDemand(candidates)) {
+  for (const c of rankedCandidates) {
     if (isNichePaused(c.niche)) {
       await db
         .insert(keywords)
@@ -79,6 +137,7 @@ export const runResearch: StageFn = async (ctx) => {
       seasonality: season,
       trend,
       searchVolume: c.searchVolume,
+      performance: performance.get(keywordIdByPhrase.get(c.phrase) ?? -1),
     });
     await db
       .insert(keywords)
