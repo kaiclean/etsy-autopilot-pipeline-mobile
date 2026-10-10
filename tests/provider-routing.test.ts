@@ -7,6 +7,7 @@ import { config, integrationStatus } from "@/lib/config";
 import { connectionHealth } from "@/lib/health";
 import { classifyProviderStatus, probeConnections } from "@/lib/provider-probe";
 import { setupChecklist, stepStatus, SETUP_STEPS } from "@/lib/setup-guide";
+import { ImageProviderConfigurationError } from "@/lib/provider-errors";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -79,6 +80,72 @@ afterEach(() => {
 });
 
 describe("image endpoint fallbacks", () => {
+  it("rejects a shared Ollama image host before fetching and reports the configuration fix", async () => {
+    process.env.IMAGE_PROVIDER = "openai";
+    process.env.LLM_PROVIDER = "mock";
+    process.env.OPENAI_API_KEY = "sk-text";
+    process.env.OPENAI_BASE_URL = "https://ollama.com/v1";
+    delete process.env.IMAGE_BASE_URL;
+    delete process.env.IMAGE_API_KEY;
+    const calls = installFetch(() => jsonResponse(404, "path not found"));
+
+    await expect(new OpenAIImageProvider().generate({
+      prompt: "alpine poster", niche: "alpine", seed: 1,
+    })).rejects.toThrow(/Ollama Cloud has no image API.*IMAGE_BASE_URL.*IMAGE_API_KEY.*IMAGE_MODEL/);
+    expect(calls).toHaveLength(0);
+    expect(connectionHealth({ etsyConnected: false }).find((row) => row.id === "images"))
+      .toMatchObject({ level: "red", label: "Invalid endpoint" });
+    expect(integrationStatus(false).find((row) => row.id === "images")?.status).toBe("missing");
+    const probes = await probeConnections();
+    expect(probes.image.status).toBe("error");
+    expect(probes.image.detail).toContain("IMAGE_BASE_URL");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("makes a missing image route a configuration error with actionable guidance", async () => {
+    const calls = installFetch(() => jsonResponse(404, { error: 'path "/v1/images/generations" not found' }));
+    const provider = new OpenAIImageProvider({
+      apiKey: "image-test-key", baseUrl: "https://images.example/v1", model: "painter",
+    });
+    await expect(provider.generate({ prompt: "alpine poster", niche: "alpine", seed: 1 }))
+      .rejects.toThrow(/404.*IMAGE_BASE_URL and IMAGE_MODEL/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects invalid image base URLs without sending a request", async () => {
+    const calls = installFetch(() => jsonResponse(200, {}));
+    for (const baseUrl of ["not-a-url", "ftp://images.example/v1"]) {
+      const provider = new OpenAIImageProvider({ apiKey: "image-test-key", baseUrl, model: "painter" });
+      await expect(provider.generate({ prompt: "alpine poster", niche: "alpine", seed: 1 }))
+        .rejects.toThrow(/base URL/);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("classifies missing image credentials, base URL, and model as configuration errors", async () => {
+    const calls = installFetch(() => jsonResponse(200, {}));
+    for (const options of [
+      { baseUrl: "https://images.example/v1", model: "painter" },
+      { apiKey: "image-test-key", model: "painter" },
+      { apiKey: "image-test-key", baseUrl: "https://images.example/v1" },
+    ]) {
+      await expect(new OpenAIImageProvider(options).generate({
+        prompt: "alpine poster", niche: "alpine", seed: 1,
+      })).rejects.toBeInstanceOf(ImageProviderConfigurationError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reports an invalid OmniRoute image endpoint as not ready", () => {
+    process.env.IMAGE_PROVIDER = "omniroute";
+    process.env.OMNIROUTE_API_KEY = "omni-test-key";
+    process.env.OMNIROUTE_BASE_URL = "https://ollama.com/v1";
+    process.env.OMNIROUTE_IMAGE_MODEL = "painter";
+    expect(connectionHealth({ etsyConnected: false }).find((row) => row.id === "images"))
+      .toMatchObject({ level: "red", label: "Invalid endpoint" });
+    expect(integrationStatus(false).find((row) => row.id === "images")?.status).toBe("missing");
+  });
+
   it("uses OPENAI_* when IMAGE_* is unset", () => {
     delete process.env.IMAGE_API_KEY;
     delete process.env.IMAGE_BASE_URL;

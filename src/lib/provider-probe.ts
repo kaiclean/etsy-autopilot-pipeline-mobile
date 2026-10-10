@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { imageEndpointConfigurationError } from "@/lib/provider-errors";
 
 export type ProbeStatus = "ok" | "401" | "402" | "404" | "model not found" | "skipped" | "error";
 
@@ -115,6 +116,8 @@ async function probeText(): Promise<ProbeResult> {
 async function probeImage(): Promise<ProbeResult> {
   const target = imageTarget();
   if ("skip" in target) return target.skip;
+  const configurationError = imageEndpointConfigurationError(target.base);
+  if (configurationError) return { target: "image", status: "error", detail: configurationError };
   const paths = target.openRouter ? ["/images", "/images/generations"] : ["/images/generations"];
   let last: { status: number; body: string } = { status: 0, body: "" };
   try {

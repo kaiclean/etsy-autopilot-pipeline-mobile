@@ -1,5 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
-import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
+import { imageEndpointConfigurationError, imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -329,12 +329,13 @@ function imageProviderCheck(): HealthCheck {
         envVars,
       };
     }
+    const configurationError = imageEndpointConfigurationError(config.imageBaseUrl);
     return {
       id: "images",
       name: "Image provider",
-      level: "green",
-      label: "Ready",
-      detail: `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`,
+      level: configurationError ? "red" : "green",
+      label: configurationError ? "Invalid endpoint" : "Ready",
+      detail: configurationError ?? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`,
       envVars,
     };
   }
@@ -351,13 +352,14 @@ function imageProviderCheck(): HealthCheck {
     }
     const base = config.omniroute.baseUrl;
     const model = config.omniroute.imageModel;
+    const configurationError = base ? imageEndpointConfigurationError(base) : null;
     const ready = Boolean(base && model);
     return {
       id: "images",
       name: "Image provider",
-      level: ready ? "green" : "yellow",
-      label: ready ? "Ready" : "Incomplete",
-      detail: `OmniRoute · ${model ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
+      level: configurationError ? "red" : ready ? "green" : "yellow",
+      label: configurationError ? "Invalid endpoint" : ready ? "Ready" : "Incomplete",
+      detail: configurationError ?? `OmniRoute · ${model ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
       envVars,
     };
   }
