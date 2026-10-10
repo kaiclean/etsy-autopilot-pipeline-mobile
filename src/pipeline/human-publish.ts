@@ -4,7 +4,7 @@ import { getPrintifyAdapter } from "@/adapters/printify";
 import type { DB } from "@/db";
 import { designs, listings, podSamples } from "@/db/schema";
 import { config } from "@/lib/config";
-import { manifestIsComplete, tryBuildFileManifest } from "@/lib/file-manifest";
+import { buildFileManifest, manifestIsComplete, type ManifestLoadDeps } from "@/lib/file-manifest";
 import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
 import { absoluteUrl, podPreset } from "./publish";
@@ -15,12 +15,12 @@ async function designProvider(db: DB, designId: number | null) {
   return design?.provider ?? null;
 }
 
-/** Stores filename, pixel size, bytes and sha256 when the file is readable locally. Does not verify or activate. */
-export async function recordDeliveryManifest(db: DB, listingId: number, now = new Date()) {
+/** Stores filename, pixel size, bytes and sha256 from local bytes, S3, or this app's origin. Does not verify or activate. */
+export async function recordDeliveryManifest(db: DB, listingId: number, now = new Date(), deps: ManifestLoadDeps = {}) {
   const [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "digital") return { ok: false as const, error: "Not a digital listing" };
   if (!l.deliveryUrl) return { ok: false as const, error: "Delivery file URL is missing." };
-  const manifest = tryBuildFileManifest(l.deliveryUrl, l.imageUrl);
+  const manifest = await buildFileManifest(l.deliveryUrl, l.imageUrl, deps);
   if (!manifestIsComplete(manifest)) {
     return { ok: false as const, error: "Could not read the delivery PNG (filename, pixel size, bytes, hash)." };
   }

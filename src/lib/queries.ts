@@ -7,6 +7,7 @@ import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "
 import { printifyEventLog } from "./ops-copy";
 import { registeredWebhookCount } from "./printify-webhooks";
 import { connectionHealth } from "./health";
+import { providerCreditSignal } from "./provider-errors";
 import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
@@ -414,8 +415,9 @@ export async function getConnectionsData() {
   const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
   const webhooksRegistered = registeredWebhookCount(lastRuns.find((stage) => stage.id === "maintenance")?.run?.summary);
+  const providerCredits = providerCreditSignal(lastRuns.find((stage) => stage.id === "design")?.run ?? null);
   return {
-    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId, webhooksRegistered }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId, webhooksRegistered, providerCredits }),
     webhooksRegistered,
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),

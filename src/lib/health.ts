@@ -1,4 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -194,7 +195,19 @@ function pushCheck(): HealthCheck {
   };
 }
 
-function llmCheck(): HealthCheck {
+function overlayCredits(check: HealthCheck, signal: ProviderCreditSignal, which: "images" | "llm"): HealthCheck {
+  if (signal === "ok" || check.label === "Key missing") return check;
+  const failed = signal === "failed";
+  const who = which === "images" ? "Image generation" : "The listing writer";
+  return {
+    ...check,
+    level: failed ? "red" : "yellow",
+    label: failed ? "Out of credits" : "Low credits",
+    detail: `${who} returned 402 Insufficient credits on the latest design run. Keys are still set. Token values are hidden.`,
+  };
+}
+
+function llmCheck(signal: ProviderCreditSignal): HealthCheck {
   const envVars = ["LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"];
   const requested = explicit("LLM_PROVIDER");
   if (requested === "openai" && !config.openaiKey) {
@@ -208,26 +221,34 @@ function llmCheck(): HealthCheck {
     };
   }
   if (config.llmProvider === "openai") {
-    return {
+    return overlayCredits(
+      {
+        id: "llm",
+        name: "LLM provider",
+        level: "green",
+        label: "Ready",
+        detail: `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`,
+        envVars,
+      },
+      signal,
+      "llm",
+    );
+  }
+  return overlayCredits(
+    {
       id: "llm",
       name: "LLM provider",
-      level: "green",
-      label: "Ready",
-      detail: `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`,
+      level: "yellow",
+      label: "Mock",
+      detail: "Deterministic template writer. Set LLM_PROVIDER=openai and OPENAI_API_KEY for generated copy.",
       envVars,
-    };
-  }
-  return {
-    id: "llm",
-    name: "LLM provider",
-    level: "yellow",
-    label: "Mock",
-    detail: "Deterministic template writer. Set LLM_PROVIDER=openai and OPENAI_API_KEY for generated copy.",
-    envVars,
-  };
+    },
+    signal,
+    "llm",
+  );
 }
 
-function imageCheck(): HealthCheck {
+function imageCheck(signal: ProviderCreditSignal): HealthCheck {
   const envVars = [
     "IMAGE_PROVIDER",
     "OPENAI_API_KEY",
@@ -249,14 +270,18 @@ function imageCheck(): HealthCheck {
         envVars,
       };
     }
-    return {
-      id: "images",
-      name: "Image provider",
-      level: "green",
-      label: "Ready",
-      detail: `OpenAI-compatible · ${config.openaiImageModel} · ${config.openaiBaseUrl}`,
-      envVars,
-    };
+    return overlayCredits(
+      {
+        id: "images",
+        name: "Image provider",
+        level: "green",
+        label: "Ready",
+        detail: `OpenAI-compatible · ${config.openaiImageModel} · ${config.openaiBaseUrl}`,
+        envVars,
+      },
+      signal,
+      "images",
+    );
   }
   if (provider === "higgsfield") {
     if (!config.higgsfield.apiKey) {
@@ -269,14 +294,18 @@ function imageCheck(): HealthCheck {
         envVars,
       };
     }
-    return {
-      id: "images",
-      name: "Image provider",
-      level: "green",
-      label: "Ready",
-      detail: `Higgsfield · ${config.higgsfield.baseUrl}. The API key is hidden.`,
-      envVars,
-    };
+    return overlayCredits(
+      {
+        id: "images",
+        name: "Image provider",
+        level: "green",
+        label: "Ready",
+        detail: `Higgsfield · ${config.higgsfield.baseUrl}. The API key is hidden.`,
+        envVars,
+      },
+      signal,
+      "images",
+    );
   }
   if (provider === "replicate") {
     if (!config.replicateToken) {
@@ -289,23 +318,31 @@ function imageCheck(): HealthCheck {
         envVars,
       };
     }
-    return {
+    return overlayCredits(
+      {
+        id: "images",
+        name: "Image provider",
+        level: "green",
+        label: "Ready",
+        detail: "Replicate token is set. The token is hidden.",
+        envVars,
+      },
+      signal,
+      "images",
+    );
+  }
+  return overlayCredits(
+    {
       id: "images",
       name: "Image provider",
-      level: "green",
-      label: "Ready",
-      detail: "Replicate token is set. The token is hidden.",
+      level: "yellow",
+      label: "Mock",
+      detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, or replicate.",
       envVars,
-    };
-  }
-  return {
-    id: "images",
-    name: "Image provider",
-    level: "yellow",
-    label: "Mock",
-    detail: "Mock placeholder art. Set IMAGE_PROVIDER to higgsfield, openai, or replicate.",
-    envVars,
-  };
+    },
+    signal,
+    "images",
+  );
 }
 
 function publishCheck(mode: PublishMode): HealthCheck {
@@ -400,16 +437,19 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
+  /** Latest design run. 402/credit errors turn image and LLM checks red or amber. */
+  providerCredits?: ProviderCreditSignal;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
+  const providerCredits = input.providerCredits ?? "ok";
   return [
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
     printifyCheck(input.webhooksRegistered),
     storageCheck(),
     pushCheck(),
-    llmCheck(),
-    imageCheck(),
+    llmCheck(providerCredits),
+    imageCheck(providerCredits),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
     authCheck(),

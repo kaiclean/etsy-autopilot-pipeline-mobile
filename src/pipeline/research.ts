@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { keywords } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
@@ -111,7 +111,7 @@ export const runResearch: StageFn = async (ctx) => {
     .select({ id: keywords.id, phrase: keywords.phrase, score: keywords.score })
     .from(keywords)
     .where(and(eq(keywords.status, "new"), inArray(keywords.niche, activeNiches().map((n) => n.id))))
-    .orderBy(desc(keywords.score))
+    .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(designsPerRun);
   if (top.length) {
     await db

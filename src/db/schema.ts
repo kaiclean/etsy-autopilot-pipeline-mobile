@@ -133,6 +133,8 @@ export const keywords = pgTable("keywords", {
   trendScore: doublePrecision("trend_score"),
   score: doublePrecision("score").notNull().default(0),
   status: text("status").$type<"new" | "selected" | "used" | "rejected">().notNull().default("new"),
+  /** Provider attempts that did not produce a design. Research prefers a lower count. */
+  designFailures: integer("design_failures").notNull().default(0),
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

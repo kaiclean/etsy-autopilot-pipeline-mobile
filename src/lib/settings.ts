@@ -33,6 +33,8 @@ export type EtsyTokens = {
   refreshToken: string;
   expiresAt: number;
   userId?: string;
+  /** Set when the last refresh call failed. Cleared after a successful refresh. Never a token value. */
+  refreshError?: string | null;
 };
 
 /** Review flag for the committed catalog diff. Pending stays true until Kai marks it reviewed. */
