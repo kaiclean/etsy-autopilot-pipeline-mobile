@@ -136,7 +136,11 @@ export const runDesign: StageFn = async (ctx) => {
       if (ctx.demo && isPlaceholderUrl(imageUrl)) {
         log(`DEMO placeholder for “${kw.phrase}” (${prepared.width ?? "?"}×${prepared.height ?? "?"}px). It will be held off the approval queue.`, "warn");
       }
-      const existingListings = await db.select().from(listings).where(eq(listings.keywordId, kw.id));
+      // Seeded demo rows never receive art paid for by a live run.
+      const existingListings = await db
+        .select()
+        .from(listings)
+        .where(and(eq(listings.keywordId, kw.id), eq(listings.shopId, ctx.shopId), ctx.demo ? undefined : eq(listings.isDemo, false)));
       const placeholders = existingListings.filter((row) => isPlaceholderUrl(row.imageUrl) || isPlaceholderUrl(row.deliveryUrl));
       if (placeholders.length && !isPlaceholderUrl(imageUrl)) {
         const refreshed = {
@@ -160,7 +164,10 @@ export const runDesign: StageFn = async (ctx) => {
             })
             .where(eq(listings.id, listing.id));
         }
-        const existingDesigns = await db.select().from(designs).where(eq(designs.keywordId, kw.id));
+        const existingDesigns = await db
+          .select()
+          .from(designs)
+          .where(and(eq(designs.keywordId, kw.id), eq(designs.shopId, ctx.shopId), ctx.demo ? undefined : eq(designs.isDemo, false)));
         for (const design of existingDesigns) {
           if (!isPlaceholderUrl(design.imageUrl)) continue;
           await db.update(designs).set(refreshed).where(eq(designs.id, design.id));

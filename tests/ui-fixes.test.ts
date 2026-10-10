@@ -197,4 +197,57 @@ describe("placeholder art queue", () => {
     expect(designRows).toHaveLength(1);
     expect(designRows[0].imageUrl).toBe(url);
   });
+
+  it("does not write live art onto seeded demo rows for the same keyword", async () => {
+    const client = new PGlite("memory://");
+    const db = drizzle(client, { schema }) as unknown as DB;
+    await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const [keyword] = await db
+      .insert(keywords)
+      .values({ shopId: shop.id, phrase: "claimed seed phrase", niche: "alpine", source: "test", score: 90, status: "selected", isDemo: false })
+      .returning();
+    const url = "https://cdn.example/live-alpine.png";
+    vi.stubGlobal("fetch", async () => ({ ok: false, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) }));
+    setImageProviderForTests({
+      name: "openai",
+      estimatedCostChf: 0.01,
+      generate: async () => ({ url, costChf: 0.01, provider: "openai" }),
+    });
+    const [demoListing] = await db
+      .insert(listings)
+      .values({
+        shopId: shop.id,
+        keywordId: keyword.id,
+        niche: "alpine",
+        productType: "digital",
+        title: "Seeded alpine print",
+        tags: ["alpine"],
+        description: "A print",
+        imageUrl: "/api/placeholder/3",
+        deliveryUrl: "/api/placeholder/3",
+        priceChf: 12.5,
+        netChf: 4,
+        marginPct: 30,
+        status: "pending_approval",
+        publishMode: "dry-run",
+        isDemo: true,
+      })
+      .returning();
+
+    await runDesign({
+      db,
+      shopId: shop.id,
+      demo: false,
+      trigger: "manual",
+      random: () => 0.1,
+      now: new Date("2026-10-10T12:00:00Z"),
+      log: () => {},
+    });
+
+    const [unchanged] = await db.select().from(listings).where(eq(listings.id, demoListing.id));
+    expect(unchanged.imageUrl).toBe("/api/placeholder/3");
+    const liveDesigns = await db.select().from(designs).where(eq(designs.keywordId, keyword.id));
+    expect(liveDesigns.some((row) => row.imageUrl === url && row.isDemo === false)).toBe(true);
+  });
 });
