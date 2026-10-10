@@ -12,6 +12,7 @@ import { buildNextActions, toStageSnapshots } from "@/lib/next-actions";
 import { AlertRail } from "@/components/alert-rail";
 import { getCockpitAlerts, getConnectionsData, getDashboardOps, getHomeData } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 
 function greeting() {
   const h = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: TZ }).format(new Date()));
@@ -123,6 +124,7 @@ export default async function HomePage() {
               {data.lastRuns.map((s) => {
                 const Icon = STAGE_ICONS[s.id];
                 const st = s.run?.status;
+                const summary = s.id === "maintenance" ? formatMaintenanceSummary(s.run?.summary) : s.run?.summary;
                 const statusLabel =
                   st === "success" ? "Succeeded" : st === "warning" ? "Warning" : st === "failed" ? "Failed" : st === "running" ? "Running" : st === "skipped" ? "Skipped" : "Not run";
                 const duration =
@@ -135,7 +137,7 @@ export default async function HomePage() {
                     key={s.id}
                     href="/pipeline"
                     className="snap-start"
-                    aria-label={`${s.label}: ${statusLabel}${s.run?.summary ? `, ${s.run.summary}` : ""}`}
+                    aria-label={`${s.label}: ${statusLabel}${summary ? `, ${summary}` : ""}`}
                   >
                     <Panel className="group w-[158px] overflow-hidden p-3 transition-colors hover:border-primary/30 hover:bg-muted/20 md:w-auto">
                       <div className="flex items-center justify-between gap-2">
@@ -157,7 +159,7 @@ export default async function HomePage() {
                         <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                       </div>
                       <div className="mt-1 min-h-8 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                        {s.run?.summary ?? "No run recorded yet"}
+                        {summary || "No run recorded yet"}
                       </div>
                       <div className="mt-2 flex items-center justify-between border-t border-border/70 pt-2 text-[10px] text-muted-foreground">
                         <span suppressHydrationWarning>{s.run ? relTime(s.run.startedAt) : "Never run"}</span>

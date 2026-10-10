@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Area, AreaChart, XAxis } from "recharts";
 import { Delta, Panel } from "@/components/common";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { dashboardTrendForRange, type DashboardRange } from "@/lib/dashboard-metrics";
 import { chf, num, pct, shortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +14,7 @@ type Props = {
   series: { date: string; revenue: number; profit: number }[];
 };
 
-const RANGES = [
+const RANGES: { id: DashboardRange; label: string }[] = [
   { id: "today", label: "Today" },
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
@@ -25,10 +26,10 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export function HeroKpis({ kpis, series }: Props) {
-  const [range, setRange] = useState<(typeof RANGES)[number]["id"]>("7d");
+  const [range, setRange] = useState<DashboardRange>("7d");
   const { cur, prev } = kpis[range];
   const vsLabel = range === "today" ? "vs yesterday" : `vs prior ${range}`;
-  const trend = range === "today" ? series.slice(-1) : range === "7d" ? series.slice(-7) : series;
+  const trend = dashboardTrendForRange(series, range);
   const trendLabel = range === "today" ? "Today" : `Daily trend · ${range === "7d" ? "7 days" : "30 days"}`;
   return (
     <div className="space-y-3">
@@ -37,7 +38,7 @@ export function HeroKpis({ kpis, series }: Props) {
         <div className="relative grid gap-4 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] md:items-end">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-success shadow-[0_0_12px_var(--success)]" />
+              <span className="size-2 rounded-full bg-primary" />
               <div className="text-[13px] font-medium text-muted-foreground">Net profit after fees &amp; costs</div>
             </div>
             <div className="tabular mt-2 text-[40px] leading-none font-semibold tracking-tight md:text-5xl">{chf(cur.net)}</div>

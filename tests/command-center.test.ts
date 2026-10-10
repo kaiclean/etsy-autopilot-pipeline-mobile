@@ -6,6 +6,7 @@ import { filterProducts, filterQueue, planBulkStatus } from "@/lib/catalog-filte
 import { buildNextActions, type NextActionInput, type StageSnapshot } from "@/lib/next-actions";
 import { externalCronExample, printifyCallbackUrl, printifyEventLog, PRINTIFY_WEBHOOK_TOPICS } from "@/lib/ops-copy";
 import { pushEventEnabled, DEFAULT_PUSH_PREFS } from "@/lib/push-prefs";
+import { dashboardTrendForRange } from "@/lib/dashboard-metrics";
 
 const stages = (status: StageSnapshot["lastStatus"]): StageSnapshot[] =>
   (["research", "design", "listing", "publish", "orders", "analytics"] as const).map((id, index) => ({
@@ -17,6 +18,21 @@ const stages = (status: StageSnapshot["lastStatus"]): StageSnapshot[] =>
     lastStartedAt: status ? `2026-09-30T0${index}:00:00.000Z` : null,
     lastSummary: status === "failed" ? "boom" : null,
   }));
+
+describe("dashboard trends", () => {
+  const series = Array.from({ length: 30 }, (_, index) => ({
+    date: `2026-09-${String(index + 1).padStart(2, "0")}`,
+    revenue: index * 10,
+    profit: index * 5,
+  }));
+
+  it("matches the visible revenue/profit trend to the selected KPI range", () => {
+    expect(dashboardTrendForRange(series, "today")).toEqual(series.slice(-1));
+    expect(dashboardTrendForRange(series, "7d")).toEqual(series.slice(-7));
+    expect(dashboardTrendForRange(series, "30d")).toEqual(series);
+    expect(dashboardTrendForRange([], "today")).toEqual([]);
+  });
+});
 
 function input(patch: Partial<NextActionInput> = {}): NextActionInput {
   return {
