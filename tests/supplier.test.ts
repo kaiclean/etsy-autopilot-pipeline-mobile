@@ -62,7 +62,6 @@ describe("supplier HTTP safety", () => {
         .mockResolvedValueOnce(Response.json([{ id: 101, title: "Cotton Tote Bag" }]))
         .mockResolvedValueOnce(Response.json([{ id: 201, title: "Printify Choice" }]))
         .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: '15" x 16" White' }] }))
-        .mockResolvedValueOnce(Response.json({ profiles: [{ variant_ids: [301], countries: ["CH"], first_item: { cost: 499, currency: "USD" } }] }))
         .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: '15" x 16" White' }] }))
         .mockResolvedValueOnce(Response.json({ profiles: [{ variant_ids: [301], countries: ["CH"], first_item: { cost: 499, currency: "USD" } }] }))
         .mockResolvedValueOnce(Response.json({ data: [], last_page: 1 }));
@@ -71,14 +70,14 @@ describe("supplier HTTP safety", () => {
       await vi.runAllTimersAsync();
       const [product] = await pending;
       expect(product).toMatchObject({ uid: "101:201:301", preset: "tote", baseCostUsd: null });
-      expect(product.sourceUrl).toMatch(/shipping\.json$/);
+      expect(product.sourceUrl).toMatch(/variants\.json\?show-out-of-stock=1$/);
       expect(product.fetchedAt).toBeInstanceOf(Date);
       expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe(["Bearer", "fixture-token"].join(" "));
       const quote = supplier.quote(product, "CH");
       await vi.runAllTimersAsync();
       expect(await quote).toMatchObject({ baseCostUsd: null, shippingUsd: 4.99, inStock: null, productionDays: null });
       await supplier.listProducts("tote");
-      expect(fetchImpl).toHaveBeenCalledTimes(7);
+      expect(fetchImpl).toHaveBeenCalledTimes(6);
     });
 
     it("reads available variant cost, not retail price, without creating a shop product", async () => {
@@ -106,13 +105,11 @@ describe("supplier HTTP safety", () => {
         .mockResolvedValueOnce(Response.json([{ id: 101, title: "Cotton Tote Bag" }]))
         .mockResolvedValueOnce(Response.json([{ id: 201, title: "Printify Choice" }, { id: 202, title: "Other Provider" }]))
         .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: "One size", is_available: false }] }))
-        .mockResolvedValueOnce(Response.json({ profiles: [] }))
-        .mockResolvedValueOnce(Response.json({ variants: [{ id: 302, title: "One size", is_available: true }] }))
-        .mockResolvedValueOnce(Response.json({ profiles: [] }));
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 302, title: "One size", is_available: true }] }));
       const pending = new PrintifySupplier(fetchImpl).listProducts("tote");
       await vi.runAllTimersAsync();
       expect((await pending).map((row) => row.uid)).toEqual(["101:201:301", "101:202:302"]);
-      expect(fetchImpl.mock.calls.map((row) => row[0]).filter((url) => url.endsWith("shipping.json"))).toHaveLength(2);
+      expect(fetchImpl.mock.calls.map((row) => row[0]).filter((url) => url.endsWith("shipping.json"))).toHaveLength(0);
     });
 
     it.each([true, false, undefined])("preserves official variant stock %s without deriving it from cost", async (isAvailable) => {
@@ -204,21 +201,22 @@ describe("supplier HTTP safety", () => {
       expect(await pending).toMatchObject({ baseCostUsd: 12.5, shippingUsd: null, inStock: isAvailable ?? null });
     });
 
-    it("keeps valid provider candidates when another variants or shipping read fails", async () => {
+    it("keeps good candidates without fake variants when another provider variants read fails", async () => {
       vi.stubEnv("PRINTIFY_API_TOKEN", "fixture-token");
       vi.stubEnv("PRINTIFY_SHOP_ID", "1");
       vi.useFakeTimers();
       const fetchImpl = vi.fn()
         .mockResolvedValueOnce(Response.json([{ id: 101, title: "Cotton Tote Bag" }]))
-        .mockResolvedValueOnce(Response.json([{ id: 200, title: "Unavailable" }, { id: 201, title: "No shipping" }, { id: 202, title: "Available" }]))
+        .mockResolvedValueOnce(Response.json([{ id: 200, title: "Unavailable" }, { id: 201, title: "Available" }, { id: 202, title: "Available" }]))
         .mockResolvedValueOnce(new Response("", { status: 503 }))
         .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: "One size" }] }))
-        .mockResolvedValueOnce(new Response("", { status: 503 }))
-        .mockResolvedValueOnce(Response.json({ variants: [{ id: 302, title: "One size" }] }))
-        .mockResolvedValueOnce(Response.json({ profiles: [] }));
-      const pending = new PrintifySupplier(fetchImpl).listProducts("tote");
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 302, title: "One size" }] }));
+      const supplier = new PrintifySupplier(fetchImpl);
+      const pending = supplier.listProducts("tote");
       await vi.runAllTimersAsync();
-      expect((await pending).map((row) => row.uid)).toEqual(["101:201:301", "101:202:302"]);
+      const products = await pending;
+      expect(products.map((row) => row.uid)).toEqual(["101:201:301", "101:202:302"]);
+      expect(fetchImpl).toHaveBeenCalledTimes(5);
     });
 
     it("retains cost and stock with unknown shipping when one quote read fails", async () => {

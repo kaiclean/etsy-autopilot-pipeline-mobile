@@ -55,12 +55,11 @@ export class PrintifySupplier implements Supplier {
       const variants = variantRows(await this.http.request(`${path}/variants.json?show-out-of-stock=1`).catch(() => null));
       const variantId = pickVariantIds(preset, variants)[0];
       if (variantId == null) continue;
-      await this.http.request<Shipping>(`${path}/shipping.json`).catch(() => null);
       // Keep each provider candidate, including unknown or unavailable variants.
       // Only a fresh quote can establish stock and landed cost for selection.
       out.push({
         supplier: this.id, preset, uid: `${blueprint.id}:${provider.id}:${variantId}`, title: `${blueprint.title} · ${provider.title}`,
-        baseCostUsd: null, currency: null, sourceUrl: `${API}${path}/shipping.json`, fetchedAt: new Date(),
+        baseCostUsd: null, currency: null, sourceUrl: `${API}${path}/variants.json?show-out-of-stock=1`, fetchedAt: new Date(),
         blueprintId: blueprint.id, printProviderId: provider.id, variantId,
       });
     }
