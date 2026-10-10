@@ -271,14 +271,17 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
       {
         id: "images",
         name: "Image generation",
-        status: config.imageProvider === "mock" ? "mock" : config.imageProvider === "openai" && imageEndpointConfigurationError(config.imageBaseUrl) ? "missing" : "configured",
+        status: config.imageProvider === "mock" ? "mock" : (
+          (config.imageProvider === "openai" && imageEndpointConfigurationError(config.imageBaseUrl)) ||
+          (config.imageProvider === "omniroute" && config.omniroute.baseUrl && imageEndpointConfigurationError(config.omniroute.baseUrl))
+        ) ? "missing" : "configured",
         detail:
           config.imageProvider === "mock"
             ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute."
             : config.imageProvider === "openai"
               ? imageEndpointConfigurationError(config.imageBaseUrl) ?? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`
               : config.imageProvider === "omniroute"
-                ? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
+                ? (config.omniroute.baseUrl ? imageEndpointConfigurationError(config.omniroute.baseUrl) : null) ?? `OmniRoute · ${config.omniroute.imageModel ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${config.omniroute.baseUrl ?? "OMNIROUTE_BASE_URL unset"}`
                 : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
         envVars: [
           "IMAGE_PROVIDER",

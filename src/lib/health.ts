@@ -352,13 +352,14 @@ function imageProviderCheck(): HealthCheck {
     }
     const base = config.omniroute.baseUrl;
     const model = config.omniroute.imageModel;
+    const configurationError = base ? imageEndpointConfigurationError(base) : null;
     const ready = Boolean(base && model);
     return {
       id: "images",
       name: "Image provider",
-      level: ready ? "green" : "yellow",
-      label: ready ? "Ready" : "Incomplete",
-      detail: `OmniRoute · ${model ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
+      level: configurationError ? "red" : ready ? "green" : "yellow",
+      label: configurationError ? "Invalid endpoint" : ready ? "Ready" : "Incomplete",
+      detail: configurationError ?? `OmniRoute · ${model ?? "OMNIROUTE_IMAGE_MODEL unset"} · ${base ?? "OMNIROUTE_BASE_URL unset"}`,
       envVars,
     };
   }

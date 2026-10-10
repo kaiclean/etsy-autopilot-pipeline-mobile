@@ -28,16 +28,16 @@ export class OpenAIImageProvider implements ImageProvider {
   async generate(req: ImageRequest): Promise<GeneratedImage> {
     const defaults = !this.options;
     const key = defaults ? config.imageApiKey : this.options?.apiKey;
-    if (!key) throw new Error(this.options?.missingKey ?? "IMAGE_API_KEY or OPENAI_API_KEY missing");
+    if (!key) throw new ImageProviderConfigurationError(this.options?.missingKey ?? "IMAGE_API_KEY or OPENAI_API_KEY missing");
     const aspectRatio = req.aspectRatio ?? "2:3";
     const size =
       aspectRatio === "1:1" ? "1024x1024" : aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
     const base = (defaults ? config.imageBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
-    if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "IMAGE_BASE_URL missing");
+    if (!base) throw new ImageProviderConfigurationError(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "IMAGE_BASE_URL missing");
     const configurationError = imageEndpointConfigurationError(base);
     if (configurationError) throw new ImageProviderConfigurationError(configurationError);
     const model = defaults ? config.imageModel : this.options?.model;
-    if (!model) throw new Error(this.name === "omniroute" ? "OMNIROUTE_IMAGE_MODEL missing" : "IMAGE_MODEL missing");
+    if (!model) throw new ImageProviderConfigurationError(this.name === "omniroute" ? "OMNIROUTE_IMAGE_MODEL missing" : "IMAGE_MODEL missing");
     const isOpenRouter = this.options?.openRouter ?? /openrouter\.ai/i.test(base);
     const body: Record<string, unknown> = {
       model,
