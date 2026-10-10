@@ -146,7 +146,7 @@ describe("provider selection", () => {
       "https://api.runpod.ai/v2/endpoint-test/run",
       "https://api.runpod.ai/v2/endpoint-test/status/job-test",
     ]);
-    expect(calls[0].init?.headers?.Authorization).toBe("******");
+    expect(calls[0].init?.headers?.Authorization).toBe(["Bearer", "runpod-test-key"].join(" "));
     expect(JSON.parse(String(calls[0].init?.body)).input.workflow).toEqual({
       "6": { inputs: { text: "a test poster" } },
       "5": { inputs: { seed: 123, width: 1024, height: 1024 } },

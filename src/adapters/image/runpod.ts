@@ -83,7 +83,7 @@ export class RunPodImageProvider implements ImageProvider {
     if (!workflow) throw new Error("RUNPOD_COMFY_WORKFLOW missing");
 
     const base = `${BASE_URL}/${encodeURIComponent(endpointId)}`;
-    const headers = { Authorization: `****** "Content-Type": "application/json" };
+    const headers = { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" };
     const submitted = await fetch(`${base}/run`, {
       method: "POST",
       headers,
@@ -94,6 +94,7 @@ export class RunPodImageProvider implements ImageProvider {
     let job = (await submitted.json()) as RunPodResponse;
     if (job.status === "COMPLETED") return this.saveImage(job);
     if (!job.id) throw new Error("RunPod response did not include a job id");
+    const jobId = job.id;
 
     const deadline = Date.now() + (this.opts.deadlineMs ?? DEADLINE_MS);
     while (Date.now() < deadline) {
@@ -101,7 +102,7 @@ export class RunPodImageProvider implements ImageProvider {
         throw new Error(`RunPod job ${job.status.toLowerCase()}`);
       }
       await new Promise((resolve) => setTimeout(resolve, this.opts.pollMs ?? POLL_MS));
-      const polled = await fetch(`${base}/status/${encodeURIComponent(job.id)}`, {
+      const polled = await fetch(`${base}/status/${encodeURIComponent(jobId)}`, {
         headers,
         signal: AbortSignal.timeout(20_000),
       });
