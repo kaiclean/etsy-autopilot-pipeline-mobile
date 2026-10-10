@@ -15,7 +15,7 @@ export default async function PipelinePage() {
         title="Pipeline"
         subtitle="Stages run on schedule or on demand. The approval queue sits between Listing and Publish."
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex w-full items-center justify-between gap-3 md:w-auto md:justify-end">
             <Link href="/pipeline/live" className="text-sm font-medium text-primary">
               Live activity
             </Link>
