@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { triggerFullPipeline, triggerStage } from "@/app/actions";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -33,10 +34,11 @@ export function RunStageButton({
         start(async () => {
           const r = await triggerStage(stage, force ? { force: true } : undefined);
           router.refresh();
-          if (r.status === "skipped") toast.warning(`Skipped: ${r.summary}`);
-          else if (r.status === "warning") toast.warning(r.summary ?? "Finished with warnings");
-          else if (!r.ok) toast.error(r.summary ?? r.error ?? "Run failed");
-          else if (r.summary) toast.success(r.summary);
+          const summary = r.summary ? formatMaintenanceSummary(r.summary) : r.summary;
+          if (r.status === "skipped") toast.warning(`Skipped: ${summary}`);
+          else if (r.status === "warning") toast.warning(summary ?? "Finished with warnings");
+          else if (!r.ok) toast.error(summary ?? r.error ?? "Run failed");
+          else if (summary) toast.success(summary);
         })
       }
     >

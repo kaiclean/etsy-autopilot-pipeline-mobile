@@ -414,8 +414,9 @@ export async function getConnectionsData() {
   const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
   const publishMode = effectivePublishMode(automation.publishMode);
   const webhooksRegistered = registeredWebhookCount(lastRuns.find((stage) => stage.id === "maintenance")?.run?.summary);
+  const imageRun = lastRuns.find((stage) => stage.id === "design")?.run ?? null;
   return {
-    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId, webhooksRegistered }),
+    checks: connectionHealth({ etsyConnected, publishMode, accessExpired, etsyShopId: shop?.etsyShopId, webhooksRegistered, imageRun }),
     webhooksRegistered,
     etsyConnected,
     canConnectEtsy: Boolean(config.etsy.apiKey),

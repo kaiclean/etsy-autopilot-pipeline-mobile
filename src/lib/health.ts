@@ -1,4 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -475,6 +476,17 @@ function authCheck(): HealthCheck {
   };
 }
 
+function overlayImageRun(check: HealthCheck, run: ImageRunFact | null | undefined): HealthCheck {
+  const error = lastImageProviderError(run);
+  if (!error || check.label === "Key missing") return check;
+  return {
+    ...check,
+    level: run?.status === "warning" ? "yellow" : "red",
+    label: imageProviderStatusLabel(error),
+    detail: error,
+  };
+}
+
 /** Status for the command center. Reports env var names and modes only, never secret values. */
 export function connectionHealth(input: {
   etsyConnected: boolean;
@@ -482,6 +494,7 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
+  imageRun?: ImageRunFact | null;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
   return [
@@ -491,7 +504,7 @@ export function connectionHealth(input: {
     storageCheck(),
     pushCheck(),
     llmCheck(),
-    imageCheck(),
+    overlayImageRun(imageCheck(), input.imageRun),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
     authCheck(),

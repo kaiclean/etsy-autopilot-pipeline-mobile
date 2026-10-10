@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Panel } from "@/components/common";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import type { PipelineLive } from "@/lib/pipeline-live";
 import { cn } from "@/lib/utils";
 
@@ -60,7 +61,7 @@ export function LiveLog({ initial }: { initial: PipelineLive }) {
                 {run.status}
               </div>
               <div className="min-w-0 text-xs text-muted-foreground">
-                <div className="truncate">{run.summary || "No summary"}</div>
+                <div className="truncate">{run.summary ? formatMaintenanceSummary(run.summary) : "No summary"}</div>
                 <div>
                   {formatTime(run.startedAt)} · {run.trigger}
                   {run.errorCount ? ` · ${run.errorCount} error${run.errorCount === 1 ? "" : "s"}` : ""}

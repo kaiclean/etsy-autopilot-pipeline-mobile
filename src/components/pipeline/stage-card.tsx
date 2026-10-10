@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import type { JobRun, StageName } from "@/db/schema";
 import { describeCron, nextRun } from "@/lib/cron";
 import { relTime } from "@/lib/format";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -75,7 +76,7 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
       </div>
 
       <div className="mt-3 rounded-xl bg-muted/40 px-3 py-2.5 text-xs">
-        <p className="line-clamp-2 min-h-8 text-foreground/90">{last?.summary ?? "Not run yet."}</p>
+        <p className="line-clamp-2 min-h-8 text-foreground/90">{last?.summary ? formatMaintenanceSummary(last.summary) : "Not run yet."}</p>
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
           <span suppressHydrationWarning>Last: {last ? `${relTime(last.startedAt)} · ${last.trigger}` : "never"}</span>
           <span className="flex items-center gap-1">
@@ -122,10 +123,10 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
                     {r.finishedAt ? ` · ${((new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()) / 1000).toFixed(1)}s` : ""}
                   </span>
                 </div>
-                <p className="mt-2 text-sm">{r.summary}</p>
+                <p className="mt-2 text-sm">{r.summary ? formatMaintenanceSummary(r.summary) : ""}</p>
                 {r.logs.length > 0 && (
                   <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                    {r.logs.map((l) => `${l.t.slice(11, 19)} ${l.level === "info" ? " " : l.level === "warn" ? "!" : "✗"} ${l.msg}`).join("\n")}
+                    {r.logs.map((l) => `${l.t.slice(11, 19)} ${l.level === "info" ? " " : l.level === "warn" ? "!" : "✗"} ${formatMaintenanceSummary(l.msg)}`).join("\n")}
                   </pre>
                 )}
               </div>
