@@ -29,7 +29,6 @@ export default async function HomePage() {
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
   const warning = data.lastRuns.filter((s) => s.run?.status === "warning").length;
-  const systemNeedsAttention = failing > 0 || warning > 0 || attention.length > 0 || data.killSwitch;
   const attention = buildNextActions({
     etsyConnected: connections.etsyConnected,
     etsyKeysReady: connections.etsyKeysReady,
@@ -42,6 +41,7 @@ export default async function HomePage() {
     stages: toStageSnapshots(connections.lastRuns, connections.stages),
     checks: connections.checks,
   });
+  const systemNeedsAttention = failing > 0 || warning > 0 || attention.length > 0 || data.killSwitch;
 
   return (
     <div className="space-y-6">
