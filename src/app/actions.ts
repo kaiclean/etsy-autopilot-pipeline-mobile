@@ -12,6 +12,7 @@ import { emit } from "@/lib/events";
 import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
 import { planBulkStatus } from "@/lib/catalog-filters";
 import { validateListing } from "@/lib/listing-validator";
+import { probeConnections } from "@/lib/provider-probe";
 import { requireAuth } from "@/lib/session";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import { PUSH_PREF_KEYS, type PushPrefs } from "@/lib/push-prefs";
@@ -191,12 +192,18 @@ export async function savePushPrefs(patch: Partial<PushPrefs>) {
   return { ok: true as const, pushPrefs: next };
 }
 
-export async function triggerStage(stage: string) {
+export async function triggerStage(stage: string, opts?: { force?: boolean }) {
   await requireAuth();
   if (!isStage(stage)) return { ok: false as const, error: "Unknown stage" };
-  const run = await runStage(stage as StageName, "manual");
+  const force = stage === "daily" && opts?.force === true;
+  const run = await runStage(stage as StageName, "manual", { force });
   revalidateAll();
   return { ok: run.status !== "failed", status: run.status, summary: run.summary };
+}
+
+export async function testProviderConnections() {
+  await requireAuth();
+  return probeConnections();
 }
 
 export async function triggerFullPipeline() {

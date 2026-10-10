@@ -3,21 +3,40 @@ import { withStoredUrl } from "@/lib/object-storage";
 import { isProviderCreditsError } from "@/lib/provider-errors";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
-/** OpenAI-compatible Images API (OpenAI or OpenRouter). Bytes are uploaded to object storage when S3 or Blob is configured. */
+export type CompatibleImageOptions = {
+  name?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  missingKey?: string;
+  /** When omitted, OpenRouter hosts try /images and then /images/generations. */
+  openRouter?: boolean;
+};
+
+/** OpenAI-compatible Images API. Bytes are uploaded to object storage when S3 or Blob is configured. */
 export class OpenAIImageProvider implements ImageProvider {
-  readonly name = "openai";
+  readonly name: string;
   /** Soft pre-call estimate (CHF); OpenRouter gemini flash image is ~USD 0.04. */
   readonly estimatedCostChf = 0.05;
+  private readonly options?: CompatibleImageOptions;
+
+  constructor(options?: CompatibleImageOptions) {
+    this.name = options?.name ?? "openai";
+    this.options = options;
+  }
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
-    const key = config.openaiKey;
-    if (!key) throw new Error("OPENAI_API_KEY missing");
+    const defaults = !this.options;
+    const key = defaults ? config.imageApiKey : this.options?.apiKey;
+    if (!key) throw new Error(this.options?.missingKey ?? "IMAGE_API_KEY or OPENAI_API_KEY missing");
     const aspectRatio = req.aspectRatio ?? "2:3";
     const size =
       aspectRatio === "1:1" ? "1024x1024" : aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
-    const base = config.openaiBaseUrl;
-    const model = config.openaiImageModel;
-    const isOpenRouter = /openrouter\.ai/i.test(base);
+    const base = (defaults ? config.imageBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
+    if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "IMAGE_BASE_URL missing");
+    const model = defaults ? config.imageModel : this.options?.model;
+    if (!model) throw new Error(this.name === "omniroute" ? "OMNIROUTE_IMAGE_MODEL missing" : "IMAGE_MODEL missing");
+    const isOpenRouter = this.options?.openRouter ?? /openrouter\.ai/i.test(base);
     const body: Record<string, unknown> = {
       model,
       prompt: req.prompt,

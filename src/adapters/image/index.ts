@@ -23,11 +23,22 @@ export function getImageProvider(opts?: { demo?: boolean }): ImageProvider {
       return new HiggsfieldImageProvider();
     case "openai":
       return new OpenAIImageProvider();
+    case "omniroute": {
+      const route = config.omniroute;
+      return new OpenAIImageProvider({
+        name: "omniroute",
+        apiKey: route.apiKey,
+        baseUrl: route.baseUrl,
+        model: route.imageModel,
+        missingKey: "OMNIROUTE_API_KEY missing",
+        openRouter: false,
+      });
+    }
     case "replicate":
       return new ReplicateImageProvider();
     default:
       if (opts?.demo) return new MockImageProvider();
-      throw new Error("IMAGE_PROVIDER must be openai, replicate, or higgsfield. Mock artwork is only used in demo mode.");
+      throw new Error("IMAGE_PROVIDER must be openai, replicate, higgsfield, or omniroute. Mock artwork is only used in demo mode.");
   }
 }
 

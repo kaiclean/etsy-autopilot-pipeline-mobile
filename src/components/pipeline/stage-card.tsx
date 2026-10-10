@@ -43,6 +43,7 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
   const [paused, setPausedOptimistic] = useOptimistic(settings.paused);
   const [, start] = useTransition();
   const [open, setOpen] = useState(false);
+  const [forceRun, setForceRun] = useState(false);
   const next = nextRun(settings.cron);
 
   return (
@@ -85,11 +86,24 @@ export function StageCard({ id, label, description, settings, runs, killSwitch }
         </div>
       </div>
 
-      <div className="mt-3 flex gap-2">
-        <RunStageButton stage={id} label="Run now" disabled={killSwitch} className="flex-1" />
-        <Button variant="outline" size="lg" className="h-10 rounded-xl px-3.5" onClick={() => setOpen(true)}>
-          <ScrollText className="size-4" /> Logs
-        </Button>
+      <div className="mt-3 flex flex-col gap-2">
+        <div className="flex gap-2">
+          <RunStageButton stage={id} label="Run now" force={id === "daily" && forceRun} disabled={killSwitch} className="flex-1" />
+          <Button variant="outline" size="lg" className="h-10 rounded-xl px-3.5" onClick={() => setOpen(true)}>
+            <ScrollText className="size-4" /> Logs
+          </Button>
+        </div>
+        {id === "daily" && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-current"
+              checked={forceRun}
+              onChange={(event) => setForceRun(event.target.checked)}
+            />
+            Force (?force=1) even if today’s chain already succeeded
+          </label>
+        )}
       </div>
 
       <Drawer open={open} onOpenChange={setOpen} showSwipeHandle>
