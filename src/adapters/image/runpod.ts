@@ -9,8 +9,19 @@ type RunPodResponse = {
   output?: {
     images?: Array<{ type?: string; data?: string; url?: string; image?: string; b64_json?: string }>;
     message?: unknown;
+    errors?: unknown;
   };
 };
+
+function diagnostic(job: RunPodResponse) {
+  const redact = (value: string) => value
+    .replace(/data:[^\s"\\]+/gi, "[image data redacted]")
+    .replace(/https?:\/\/[^\s"\\]+/gi, "[URL redacted]")
+    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "[encoded data redacted]");
+  const errors = JSON.stringify(job.output?.errors ?? job.error ?? [], (key, value) =>
+    /data|image|url|base64|b64|signature|secret|token|key/i.test(key) ? "[redacted]" : value);
+  return `job ${redact(job.id ?? "unknown").slice(0, 100)}; output keys: ${Object.keys(job.output ?? {}).map((key) => /^[a-zA-Z_]{1,40}$/.test(key) ? key : "[redacted]").join(", ")}; errors: ${redact(errors).slice(0, 500)}`;
+}
 
 const POLL_MS = 2_000;
 const DEADLINE_MS = 120_000;
@@ -74,7 +85,7 @@ function outputImage(response: RunPodResponse): string | undefined {
   if (typeof response.output?.message === "string") {
     const value = response.output.message;
     if (/^(https?:|data:)/i.test(value)) return value;
-    if (value) return `data:image/png;base64,${value}`;
+    if (value && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return `data:image/png;base64,${value}`;
   }
   return undefined;
 }
@@ -108,24 +119,30 @@ export class RunPodImageProvider implements ImageProvider {
     const deadline = Date.now() + (this.opts.deadlineMs ?? DEADLINE_MS);
     while (Date.now() < deadline) {
       if (job.status === "FAILED" || job.status === "CANCELLED" || job.status === "TIMED_OUT") {
-        throw new Error(`RunPod job ${job.status.toLowerCase()}`);
+        throw new Error(`RunPod ${job.status.toLowerCase()}: ${diagnostic({ ...job, id: jobId })}`);
       }
       await new Promise((resolve) => setTimeout(resolve, this.opts.pollMs ?? POLL_MS));
       const polled = await fetch(`${base}/status/${encodeURIComponent(jobId)}`, {
         headers,
         signal: AbortSignal.timeout(20_000),
       });
-      if (!polled.ok) throw new Error(`RunPod status ${polled.status}`);
+      if (!polled.ok) throw new Error(`RunPod status ${polled.status}: ${diagnostic({ ...job, id: jobId })}`);
       job = (await polled.json()) as RunPodResponse;
-      if (job.status === "COMPLETED") return this.saveImage(job);
+      if (job.status === "COMPLETED") return this.saveImage({ ...job, id: jobId });
     }
-    throw new Error("RunPod image job timed out");
+    throw new Error(`RunPod image job timed out: ${diagnostic({ ...job, id: jobId })}`);
   }
 
   private async saveImage(job: RunPodResponse): Promise<GeneratedImage> {
     const url = outputImage(job);
-    if (!url) throw new Error("RunPod completed without an output image");
-    const stored = await materializeImageUrl(url, this.opts.upload ? { upload: this.opts.upload } : {});
+    if (!url) throw new Error(`RunPod completed without an output image: ${diagnostic(job)}. Configure worker S3 upload for large print outputs.`);
+    const temporary = job.output?.images?.[0]?.type === "s3_url" || /^https?:/i.test(url);
+    let stored: string;
+    try {
+      stored = await materializeImageUrl(url, { upload: this.opts.upload, requireStored: temporary });
+    } catch {
+      throw new Error(`RunPod image could not be stored: ${diagnostic(job)}. Check app object storage and worker S3 configuration.`);
+    }
     return { url: stored, costChf: this.estimatedCostChf, provider: this.name };
   }
 }

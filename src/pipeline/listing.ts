@@ -225,9 +225,14 @@ export const runListing: StageFn = async (ctx) => {
   let rungFailures = 0;
   const notes: string[] = [];
   for (const { design, phrase } of pending) {
-    if (!ctx.demo && (design.qualityScore == null || design.qualityScore < MIN_DESIGN_SCORE || design.qualityReasons.length)) {
+    if (!ctx.demo && design.qualityScore == null) {
+      await db.update(designs).set({ status: "needs_review", qualityReasons: ["Image quality assessment required."] }).where(eq(designs.id, design.id));
+      log(`Unassessed design #${design.id} needs review before Listing`, "warn");
+      continue;
+    }
+    if (!ctx.demo && (!Number.isInteger(design.qualityScore) || design.qualityScore! < MIN_DESIGN_SCORE || design.qualityScore! > 10 || design.qualityReasons.length)) {
       await db.update(designs).set({ status: "rejected", qualityReasons: [...design.qualityReasons, "No passing image quality assessment."] }).where(eq(designs.id, design.id));
-      log(`Rejected unassessed design #${design.id} before Listing`, "warn");
+      log(`Rejected failed image assessment for design #${design.id} before Listing`, "warn");
       continue;
     }
     if (isNichePaused(design.niche)) {

@@ -1,10 +1,12 @@
 import { config, publicAppUrl, storageBackend } from "@/lib/config";
+import { isSafeArtworkUrl } from "@/lib/art-quality";
 
 export type StoredObject = { url: string; key: string; backend: "s3" | "blob" };
 
 export type MaterializeDeps = {
   upload?: (bytes: Buffer, contentType: string) => Promise<StoredObject | null>;
   fetchImpl?: typeof fetch;
+  requireStored?: boolean;
 };
 
 const DATA_URL = /^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/;
@@ -102,28 +104,46 @@ export async function uploadImageBytes(bytes: Buffer, contentType: string): Prom
  * With no storage configured, the original URL is returned.
  */
 export async function materializeImageUrl(url: string, deps: MaterializeDeps = {}): Promise<string> {
-  if (isOwnStorageUrl(url)) return url;
+  if (isOwnStorageUrl(url) && !deps.requireStored) return url;
   const remote = /^https?:\/\//i.test(url);
   const data = url.startsWith("data:");
-  if (!remote && !data) return url;
-  if (storageBackend() === "none" && !deps.upload) return url;
+  if (!remote && !data) {
+    if (deps.requireStored) throw new Error("Temporary artwork URL is invalid");
+    return url;
+  }
+  if (storageBackend() === "none" && !deps.upload) {
+    if (deps.requireStored) throw new Error("App object storage is required for temporary RunPod images");
+    return url;
+  }
 
   let bytes: Buffer;
   let contentType: string;
   if (data) {
     const decoded = decodeDataUrl(url);
-    if (!decoded) return url;
+    if (!decoded) {
+      if (deps.requireStored) throw new Error("Artwork image data was empty");
+      return url;
+    }
     bytes = decoded.bytes;
     contentType = decoded.contentType;
   } else {
-    const res = await (deps.fetchImpl ?? fetch)(url);
-    if (!res.ok) return url;
+    if (!isSafeArtworkUrl(url)) throw new Error("Unsafe artwork download URL");
+    const res = await (deps.fetchImpl ?? fetch)(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) {
+      if (deps.requireStored) throw new Error(`Artwork download ${res.status}`);
+      return url;
+    }
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0) return url;
+    if (buf.length === 0) {
+      if (deps.requireStored) throw new Error("Artwork download was empty");
+      return url;
+    }
     bytes = buf;
     contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
   }
+  if (bytes.length > MAX_ARTWORK_BYTES) throw new Error("Generated image is larger than 50MB");
   const stored = await (deps.upload ?? uploadImageBytes)(bytes, contentType);
+  if (deps.requireStored && (!stored || stored.url === url)) throw new Error("Artwork upload did not return a permanent URL");
   return stored?.url ?? url;
 }
 
