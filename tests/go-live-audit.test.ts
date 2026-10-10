@@ -123,6 +123,90 @@ describe("digital file manifest", () => {
     expect(saved.fileManifest?.delivery.bytes).toBe(png.length);
     expect(saved.fileManifest?.delivery.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it("returns null instead of throwing when storage or the own-origin fetch fails", async () => {
+    process.env.APP_URL = "http://shop.test";
+    const manifest = await buildFileManifest(MEDIA_URL, "/api/preview?niche=alpine", {
+      readObject: async () => {
+        throw new Error("AccessDenied");
+      },
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed: redirect mode is set to error");
+      },
+    });
+    expect(manifest).toBeNull();
+  });
+
+  it("stops reading an own-origin body without content-length once it passes the cap", async () => {
+    process.env.APP_URL = "http://shop.test";
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(new Uint8Array(8));
+      },
+    });
+    const capped = await buildFileManifest(MEDIA_URL, "/api/preview?niche=alpine", {
+      readObject: async () => null,
+      maxBytes: 20,
+      fetchImpl: async () => new Response(body, { status: 200 }),
+    });
+    expect(capped).toBeNull();
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("reaches digital rows past the first batch and skips an unreadable file without failing", async () => {
+    const db = await memoryDb();
+    const shop = await omnishop(db);
+    const png = tinyPng(120);
+    const base = {
+      shopId: shop.id,
+      niche: "alpine" as const,
+      productType: "digital" as const,
+      tags: ["alpine art"],
+      description: "A print.",
+      imageUrl: "/api/preview?niche=alpine",
+      priceChf: 5.9,
+      netChf: 3,
+      marginPct: 50,
+      isDemo: false,
+    };
+    const complete = await buildFileManifest(`/api/media/${MEDIA_KEY}`, "/api/preview?niche=alpine", {
+      readObject: async () => ({ bytes: png }),
+    });
+    expect(complete).not.toBeNull();
+    const BROKEN_KEY = "designs/2026-10-10/bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee.png";
+    const filler = Array.from({ length: 201 }, (_, i) => ({
+      ...base,
+      title: `Done ${i}`,
+      deliveryUrl: `/api/media/${MEDIA_KEY}`,
+      fileManifest: complete,
+    }));
+    await db.insert(listings).values(filler);
+    const [broken] = await db
+      .insert(listings)
+      .values({ ...base, title: "Broken", deliveryUrl: `/api/media/${BROKEN_KEY}` })
+      .returning({ id: listings.id });
+    const [late] = await db
+      .insert(listings)
+      .values({ ...base, title: "Late", deliveryUrl: `/api/media/${MEDIA_KEY}` })
+      .returning({ id: listings.id });
+
+    const summary = await backfillDigitalManifests(db, {
+      readObject: async (key) => {
+        if (key === BROKEN_KEY) throw new Error("AccessDenied");
+        return { bytes: png };
+      },
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    expect(summary).toEqual({ recorded: 1, remaining: 1 });
+    const [lateRow] = await db.select().from(listings).where(eq(listings.id, late.id));
+    expect(lateRow.fileManifest?.delivery.sha256).toMatch(/^[a-f0-9]{64}$/);
+    const [brokenRow] = await db.select().from(listings).where(eq(listings.id, broken.id));
+    expect(brokenRow.fileManifest).toBeNull();
+  });
 });
 
 describe("provider credit health", () => {
@@ -146,6 +230,39 @@ describe("provider credit health", () => {
     delete process.env.LLM_PROVIDER;
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_BASE_URL;
+  });
+
+  it("applies the credit signal to Ollama text and OmniRoute images", () => {
+    process.env.LLM_PROVIDER = "ollama";
+    process.env.OLLAMA_API_KEY = "ollama-secret";
+    process.env.IMAGE_PROVIDER = "omniroute";
+    process.env.OMNIROUTE_API_KEY = "omni-secret";
+    process.env.OMNIROUTE_BASE_URL = "https://omniroute.test/v1";
+    process.env.OMNIROUTE_IMAGE_MODEL = "flux";
+    try {
+      const failed = connectionHealth({ etsyConnected: false, providerCredits: "failed" });
+      expect(failed.find((check) => check.id === "llm")).toMatchObject({ level: "red", label: "Out of credits" });
+      expect(failed.find((check) => check.id === "images")).toMatchObject({ level: "red", label: "Out of credits" });
+      const ok = connectionHealth({ etsyConnected: false, providerCredits: "ok" });
+      expect(ok.find((check) => check.id === "llm")?.detail).toContain("Ollama Cloud");
+      expect(ok.find((check) => check.id === "images")?.detail).toContain("OmniRoute");
+      const rows = integrationStatus(false, { providerCredits: "failed" });
+      expect(rows.find((row) => row.id === "llm")?.detail).toContain("402");
+      const serialized = JSON.stringify([failed, ok, rows]);
+      expect(serialized).not.toContain("ollama-secret");
+      expect(serialized).not.toContain("omni-secret");
+    } finally {
+      for (const name of [
+        "LLM_PROVIDER",
+        "OLLAMA_API_KEY",
+        "IMAGE_PROVIDER",
+        "OMNIROUTE_API_KEY",
+        "OMNIROUTE_BASE_URL",
+        "OMNIROUTE_IMAGE_MODEL",
+      ]) {
+        delete process.env[name];
+      }
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { cleanupFakeOrdersIfPresent, type ClearCounts } from "@/db/clear-fake-orders";
 import type { DB } from "@/db";
 import { listings } from "@/db/schema";
@@ -76,23 +76,52 @@ async function rewriteInlineImages(db: DB): Promise<MaintenanceSummary["images"]
   };
 }
 
-/** Hashes digital delivery files that are still missing a manifest. Ordered by id so listing 46 is in the first batch. */
+/** Rows a maintenance run tries to hash. Complete manifests are excluded in SQL, so later ids are reached. */
+export const MANIFEST_BACKFILL_BATCH_LIMIT = 200;
+
+function incompleteDigitalManifest() {
+  const delivery = sql`${listings.fileManifest}->'delivery'`;
+  const notPositive = (field: "width" | "height" | "bytes") => {
+    const key = sql.raw(`'${field}'`);
+    return sql`not coalesce(case when jsonb_typeof(${delivery}->${key}) = 'number' then (${delivery}->>${key})::numeric > 0 end, false)`;
+  };
+  return and(
+    eq(listings.productType, "digital"),
+    isNotNull(listings.deliveryUrl),
+    or(
+      isNull(listings.fileManifest),
+      sql`coalesce(${delivery}->>'filename', '') = ''`,
+      sql`coalesce(${delivery}->>'sha256', '') !~ '^[a-f0-9]{64}$'`,
+      notPositive("width"),
+      notPositive("height"),
+      notPositive("bytes"),
+    ),
+  );
+}
+
+/**
+ * Hashes digital delivery files that are still missing a manifest, oldest id first so listing 46 is in the first batch.
+ * An unreadable file is left for the next run and never fails maintenance.
+ */
 export async function backfillDigitalManifests(db: DB, deps: ManifestLoadDeps = {}): Promise<MaintenanceSummary["manifests"]> {
   const rows = await db
     .select({ id: listings.id, fileManifest: listings.fileManifest })
     .from(listings)
-    .where(and(eq(listings.productType, "digital"), isNotNull(listings.deliveryUrl)))
+    .where(incompleteDigitalManifest())
     .orderBy(asc(listings.id))
-    .limit(200);
+    .limit(MANIFEST_BACKFILL_BATCH_LIMIT);
   let recorded = 0;
-  let remaining = 0;
   for (const row of rows) {
     if (manifestIsComplete(row.fileManifest)) continue;
-    const result = await recordDeliveryManifest(db, row.id, new Date(), deps);
-    if (result.ok) recorded++;
-    else remaining++;
+    try {
+      const result = await recordDeliveryManifest(db, row.id, new Date(), deps);
+      if (result.ok) recorded++;
+    } catch {
+      /* Counted in `remaining` below; the next run retries. */
+    }
   }
-  return { recorded, remaining };
+  const [left] = await db.select({ n: count() }).from(listings).where(incompleteDigitalManifest());
+  return { recorded, remaining: Number(left?.n ?? 0) };
 }
 
 async function removeFakeRows(db: DB): Promise<MaintenanceSummary["fakeRows"]> {

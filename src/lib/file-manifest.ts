@@ -94,23 +94,50 @@ function ownOriginHttpUrl(url: string): string | null {
   }
 }
 
+async function readCappedBody(res: Response, maxBytes: number): Promise<Buffer | null> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > maxBytes ? null : buf;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 async function fetchCapped(url: string, fetchImpl: typeof fetch, maxBytes: number): Promise<Buffer | null> {
   const res = await fetchImpl(url, { redirect: "error" });
   if (!res.ok) return null;
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) return null;
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length === 0 || buf.length > maxBytes) return null;
+  const buf = await readCappedBody(res, maxBytes);
+  if (!buf || buf.length === 0) return null;
   return buf;
 }
 
+/** A storage or network error means "no bytes", like a missing file, so callers never throw on an unreadable file. */
 async function loadArtworkBytes(url: string, deps: ManifestLoadDeps): Promise<Buffer | null> {
   const local = bytesFor(url);
   if (local) return local;
   const maxBytes = deps.maxBytes ?? MANIFEST_MAX_BYTES;
   const key = storageKeyFromUrl(url);
   if (key) {
-    const object = await (deps.readObject ?? readStoredObject)(key);
+    let object: { bytes: Uint8Array } | null = null;
+    try {
+      object = await (deps.readObject ?? readStoredObject)(key);
+    } catch {
+      object = null;
+    }
     if (object?.bytes) {
       const buf = Buffer.from(object.bytes);
       if (buf.length > 0 && buf.length <= maxBytes) return buf;
@@ -118,7 +145,11 @@ async function loadArtworkBytes(url: string, deps: ManifestLoadDeps): Promise<Bu
   }
   const remote = ownOriginHttpUrl(url);
   if (!remote) return null;
-  return fetchCapped(remote, deps.fetchImpl ?? fetch, maxBytes);
+  try {
+    return await fetchCapped(remote, deps.fetchImpl ?? fetch, maxBytes);
+  } catch {
+    return null;
+  }
 }
 
 /**
