@@ -4,6 +4,7 @@ import { settings } from "@/db/schema";
 import type { StageName } from "@/db/schema";
 import { DEFAULT_POD_PRESETS, isPodPreset, MARGIN_TARGETS, type PodPreset } from "@/lib/fees";
 import { DEFAULT_PUSH_PREFS, type PushPrefs } from "@/lib/push-prefs";
+import { defaultSourcingRegion, type SourcingRegion } from "@/lib/sourcing";
 
 export type AutomationSettings = {
   killSwitch: boolean;
@@ -108,6 +109,7 @@ export const DEFAULT_STAGES: StageSettings = {
 export type ManifestBackfillCursor = { afterId: number };
 
 type SettingMap = {
+  sourcing: { defaultRegion: SourcingRegion };
   automation: AutomationSettings;
   stages: StageSettings;
   etsyTokens: EtsyTokens | null;
@@ -118,6 +120,7 @@ type SettingMap = {
 };
 
 const DEFAULTS: SettingMap = {
+  sourcing: { defaultRegion: defaultSourcingRegion() },
   automation: DEFAULT_AUTOMATION,
   stages: DEFAULT_STAGES,
   etsyTokens: null,
@@ -130,6 +133,10 @@ const DEFAULTS: SettingMap = {
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {
   const [row] = await db.select().from(settings).where(eq(settings.key, key));
   if (key === "podProducts") return normalizePodProductSettings(row?.value) as SettingMap[K];
+  if (key === "sourcing") {
+    const value = row?.value as { defaultRegion?: string } | undefined;
+    return { defaultRegion: defaultSourcingRegion(value?.defaultRegion) } as SettingMap[K];
+  }
   if (!row) return DEFAULTS[key];
   const def = DEFAULTS[key];
   if (def && typeof def === "object" && !Array.isArray(def)) {

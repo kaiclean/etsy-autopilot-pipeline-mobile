@@ -6,6 +6,7 @@ import type { SupplierProduct, SupplierQuote } from "./types";
 
 const PRODUCTS = "https://product.gelatoapis.com/v3";
 const ORDERS = "https://order.gelatoapis.com/v4";
+const SHIPMENTS = "https://shipment.gelatoapis.com/v1";
 const CATALOG_TITLES: Record<PodPreset, RegExp> = {
   posterA3: /\bposters?\b/i, mug: /\bmugs?\b/i, tshirt: /t-?shirts?|\btees?\b/i,
   sweatshirt: /sweatshirts?|crewneck/i, tote: /\btote\b/i, phoneCase: /phone cases?/i,
@@ -17,6 +18,7 @@ const CATALOG_TITLES: Record<PodPreset, RegExp> = {
 export class GelatoSupplier extends GelatoDryRunSupplier {
   private productsHttp: SupplierHttp;
   private ordersHttp: SupplierHttp;
+  private shipmentsHttp: SupplierHttp;
   private catalogs?: Promise<{ catalogUid: string; title: string }[]>;
   private products = new Map<string, Promise<SupplierProduct[]>>();
 
@@ -25,6 +27,7 @@ export class GelatoSupplier extends GelatoDryRunSupplier {
     const headers = { "X-API-KEY": config.gelato.apiKey ?? "" };
     this.productsHttp = new SupplierHttp(PRODUCTS, headers, fetchImpl);
     this.ordersHttp = new SupplierHttp(ORDERS, headers, fetchImpl);
+    this.shipmentsHttp = new SupplierHttp(SHIPMENTS, headers, fetchImpl);
   }
 
   // Source: https://dashboard.gelato.com/docs/products/catalog/list/
@@ -72,9 +75,12 @@ export class GelatoSupplier extends GelatoDryRunSupplier {
     const rows = await this.productsHttp.request<{ productUid: string; country: string; quantity: number; price: number; currency: string }[]>(path);
     if (!Array.isArray(rows)) throw new Error("Invalid Gelato prices response");
     const price = rows.find((row) => row && row.productUid === product.uid && row.country === region && row.quantity === 1 && row.currency === "USD" && Number.isFinite(row.price) && row.price >= 0);
-    // v4 orders:quote needs an actual recipient address and artwork. A region alone
-    // cannot establish shipping; never fabricate an address or a landed total.
-    return { baseCostUsd: price?.price ?? null, shippingUsd: null, currency: "USD", sourceUrl: `${PRODUCTS}${path}`, fetchedAt: new Date() };
+    // Source: https://dashboard.gelato.com/docs/shipment/methods/
+    // This read lists carrier methods, not product shipping prices or stock.
+    // Even a successful response cannot establish shipping for a region alone.
+    await this.shipmentsHttp.request(`/shipment-methods?country=${region}`).catch(() => null);
+    // v4 orders:quote needs a real recipient and artwork; never fabricate either.
+    return { baseCostUsd: price?.price ?? null, shippingUsd: null, inStock: null, productionDays: null, currency: "USD", sourceUrl: `${PRODUCTS}${path}`, fetchedAt: new Date() };
   }
 
   // Source: https://dashboard.gelato.com/docs/orders/v4/get/

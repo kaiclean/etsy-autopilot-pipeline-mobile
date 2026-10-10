@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -10,6 +11,7 @@ import * as schema from "@/db/schema";
 import { DEFAULT_POD_PRESETS } from "@/lib/fees";
 import { setSetting } from "@/lib/settings";
 import { runStage } from "@/pipeline/runner";
+import { refreshSourcing } from "@/pipeline/sourcing";
 
 vi.mock("@/adapters/supplier", () => ({ getSuppliers: vi.fn(() => []) }));
 afterEach(() => { vi.mocked(getSuppliers).mockReset().mockReturnValue([]); });
@@ -33,8 +35,10 @@ describe("listing supplier selection", () => {
           supplier: "gelato", preset: "tote", uid: "listing-fixture-tote", title: "Tote",
           baseCostUsd: 10, currency: "USD", sourceUrl: "https://product.gelatoapis.com/v3/catalogs", fetchedAt: new Date(),
         }];
-        supplier.quote = async () => ({ baseCostUsd: 10, shippingUsd: 4, currency: "USD", sourceUrl: "https://product.gelatoapis.com/v3/catalogs", fetchedAt: new Date() });
+        supplier.quote = async () => ({ baseCostUsd: 10, shippingUsd: 4, inStock: true, productionDays: 3, currency: "USD", sourceUrl: "https://product.gelatoapis.com/v3/catalogs", fetchedAt: new Date() });
         vi.mocked(getSuppliers).mockReturnValue([supplier]);
+        await client.exec(readFileSync(path.join(process.cwd(), "drizzle/0015_sourcing.sql"), "utf8"));
+        await refreshSourcing({ db, now: new Date(), log: () => {}, shopId: "demo", demo: true }, [supplier]);
       }
       await runStage("listing", "manual", { db });
       const rows = await db.select().from(schema.listings);

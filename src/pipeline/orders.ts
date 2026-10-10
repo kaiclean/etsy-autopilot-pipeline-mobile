@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import type { EtsyReceipt } from "@/adapters/etsy/types";
 import { getPrintifyAdapter, type PrintifyOrderStatus } from "@/adapters/printify";
@@ -13,6 +13,8 @@ import { persistedOrderIsDemo, publishedListingsWhere, realOrderCursorWhere, rec
 import { syncAwaitingEtsyIds } from "./etsy-id-sync";
 import { flagStalledFulfillment } from "./fulfillment-watch";
 import type { StageFn } from "./types";
+import { listingPreset, recheckOrderSourcing, sourcingAvailable } from "./sourcing";
+import { buyerRegion } from "@/lib/sourcing";
 
 type ReceiptLog = (msg: string, level?: "info" | "warn" | "error") => void;
 
@@ -27,6 +29,7 @@ export async function saveReceipts(
     log?: ReceiptLog;
     shopId?: string;
     isDemo?: boolean;
+    sourcingRecheck?: (listing: Listing, receipt: EtsyReceipt) => Promise<Awaited<ReturnType<typeof recheckOrderSourcing>> | null>;
   },
 ) {
   const log = opts.log ?? (() => {});
@@ -98,7 +101,10 @@ export async function saveReceipts(
       continue;
     }
     const offsite = opts.offsite(r);
-    const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: l.podCostChf, offsiteAds: offsite });
+    const recheck = await opts.sourcingRecheck?.(l, r);
+    // Fallbacks are recommendations only. A live receipt's actual fulfillment cost is not rewritten to a simulated alternative.
+    const sourcedCost = recheck && !recheck.alert && (!recheck.switched || isDemo) ? recheck.choice?.landedCostChf : null;
+    const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: sourcedCost ?? l.podCostChf, offsiteAds: offsite });
     const insertedRows = await db
       .insert(orders)
       .values({
@@ -122,6 +128,9 @@ export async function saveReceipts(
       .onConflictDoNothing({ target: orders.etsyReceiptId })
       .returning({ id: orders.id });
     if (insertedRows.length === 0) continue;
+    if (recheck) {
+      await db.execute(sql`update orders set sourcing_recheck = ${JSON.stringify(recheck)}::jsonb where id = ${insertedRows[0].id}`);
+    }
     existing.add(r.receiptId);
     inserted++;
     const pushSale = isRealSaleReceipt(r.receiptId, isDemo) && (await claimSaleAlert(db, r.receiptId, opts.shopId ?? l.shopId));
@@ -160,6 +169,11 @@ export const runOrders: StageFn = async (ctx) => {
       priceChf: listings.priceChf,
       productType: listings.productType,
       podCostChf: listings.podCostChf,
+      podProvider: listings.podProvider,
+      supplier: listings.supplier,
+      supplierProductId: listings.supplierProductId,
+      podBlueprintId: listings.podBlueprintId,
+      podPrintProviderId: listings.podPrintProviderId,
       title: listings.title,
     })
     .from(listings)
@@ -185,12 +199,25 @@ export const runOrders: StageFn = async (ctx) => {
   log(`Etsy (${etsy.mode}) returned ${receipts.length} receipt line(s) since ${since.toISOString()}`);
 
   const persistDemo = persistedOrderIsDemo(isDemoMode(shop?.etsyShopId), etsy.mode);
+  const canRecheck = await sourcingAvailable(db);
+  const sourcingRecheck: Parameters<typeof saveReceipts>[3]["sourcingRecheck"] = async (listing, receipt) => {
+    const preset = listingPreset(listing.podProvider);
+    const region = buyerRegion(receipt.buyerCountry);
+    if (!canRecheck || listing.productType !== "pod" || !preset || !region) return null;
+    const providerRef = listing.supplierProductId ??
+      (listing.podBlueprintId && listing.podPrintProviderId ? `${listing.podBlueprintId}:${listing.podPrintProviderId}` : null);
+    return recheckOrderSourcing(ctx, {
+      preset, region, country: receipt.buyerCountry.toUpperCase(),
+      current: { supplier: listing.supplier ?? "printify", providerRef, landedCostChf: listing.podCostChf },
+    });
+  };
   const { inserted, unmatched } = await saveReceipts(db, receipts, byEtsyId, {
     shopId: ctx.shopId,
     isDemo: persistDemo,
     offsite: () => (etsy.mode === "dry-run" ? ctx.random() < 0.12 : false),
     podOrderId: (listing, receipt) => (listing.productType === "pod" && etsy.mode === "dry-run" ? `dry-po-${receipt.receiptId}` : null),
     log,
+    sourcingRecheck,
   });
 
   const open = await db

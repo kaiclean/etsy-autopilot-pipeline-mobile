@@ -232,6 +232,34 @@ export const supplierProducts = pgTable(
   (t) => [unique("supplier_products_supplier_preset_external_product_uid_key").on(t.supplier, t.preset, t.externalProductUid)],
 );
 
+export const supplierQuotes = pgTable("supplier_quotes", {
+  id: serial("id").primaryKey(),
+  supplier: text("supplier").notNull(),
+  preset: text("preset").notNull(),
+  region: text("region").notNull(),
+  destinationCountry: text("destination_country"),
+  providerRef: text("provider_ref"),
+  inStock: boolean("in_stock"),
+  baseCostUsd: doublePrecision("base_cost_usd"),
+  shippingUsd: doublePrecision("shipping_usd"),
+  productionDays: integer("production_days"),
+  currency: text("currency"),
+  sourceUrl: text("source_url"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+});
+
+export const sourcingChoices = pgTable("sourcing_choices", {
+  id: serial("id").primaryKey(),
+  preset: text("preset").notNull(),
+  region: text("region").notNull(),
+  supplier: text("supplier").notNull(),
+  providerRef: text("provider_ref"),
+  landedCostChf: doublePrecision("landed_cost_chf"),
+  quoteId: integer("quote_id").references(() => supplierQuotes.id),
+  reason: text("reason"),
+  chosenAt: timestamp("chosen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("sourcing_choices_preset_region_key").on(t.preset, t.region)]);
+
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
   shopId: uuid("shop_id")

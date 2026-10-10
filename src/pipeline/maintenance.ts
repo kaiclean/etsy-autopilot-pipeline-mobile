@@ -10,6 +10,7 @@ import { ensurePrintifyWebhooks } from "@/lib/printify-webhooks";
 import { getSetting, setSetting } from "@/lib/settings";
 import { recordDeliveryManifest } from "./human-publish";
 import type { StageFn } from "./types";
+import { refreshSourcing } from "./sourcing";
 
 export type MaintenanceSummary = {
   webhooks: { existing: number; created: number; skipped: number; reason: string | null };
@@ -189,5 +190,7 @@ export function parseMaintenanceSummary(summary: string | null): MaintenanceSumm
 
 export const runMaintenance: StageFn = async (ctx) => {
   const summary = await runMaintenanceTasks(ctx.db, ctx.log);
+  const sourcing = await refreshSourcing(ctx);
+  ctx.log(`Sourcing: ${sourcing.comparisons} comparisons, ${sourcing.alerts} need review`);
   return JSON.stringify(summary);
 };

@@ -21,7 +21,9 @@ export type SupplierProduct = {
 export type SupplierQuote = {
   baseCostUsd: number | null;
   shippingUsd: number | null;
-  currency: "USD";
+  inStock: boolean | null;
+  productionDays: number | null;
+  currency: string;
   sourceUrl: string;
   fetchedAt: Date;
 };

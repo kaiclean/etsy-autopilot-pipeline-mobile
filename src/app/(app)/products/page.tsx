@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { parseQueueTriage } from "@/lib/catalog-filters";
 import { getListings } from "@/lib/queries";
 import { getSetting } from "@/lib/settings";
+import Link from "next/link";
 
 export const metadata = { title: "Products" };
 
@@ -20,6 +21,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         subtitle={`${live} published${awaiting ? ` · ${awaiting} awaiting Etsy id` : ""} · ${listings.length} total · badged by source`}
       />
       <CatalogDraftPanel reviewed={catalogDraft.reviewedByKai} />
+      <Link href="/products/sourcing" className="text-sm underline">Compare suppliers · stock, costs, shipping, production time</Link>
       <ProductsList listings={listings} initialTriage={parseQueueTriage(params.triage)} />
     </div>
   );
