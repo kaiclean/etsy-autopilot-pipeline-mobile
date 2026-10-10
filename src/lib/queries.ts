@@ -212,6 +212,7 @@ export function analyticsListingsQuery(db: DB) {
       status: listings.status,
       niche: listings.niche,
       views: listings.views,
+      analyticsCheckedAt: listings.analyticsCheckedAt,
       title: listings.title,
       imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
     })
@@ -359,20 +360,30 @@ export async function getAnalytics() {
     p.profit += x.profitChf;
     products.set(l.id, p);
   }
-  const costByKind = { ai_image: 0, ai_text: 0, ads: 0, listing_fee: 0, other: 0 };
+  const costByKind = { ai_image: 0, ai_text: 0, ads_estimate: 0, ads_actual: 0, listing_fee: 0, other: 0 };
   for (const x of c) costByKind[x.kind] += x.amountChf;
 
   const revenue = o.reduce((s, x) => s + x.totalChf, 0);
   const profitAfterFees = o.reduce((s, x) => s + x.profitChf, 0);
   const views = series.reduce((s, x) => s + x.views, 0);
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
-  const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads + costByKind.other;
+  const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads_actual + costByKind.other;
+  const publishedListings = allListings.filter((listing) => listing.status === "published");
+  const analyticsFreshCutoff = Date.now() - 36 * 60 * 60 * 1000;
+  const freshAnalyticsListings = publishedListings.filter(
+    (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,
+  );
+  const latestAnalyticsCheck = publishedListings.reduce<Date | null>((latest, listing) => {
+    if (!listing.analyticsCheckedAt) return latest;
+    return !latest || listing.analyticsCheckedAt > latest ? listing.analyticsCheckedAt : latest;
+  }, null);
 
   return {
     series,
     niches,
     topProducts: [...products.values()].sort((a, b) => b.profit - a.profit).slice(0, 8),
     costByKind,
+    analyticsFreshness: { checked: freshAnalyticsListings.length, total: publishedListings.length, lastCheckedAt: latestAnalyticsCheck },
     totals: {
       revenue,
       profitAfterFees,

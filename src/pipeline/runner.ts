@@ -61,7 +61,7 @@ async function runDailyChain(ctx: StageContext) {
 const runHealth: StageFn = async (ctx) => {
   const { payload, pushed } = await publishHealthReport(ctx.db, ctx.shopId, ctx.now);
   ctx.log(
-    `Week ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)}, VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ads CHF ${payload.adsChf.toFixed(2)}, ${payload.suggestions.length} suggestions`,
+    `Week ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)}, VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${payload.adsEstimateChf.toFixed(2)}, actual ads CHF ${payload.adsActualChf.toFixed(2)}, ${payload.suggestions.length} suggestions`,
   );
   const note = pushed ? "push sent" : "report updated, push already sent";
   return `Week of ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)} (${note})`;

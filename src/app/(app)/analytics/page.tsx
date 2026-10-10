@@ -15,13 +15,14 @@ export default async function AnalyticsPage() {
     ["Offsite Ads (15%, attributed)", -t.offsiteAds],
     ["POD production + shipping", -t.podCosts],
     ["AI generation", -(a.costByKind.ai_image + a.costByKind.ai_text)],
-    ["Etsy Ads budget", -a.costByKind.ads],
+    ["Etsy Ads estimate (not actual spend)", -a.costByKind.ads_estimate],
+    ["Etsy Ads actual spend", -a.costByKind.ads_actual],
   ];
   return (
     <div className="space-y-5">
       <PageHeader
         title="Analytics"
-        subtitle="Last 30 days · all amounts in CHF"
+        subtitle={`Last 30 days · stats checked for ${a.analyticsFreshness.checked}/${a.analyticsFreshness.total} live listings in the last 36h · ${a.analyticsFreshness.lastCheckedAt ? `last check ${a.analyticsFreshness.lastCheckedAt.toISOString().replace("T", " ").slice(0, 16)} UTC` : "no analytics check yet"}`}
         action={
           <AnalyticsExport
             rows={a.series.map((row) => ({
@@ -72,7 +73,7 @@ export default async function AnalyticsPage() {
               <span className="tabular font-semibold text-success">{chf(t.netProfit)}</span>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Listing fees paid at publish time: {chf(a.costByKind.listing_fee)} (dry-run listings are tracked but not charged).
+              Actual ad spend is included in net profit; estimates are shown separately until actual spend is recorded. Listing fees tracked: {chf(a.costByKind.listing_fee)}.
             </p>
           </div>
         </Panel>

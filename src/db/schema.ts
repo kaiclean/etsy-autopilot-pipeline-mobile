@@ -282,6 +282,8 @@ export type HealthReportPayload = {
   vatChf: number;
   podCostChf: number;
   adsChf: number;
+  adsEstimateChf: number;
+  adsActualChf: number;
   suggestions: HealthSuggestion[];
 };
 

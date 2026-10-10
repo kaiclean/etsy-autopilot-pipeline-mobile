@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
@@ -43,6 +43,25 @@ export function publishRetryBlocked(
 
 export const runPublish: StageFn = async (ctx) => {
   const { db, log } = ctx;
+  const staleAttemptCutoff = new Date(ctx.now.getTime() - 15 * 60 * 1000);
+  const stale = await db
+    .update(listings)
+    .set({
+      status: "failed",
+      publishError: "Publish attempt ended without a recorded provider result. Check Etsy or Printify before retrying.",
+      updatedAt: ctx.now,
+    })
+    .where(
+      and(
+        eq(listings.status, "publishing"),
+        isNull(listings.podPublishedAt),
+        isNotNull(listings.publishAttemptedAt),
+        lt(listings.publishAttemptedAt, staleAttemptCutoff),
+        ctx.demo ? undefined : eq(listings.isDemo, false),
+      ),
+    )
+    .returning({ id: listings.id });
+  if (stale.length) log(`Marked ${stale.length} interrupted publish attempt(s) for operator reconciliation`, "warn");
   const approved = await db
     .select()
     .from(listings)
@@ -68,6 +87,16 @@ export const runPublish: StageFn = async (ctx) => {
     if (publishRetryBlocked(l, ctx.now)) {
       skipped++;
       log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
+      continue;
+    }
+    const [claimed] = await db
+      .update(listings)
+      .set({ status: "publishing", publishAttemptedAt: ctx.now, updatedAt: ctx.now })
+      .where(and(eq(listings.id, l.id), inArray(listings.status, ["approved", "failed"])))
+      .returning({ id: listings.id });
+    if (!claimed) {
+      skipped++;
+      log(`#${l.id} skipped: another publish run claimed it`, "warn");
       continue;
     }
     const check = validateListing(l);
