@@ -68,7 +68,7 @@ describe("hot scan persistence and keyword integration", () => {
     db = await getDb();
     const shop = await resolveActiveShop(db);
     ctx = { db, shopId: shop.id, demo: false, trigger: "manual", now, random: () => 0.5, log: vi.fn() };
-  });
+  }, 60_000);
   beforeEach(async () => {
     await db.delete(hotSignals);
     await db.delete(hotSignalFetches);

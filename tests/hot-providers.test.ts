@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { Agent } from "node:https";
+import type { ClientRequest, RequestOptions } from "node:http";
+import { PassThrough } from "node:stream";
 import { activeNiches } from "@/lib/niches";
 import { amazonSource, createAmazonSource, parseAmazonApi, parseAmazonHtml, signAmazonSearch } from "@/pipeline/hot-signals/amazon";
 import { createEtsyBadgesSource, etsyBadgesSource, parseEtsyApi, parseEtsyHtml } from "@/pipeline/hot-signals/etsy-badges";
@@ -8,6 +12,7 @@ import { decodeHtml, productUrl } from "@/pipeline/hot-signals/html";
 import { createPinterestTrendsSource, parsePinterestTrends, pinterestTrendsSource, PINTEREST_GROWING_URL } from "@/pipeline/hot-signals/pinterest-trends";
 import { observedScore } from "@/pipeline/hot-signals/types";
 import { parseGoogleTrendScore } from "@/pipeline/sources";
+import { createHotGoogleAgent } from "@/pipeline/hot-signals/google-agent";
 
 const now = new Date("2026-10-10T12:00:00Z");
 const options = () => ({ now, demo: false, log: vi.fn() });
@@ -491,6 +496,41 @@ describe("provider controls and failure propagation", () => {
 });
 
 describe("Google Trends budget", () => {
+  it("rate-gates both underlying Google requests before native socket dispatch", async () => {
+    let clock = 1000;
+    const dispatches: number[] = [];
+    const prototype = Agent.prototype as Agent & { addRequest(req: ClientRequest, options: RequestOptions): void };
+    vi.spyOn(prototype, "addRequest").mockImplementation(() => { dispatches.push(clock); });
+    const fetcher = createHotFetcher({ clock: () => clock, sleep: async (ms) => { clock += ms; } });
+    const transport = createHotGoogleAgent(fetcher.waitForHost);
+    const makeRequest = () => Object.assign(new EventEmitter(), { setHeader: vi.fn(), destroy: vi.fn(), destroyed: false });
+    const explore = makeRequest();
+    const widget = makeRequest();
+    transport.agent.addRequest(explore as unknown as ClientRequest, { host: "trends.google.com" });
+    transport.agent.addRequest(widget as unknown as ClientRequest, { host: "trends.google.com" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(dispatches).toEqual([1000, 3000]);
+    expect(explore.setHeader).toHaveBeenCalledWith("User-Agent", HOT_USER_AGENT);
+    expect(widget.setHeader).toHaveBeenCalledWith("User-Agent", HOT_USER_AGENT);
+    transport.stop();
+  });
+
+  it.each([403, 429])("destroys real blocked Google response streams before a library callback can retry HTTP %s", async (statusCode) => {
+    const transport = createHotGoogleAgent(() => new Promise<void>(() => {}));
+    const req = Object.assign(new EventEmitter(), { setHeader: vi.fn(), destroy: vi.fn(), destroyed: false });
+    const response = Object.assign(new PassThrough(), { statusCode });
+    const retry = vi.fn();
+    req.once("response", (res: PassThrough) => { res.on("end", retry); res.resume(); });
+    transport.agent.addRequest(req as unknown as ClientRequest, { host: "trends.google.com" });
+    req.emit("response", response);
+    response.end("blocked");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(response.destroyed).toBe(true);
+    expect(retry).not.toHaveBeenCalled();
+    expect(req.destroy).toHaveBeenCalledWith(expect.any(Error));
+    transport.stop();
+  });
+
   it("scores genuine numeric Google timeline observations without defaulting absent values to zero", () => {
     const raw = JSON.stringify({ default: { timelineData: [25, 50, 75, 100].map((value) => ({ value: [value] })) } });
     expect(parseGoogleTrendScore(raw)).toBe(0.57);

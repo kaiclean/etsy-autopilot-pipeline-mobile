@@ -40,7 +40,7 @@ export function hotSignalsTodayQuery(db: DB, shopId: string, now = new Date()) {
     fetchedAt: hotSignals.fetchedAt,
   }).from(hotSignals).where(and(
     // Public marketplace observations are shared; another shop's private rows are not.
-    or(eq(hotSignals.shopId, shopId), isNull(hotSignals.shopId)),
+    or(isNull(hotSignals.shopId), eq(hotSignals.shopId, shopId)),
     sql`(${hotSignals.fetchedAt} AT TIME ZONE 'Europe/Zurich')::date = ${dayKey(now)}::date`,
     lte(hotSignals.fetchedAt, now),
   )).orderBy(desc(hotSignals.fetchedAt));

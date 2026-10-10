@@ -173,6 +173,8 @@ describe("hot today query", () => {
   it("uses an explicit scalar projection with active-shop and Zurich-date predicates", () => {
     const query = hotSignalsTodayQuery(db, SHOP, now).toSQL();
     expect(query.sql).toContain("AT TIME ZONE 'Europe/Zurich'");
+    expect(query.sql).toContain('"hot_signals"."shop_id" is null');
+    expect(query.sql).toContain(" or ");
     expect(query.params).toContain(SHOP);
     expect(query.params).toContain(observedDay);
     expect(query.sql.split(" from ")[0]).not.toMatch(/shop_id|created_at|score|niche/);
