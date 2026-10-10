@@ -17,7 +17,7 @@ export async function getEtsyAdapter(db: DB, random?: () => number, intent: "rea
   const allowed = intent === "read" || (await liveWritesEnabled(db));
   if (allowed && hasEtsyCredentials(shopId)) {
     const tokens = await readEtsyTokens(db, shop.id);
-    if (tokens) return new EtsyLiveClient(tokens, (t) => writeEtsyTokens(db, shop.id, t), shopId);
+    if (tokens) return new EtsyLiveClient(tokens, (t, expected) => writeEtsyTokens(db, shop.id, t, expected), shopId);
   }
   return new EtsyDryRunAdapter(random);
 }

@@ -145,6 +145,12 @@ describe("design credit failures", () => {
 
     const rows = await db.select().from(jobRuns);
     expect(rows.find((row) => row.stage === "design")?.status).toBe("failed");
+    const attempted = await db.select().from(keywords).where(eq(keywords.shopId, shop.id));
+    expect(Object.fromEntries(attempted.map((row) => [row.phrase, [row.designFailures, row.status]]))).toEqual({
+      "credits alpine ridge": [1, "selected"],
+      "credits gothic bloom": [0, "selected"],
+      "credits cabin night": [0, "selected"],
+    });
     expect(creditPushes()).toEqual([{ type: "job.failed", title: "Image provider out of credits" }]);
   });
 

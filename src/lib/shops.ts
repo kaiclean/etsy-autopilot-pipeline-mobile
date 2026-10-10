@@ -1,6 +1,6 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { DB } from "@/db";
-import { shopAutomation, shopConnections, shops, type Shop, type ShopConnectionStatus, type ShopProvider } from "@/db/schema";
+import { settings, shopAutomation, shopConnections, shops, type Shop, type ShopConnectionStatus, type ShopProvider } from "@/db/schema";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, storageBackend } from "@/lib/config";
 import { effectivePublishMode } from "@/lib/publish-mode";
 import { getSetting, setSetting, type EtsyTokens } from "@/lib/settings";
@@ -80,7 +80,50 @@ export async function readEtsyTokens(db: DB, shopId: string): Promise<EtsyTokens
 }
 
 /** Dual-write during the migration window so settings.etsyTokens and shop_connections stay readable. */
-export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens) {
+export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens, expected?: EtsyTokens): Promise<EtsyTokens | null> {
+  if (expected) {
+    const [row] = await db
+      .select({ id: shopConnections.id, tokens: shopConnections.tokens })
+      .from(shopConnections)
+      .where(and(eq(shopConnections.shopId, shopId), eq(shopConnections.provider, "etsy")));
+    if (row && isEtsyTokens(row.tokens)) {
+      const [updated] = await db
+        .update(shopConnections)
+        .set({ tokens, status: "connected", updatedAt: new Date() })
+        .where(
+          and(
+            eq(shopConnections.id, row.id),
+            sql`${shopConnections.tokens}->>'accessToken' = ${expected.accessToken}`,
+            sql`${shopConnections.tokens}->>'refreshToken' = ${expected.refreshToken}`,
+          ),
+        )
+        .returning({ id: shopConnections.id });
+      if (!updated) return (await readEtsyTokens(db, shopId)) ?? row.tokens;
+      await db
+        .update(settings)
+        .set({ value: tokens, updatedAt: new Date() })
+        .where(
+          and(
+            eq(settings.key, "etsyTokens"),
+            sql`${settings.value}->>'accessToken' = ${expected.accessToken}`,
+            sql`${settings.value}->>'refreshToken' = ${expected.refreshToken}`,
+          ),
+        );
+      return tokens;
+    }
+    const [updated] = await db
+      .update(settings)
+      .set({ value: tokens, updatedAt: new Date() })
+      .where(
+        and(
+          eq(settings.key, "etsyTokens"),
+          sql`${settings.value}->>'accessToken' = ${expected.accessToken}`,
+          sql`${settings.value}->>'refreshToken' = ${expected.refreshToken}`,
+        ),
+      )
+      .returning({ key: settings.key });
+    return updated ? tokens : readEtsyTokens(db, shopId);
+  }
   await setSetting(db, "etsyTokens", tokens);
   const [row] = await db
     .select({ id: shopConnections.id })
@@ -88,7 +131,7 @@ export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens
     .where(and(eq(shopConnections.shopId, shopId), eq(shopConnections.provider, "etsy")));
   if (row) {
     await db.update(shopConnections).set({ tokens, status: "connected", updatedAt: new Date() }).where(eq(shopConnections.id, row.id));
-    return;
+    return tokens;
   }
   await db.insert(shopConnections).values({
     shopId,
@@ -98,6 +141,7 @@ export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens
     meta: {},
     tokens,
   });
+  return tokens;
 }
 
 export type PublicShop = {

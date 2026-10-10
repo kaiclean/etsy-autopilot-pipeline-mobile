@@ -7,6 +7,7 @@ import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
+import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
@@ -156,7 +157,11 @@ export const runDesign: StageFn = async (ctx) => {
           await db
             .update(listings)
             .set({
-              imageUrl: isPlaceholderUrl(listing.imageUrl) ? imageUrl : listing.imageUrl,
+              imageUrl: isPlaceholderUrl(listing.imageUrl)
+                ? listing.productType === "digital"
+                  ? digitalPreviewUrl(imageUrl, listing.niche)
+                  : imageUrl
+                : listing.imageUrl,
               deliveryUrl: deliveryReplaced ? imageUrl : listing.deliveryUrl,
               // A new delivery file needs a fresh manifest and a fresh human check.
               ...(deliveryReplaced ? { fileManifest: null, fileVerifiedAt: null, fileVerifiedBy: null } : {}),
@@ -213,8 +218,6 @@ export const runDesign: StageFn = async (ctx) => {
       if (isProviderCreditsError(message)) {
         creditsStopped = true;
         log("Image provider out of credits. Stopping this run so the provider is not called again.", "error");
-        const start = queue.indexOf(kw) + 1;
-        for (const rest of queue.slice(start)) await noteFailure(rest);
         break;
       }
     }

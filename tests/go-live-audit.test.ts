@@ -13,6 +13,7 @@ import { integrationStatus } from "@/lib/config";
 import { buildFileManifest, MANIFEST_MAX_BYTES } from "@/lib/file-manifest";
 import { connectionHealth } from "@/lib/health";
 import { encodeRgbPng } from "@/lib/png";
+import { recordDeliveryManifest } from "@/pipeline/human-publish";
 import { backfillDigitalManifests } from "@/pipeline/maintenance";
 import { runStage } from "@/pipeline/runner";
 
@@ -155,6 +156,53 @@ describe("digital file manifest", () => {
     expect(pulled).toBeLessThan(10);
   });
 
+  it("bounds own-origin fetches with an abort signal", async () => {
+    process.env.APP_URL = "http://shop.test";
+    let signal: AbortSignal | null | undefined;
+    const manifest = await buildFileManifest(MEDIA_URL, "/api/preview?niche=alpine", {
+      readObject: async () => null,
+      fetchImpl: async (_url, init) => {
+        signal = init?.signal;
+        return new Response(tinyPng(80), { status: 200 });
+      },
+    });
+    expect(manifest).not.toBeNull();
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+  });
+
+  it("does not save a manifest if a hashed preview URL changes during the read", async () => {
+    const db = await memoryDb();
+    const shop = await omnishop(db);
+    const [listing] = await db
+      .insert(listings)
+      .values({
+        shopId: shop.id,
+        niche: "alpine",
+        productType: "digital",
+        title: "Alpine download",
+        tags: ["alpine art"],
+        description: "A print.",
+        imageUrl: "/api/preview?niche=alpine",
+        deliveryUrl: `/api/media/${MEDIA_KEY}`,
+        priceChf: 5.9,
+        netChf: 3,
+        marginPct: 50,
+        isDemo: false,
+      })
+      .returning();
+
+    const result = await recordDeliveryManifest(db, listing.id, new Date(), {
+      readObject: async () => {
+        await db.update(listings).set({ imageUrl: "/api/preview?niche=gothic" }).where(eq(listings.id, listing.id));
+        return { bytes: tinyPng(110) };
+      },
+    });
+    const [saved] = await db.select().from(listings).where(eq(listings.id, listing.id));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("artwork changed") });
+    expect(saved.fileManifest).toBeNull();
+  });
+
   it("reaches digital rows past the first batch and skips an unreadable file without failing", async () => {
     const db = await memoryDb();
     const shop = await omnishop(db);
@@ -243,18 +291,19 @@ describe("digital file manifest", () => {
 });
 
 describe("provider credit health", () => {
-  it("marks image and LLM checks red or amber from the latest design run", () => {
+  it("applies the latest design-run credit signal to the image check only", () => {
     process.env.IMAGE_PROVIDER = "openai";
     process.env.LLM_PROVIDER = "openai";
     process.env.OPENAI_API_KEY = "sk-test";
     process.env.OPENAI_BASE_URL = "https://openrouter.ai/api/v1";
     const failed = connectionHealth({ etsyConnected: false, providerCredits: "failed" });
     expect(failed.find((check) => check.id === "images")).toMatchObject({ level: "red", label: "Out of credits" });
-    expect(failed.find((check) => check.id === "llm")).toMatchObject({ level: "red", label: "Out of credits" });
+    expect(failed.find((check) => check.id === "llm")?.label).not.toBe("Out of credits");
+    expect(failed.find((check) => check.id === "llm")?.detail).not.toContain("402");
     expect(JSON.stringify(failed)).not.toContain("sk-test");
     const warning = connectionHealth({ etsyConnected: false, providerCredits: "warning" });
     expect(warning.find((check) => check.id === "images")).toMatchObject({ level: "yellow", label: "Low credits" });
-    expect(warning.find((check) => check.id === "llm")?.level).toBe("yellow");
+    expect(warning.find((check) => check.id === "llm")?.label).not.toBe("Low credits");
     const rows = integrationStatus(false, { providerCredits: "failed" });
     expect(rows.find((row) => row.id === "images")?.status).toBe("missing");
     expect(rows.find((row) => row.id === "llm")?.detail).toContain("402");
@@ -265,7 +314,7 @@ describe("provider credit health", () => {
     delete process.env.OPENAI_BASE_URL;
   });
 
-  it("applies the credit signal to Ollama text and OmniRoute images", () => {
+  it("keeps the design credit signal on OmniRoute images, not Ollama text", () => {
     process.env.LLM_PROVIDER = "ollama";
     process.env.OLLAMA_API_KEY = "ollama-secret";
     process.env.IMAGE_PROVIDER = "omniroute";
@@ -274,13 +323,13 @@ describe("provider credit health", () => {
     process.env.OMNIROUTE_IMAGE_MODEL = "flux";
     try {
       const failed = connectionHealth({ etsyConnected: false, providerCredits: "failed" });
-      expect(failed.find((check) => check.id === "llm")).toMatchObject({ level: "red", label: "Out of credits" });
+      expect(failed.find((check) => check.id === "llm")?.detail).toContain("Ollama Cloud");
+      expect(failed.find((check) => check.id === "llm")?.detail).not.toContain("402");
       expect(failed.find((check) => check.id === "images")).toMatchObject({ level: "red", label: "Out of credits" });
       const ok = connectionHealth({ etsyConnected: false, providerCredits: "ok" });
       expect(ok.find((check) => check.id === "llm")?.detail).toContain("Ollama Cloud");
       expect(ok.find((check) => check.id === "images")?.detail).toContain("OmniRoute");
       const rows = integrationStatus(false, { providerCredits: "failed" });
-      expect(rows.find((row) => row.id === "llm")?.detail).toContain("402");
       const serialized = JSON.stringify([failed, ok, rows]);
       expect(serialized).not.toContain("ollama-secret");
       expect(serialized).not.toContain("omni-secret");

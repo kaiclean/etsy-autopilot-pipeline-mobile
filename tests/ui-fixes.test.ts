@@ -12,6 +12,7 @@ import { artRegenerationBlocker } from "@/lib/art-queue";
 import { filterProducts } from "@/lib/catalog-filters";
 import { connectionHealth } from "@/lib/health";
 import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
+import { digitalPreviewUrl } from "@/lib/png";
 import { runDesign } from "@/pipeline/design";
 import type { StageContext } from "@/pipeline/types";
 
@@ -188,7 +189,8 @@ describe("placeholder art queue", () => {
     expect(updated.status).toBe("pending_approval");
     expect(updated.publishMode).toBe("dry-run");
     expect(updated.etsyListingId).toBeNull();
-    expect(updated.imageUrl).toBe(url);
+    expect(updated.imageUrl).toBe(digitalPreviewUrl(url, "alpine"));
+    expect(updated.imageUrl).not.toBe(updated.deliveryUrl);
     expect(updated.deliveryUrl).toBe(url);
     expect(updated.fileManifest).toBeNull();
     expect(updated.fileVerifiedAt).toBeNull();

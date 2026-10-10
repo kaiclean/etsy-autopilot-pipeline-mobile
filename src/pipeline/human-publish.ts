@@ -24,7 +24,12 @@ export async function recordDeliveryManifest(db: DB, listingId: number, now = ne
   if (!manifestIsComplete(manifest)) {
     return { ok: false as const, error: "Could not read the delivery PNG (filename, pixel size, bytes, hash)." };
   }
-  await db.update(listings).set({ fileManifest: manifest, updatedAt: now }).where(eq(listings.id, listingId));
+  const [updated] = await db
+    .update(listings)
+    .set({ fileManifest: manifest, updatedAt: now })
+    .where(and(eq(listings.id, listingId), eq(listings.deliveryUrl, l.deliveryUrl), eq(listings.imageUrl, l.imageUrl)))
+    .returning({ id: listings.id });
+  if (!updated) return { ok: false as const, error: "Listing artwork changed while the delivery file was being read. Please retry." };
   return { ok: true as const, manifest };
 }
 

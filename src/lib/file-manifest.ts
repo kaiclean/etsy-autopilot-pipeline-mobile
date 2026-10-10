@@ -116,7 +116,7 @@ async function readCappedBody(res: Response, maxBytes: number): Promise<Buffer |
 }
 
 async function fetchCapped(url: string, fetchImpl: typeof fetch, maxBytes: number): Promise<Buffer | null> {
-  const res = await fetchImpl(url, { redirect: "error" });
+  const res = await fetchImpl(url, { redirect: "error", signal: AbortSignal.timeout(15_000) });
   if (!res.ok) return null;
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) return null;

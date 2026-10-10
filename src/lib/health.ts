@@ -514,7 +514,7 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
-  /** Latest design run. 402/credit errors turn image and LLM checks red or amber. */
+  /** Latest design run. 402/credit errors turn the image check red or amber. */
   providerCredits?: ProviderCreditSignal;
   /** Latest design run. A 401, 404, or model error replaces the image check's Ready. */
   imageRun?: ImageRunFact | null;
@@ -527,7 +527,7 @@ export function connectionHealth(input: {
     printifyCheck(input.webhooksRegistered),
     storageCheck(),
     pushCheck(),
-    llmCheck(providerCredits),
+    llmCheck("ok"),
     overlayImageRun(imageCheck(providerCredits), input.imageRun),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
