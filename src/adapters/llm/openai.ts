@@ -52,7 +52,9 @@ export class OpenAILLMProvider implements LLMProvider {
         ["text", "empty", "frameOnly", "artifacts"].some((field) => typeof parsed[field] !== "boolean")) {
       throw new Error("Vision LLM returned an invalid assessment");
     }
-    return parsed as VisionAssessment;
+    const usage = json.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
+    const costChf = (((Number(usage.prompt_tokens) || 0) * 0.4 + (Number(usage.completion_tokens) || 0) * 1.6) / 1_000_000) * 0.83;
+    return { ...(parsed as VisionAssessment), reasons: (parsed.reasons as string[]).slice(0, 5).map((reason) => reason.slice(0, 200)), costChf };
   }
 
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {

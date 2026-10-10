@@ -96,10 +96,11 @@ export const runDesign: StageFn = async (ctx) => {
   let briefed = 0;
   let failures = 0;
   let creditsStopped = false;
-  const recentBriefs = await db.select({ prompt: designBriefs.prompt }).from(designBriefs)
+  let budgetStopped = false;
+  const recentBriefs = await db.select({ niche: designBriefs.niche, prompt: designBriefs.prompt }).from(designBriefs)
     .where(and(eq(designBriefs.shopId, ctx.shopId), ctx.demo ? undefined : eq(designBriefs.isDemo, false)))
     .orderBy(desc(designBriefs.id)).limit(30);
-  const usedConcepts = recentBriefs.map((row) => row.prompt);
+  const runConcepts: string[] = [];
   const noteFailure = async (kw: (typeof queue)[number]) => {
     const next = kw.designFailures + 1;
     kw.designFailures = next;
@@ -118,16 +119,19 @@ export const runDesign: StageFn = async (ctx) => {
     }
     const niche = NICHES[kw.niche];
     const previous = await db.select({ prompt: designBriefs.prompt }).from(designBriefs).where(eq(designBriefs.keywordId, kw.id)).limit(1);
-    const concept = previous[0] ? null : chooseConcept(kw.niche, usedConcepts);
+    const concept = previous[0] ? null : chooseConcept(kw.niche, [
+      ...recentBriefs.filter((row) => row.niche === kw.niche).slice(0, 2).map((row) => row.prompt),
+      ...runConcepts,
+    ]);
     if (!previous[0] && !concept) {
-      await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
-      log(`Rejected duplicate brief for “${kw.phrase}”: no unused concept/palette among recent designs`, "warn");
+      await db.update(keywords).set({ status: "new", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      log(`Deferred duplicate brief for “${kw.phrase}”: no unused concept/palette in this run`, "warn");
       continue;
     }
     const prompt = previous[0]?.prompt ?? buildPrompt(kw.phrase, niche.style, kw.niche, concept!);
     const brief = await ensureDesignBrief(ctx, kw, prompt);
     if (brief.created) {
-      usedConcepts.push(prompt);
+      runConcepts.push(prompt);
       briefed++;
       log(`Design brief for “${kw.phrase}” (${brief.brief?.productType ?? "listing"}${brief.brief?.podPreset ? `/${brief.brief.podPreset}` : ""})`);
     }
@@ -136,9 +140,11 @@ export const runDesign: StageFn = async (ctx) => {
       let accepted: Candidate | null = null;
       let rejected: Candidate | null = null;
       for (let attempt = 0; attempt < 3; attempt++) {
-        if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf ||
-            spentMonth + provider.estimatedCostChf > automation.monthlyAiBudgetChf) {
+        // Reserve for the vision call as well as image generation before each attempt.
+        if (spentToday + provider.estimatedCostChf + 0.02 > automation.dailyAiCapChf ||
+            spentMonth + provider.estimatedCostChf + 0.02 > automation.monthlyAiBudgetChf) {
           log(`Daily AI cap reached or monthly AI budget reached before attempt ${attempt + 1} for “${kw.phrase}”`, "warn");
+          budgetStopped = true;
           break;
         }
         const img = await provider.generate({
@@ -157,11 +163,21 @@ export const runDesign: StageFn = async (ctx) => {
         const prepared = await preparePrintFile(img.url);
         const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
-          : await vision.assessImage!(prepared.url);
+          : !ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")
+            ? { score: 0, reasons: ["Placeholder art."], text: false, empty: false, frameOnly: false, artifacts: false }
+            : await vision.assessImage!(prepared.url);
+        const visionCost = assessment.costChf ?? 0;
+        if (visionCost > 0) {
+          spentToday += visionCost;
+          spentMonth += visionCost;
+          await db.insert(costs).values({
+            shopId: ctx.shopId, kind: "ai_text", amountChf: visionCost,
+            note: `${vision.name}: design assessment`, isDemo: ctx.demo,
+          });
+        }
         const check = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { pass: true, reasons: [] }
           : assessArtwork(assessment, prepared.width, prepared.height);
-        if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) check.reasons.push("Placeholder art.");
         if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV && !ctx.demo) check.reasons.push("Flat artwork.");
         check.pass = check.reasons.length === 0;
         rejected = { img, prepared, score: assessment.score, reasons: check.reasons };
@@ -172,6 +188,10 @@ export const runDesign: StageFn = async (ctx) => {
         log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: ${check.reasons.join("; ")}`, "warn");
       }
       if (!accepted && !rejected) break;
+      if (!accepted && budgetStopped) {
+        log(`Deferred “${kw.phrase}” until the AI budget resets; quality retries are incomplete`, "warn");
+        break;
+      }
       const result = accepted ?? rejected!;
       const { img, prepared } = result;
       if (!accepted) {
@@ -185,6 +205,7 @@ export const runDesign: StageFn = async (ctx) => {
         failures++;
         await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
         log(`Rejected design for “${kw.phrase}”: ${result.reasons.join("; ")}`, "warn");
+        if (budgetStopped) break;
         continue;
       }
       if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
@@ -264,6 +285,7 @@ export const runDesign: StageFn = async (ctx) => {
       await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
       made++;
       log(`Generated design for “${kw.phrase}”`);
+      if (budgetStopped) break;
     } catch (e) {
       const message = (e as Error).message;
       failures++;

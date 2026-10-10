@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildPrompt, chooseConcept } from "@/pipeline/design";
 import { assessArtwork, PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
 import { buildProductTitle } from "@/lib/product-title";
+import { preparePrintFile } from "@/pipeline/artwork";
+import { rgbPng } from "@/lib/png";
 
 describe("design audit", () => {
   it("keeps every prompt clean, full bleed and contrast-aware", () => {
@@ -27,6 +29,19 @@ describe("design audit", () => {
     expect(assessArtwork({ score: 6, reasons: ["murky"], text: false, empty: false, frameOnly: false, artifacts: false }, PRINT_WIDTH, PRINT_HEIGHT).pass).toBe(false);
     expect(assessArtwork({ score: 9, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }, 1365, 2048).pass).toBe(false);
     expect(assessArtwork({ score: 8, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }, PRINT_WIDTH, PRINT_HEIGHT).pass).toBe(true);
+  });
+
+  it("resamples an undersized non-RunPod PNG into a stored A3 master", async () => {
+    const image = `data:image/png;base64,${rgbPng(4, 6, [80, 90, 100]).toString("base64")}`;
+    const prepared = await preparePrintFile(image, {
+      upload: async (bytes, type) => {
+        expect(type).toBe("image/png");
+        expect(bytes.readUInt32BE(16)).toBe(PRINT_WIDTH);
+        expect(bytes.readUInt32BE(20)).toBe(PRINT_HEIGHT);
+        return { url: "https://cdn.example/print.png", key: "print.png", backend: "s3" };
+      },
+    });
+    expect(prepared).toMatchObject({ url: "https://cdn.example/print.png", width: PRINT_WIDTH, height: PRINT_HEIGHT });
   });
 
   it("uses one correct noun and deduplicates sibling copy", () => {

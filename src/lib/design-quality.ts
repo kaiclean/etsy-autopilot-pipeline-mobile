@@ -6,6 +6,7 @@ export const MIN_DESIGN_SCORE = 7;
 export type VisionAssessment = {
   score: number;
   reasons: string[];
+  costChf?: number;
   text: boolean;
   empty: boolean;
   frameOnly: boolean;
