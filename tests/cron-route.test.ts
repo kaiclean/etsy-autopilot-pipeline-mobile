@@ -21,6 +21,19 @@ describe("cron stage route", () => {
     else process.env.CRON_SECRET = savedSecret;
   });
 
+  it("accepts the hot stage and preserves cron authorization", async () => {
+    process.env.CRON_SECRET = "unit-test-cron-secret";
+    const denied = await call("hot");
+    expect(denied.status).toBe(401);
+    expect(runner.runStage).not.toHaveBeenCalled();
+    runner.runStage.mockResolvedValue({ status: "success", summary: "Hot scan: no sales estimated" });
+    const res = await GET(new Request("http://localhost/api/cron/hot", {
+      headers: { authorization: ["Bearer", process.env.CRON_SECRET].join(" ") },
+    }), { params: Promise.resolve({ stage: "hot" }) });
+    expect(res.status).toBe(200);
+    expect(runner.runStage).toHaveBeenCalledWith("hot", "cron", { force: false });
+  });
+
   it("returns the failed summary with HTTP 500", async () => {
     delete process.env.CRON_SECRET;
     runner.runStage.mockResolvedValue({ status: "failed", summary: "Published 0, failed 1 (live)" });

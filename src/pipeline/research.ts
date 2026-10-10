@@ -8,6 +8,7 @@ import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
+import { loadHotSignals, mergeHotKeywords } from "./hot-signals";
 import type { StageFn } from "./types";
 
 const TRENDS_LOOKUPS_PER_RUN = 5;
@@ -16,6 +17,11 @@ const PERFORMANCE_ANALYTICS_FRESHNESS_DAYS = 30;
 
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
+  const hot = ctx.demo ? [] : await loadHotSignals(db, ctx.shopId, ctx.now);
+  const hotBoost = new Map<string, number>();
+  for (const signal of hot) {
+    hotBoost.set(signal.phrase, Math.max(hotBoost.get(signal.phrase) ?? 0, signal.score * 0.15));
+  }
   const candidates: KeywordCandidate[] = [];
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
@@ -131,14 +137,14 @@ export const runResearch: StageFn = async (ctx) => {
     const measured = c.searchVolume != null;
     const trend = measured ? null : (trends.get(c.phrase) ?? null);
     const demand = measured ? normalizeEtsyVolume(c.searchVolume ?? 0) : c.demand;
-    const score = scoreKeyword({
+    const score = Math.min(1, scoreKeyword({
       demand,
       competition: c.competition,
       seasonality: season,
       trend,
       searchVolume: c.searchVolume,
       performance: performance.get(keywordIdByPhrase.get(c.phrase) ?? -1),
-    });
+    }) + (hotBoost.get(c.phrase) ?? 0));
     await db
       .insert(keywords)
       .values({
@@ -168,6 +174,8 @@ export const runResearch: StageFn = async (ctx) => {
       });
     upserted++;
   }
+
+  await mergeHotKeywords(ctx, hot);
 
   const { designsPerRun } = await getSetting(db, "automation");
   const top = await db

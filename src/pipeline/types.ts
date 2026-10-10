@@ -28,6 +28,7 @@ export function asStageResult(value: string | StageResult): StageResult {
 export type StageFn = (ctx: StageContext) => Promise<string | StageResult>;
 
 export const STAGES: { id: StageName; label: string; description: string }[] = [
+  { id: "hot", label: "Hot today", description: "Scan dated demand evidence and merge niche keywords" },
   { id: "research", label: "Research", description: "Collect and score keyword & trend candidates" },
   { id: "design", label: "Design", description: "Generate artwork via the image provider" },
   { id: "listing", label: "Listing", description: "Write titles, tags, descriptions & price with fee math" },

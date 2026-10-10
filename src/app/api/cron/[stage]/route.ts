@@ -11,6 +11,7 @@ export const maxDuration = 300;
  * Called by GitHub Actions cron with `Authorization: Bearer $CRON_SECRET`.
  * `daily` runs research → design brief → listing draft and leaves drafts pending.
  * `health` runs the Monday report. Neither route publishes or changes go-live.
+ * `hot` scans observed demand and merges keywords; it never estimates sales.
  * `?force=1` reruns the daily chain after a success already recorded today.
  * A failed stage returns this same JSON with HTTP 500 so the workflow goes red.
  */

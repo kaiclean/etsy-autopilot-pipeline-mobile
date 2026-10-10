@@ -9,6 +9,16 @@ export const config = {
   get databaseUrl() {
     return env("DATABASE_URL");
   },
+  get hot() {
+    return {
+      scrapeEnabled: env("HOT_SCRAPE_ENABLED") === "true",
+      amazonAccessKey: env("AMAZON_PAAPI_ACCESS_KEY"),
+      amazonSecretKey: env("AMAZON_PAAPI_SECRET_KEY"),
+      amazonPartnerTag: env("AMAZON_PAAPI_PARTNER_TAG"),
+      amazonMarketplace: env("AMAZON_MARKETPLACE") ?? "www.amazon.com",
+      pinterestAccessToken: env("PINTEREST_ACCESS_TOKEN"),
+    };
+  },
   get etsy() {
     return {
       apiKey: env("ETSY_API_KEY"),

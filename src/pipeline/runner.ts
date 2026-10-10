@@ -12,6 +12,7 @@ import { runAnalytics } from "./analytics";
 import { stageSucceededToday } from "./chain-day";
 import { runDesign } from "./design";
 import { publishHealthReport } from "./health-report";
+import { runHot } from "./hot-signals";
 import { runListing } from "./listing";
 import { runMaintenance } from "./maintenance";
 import { runOrders } from "./orders";
@@ -68,6 +69,7 @@ const runHealth: StageFn = async (ctx) => {
 };
 
 const STAGE_FNS: Record<StageName, StageFn> = {
+  hot: runHot,
   research: runResearch,
   design: runDesign,
   listing: runListing,

@@ -1,8 +1,11 @@
-import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, designs, events, healthReports, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import type { HotTodayItem } from "@/components/hot-today-card";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
+import { rankHotSignals } from "@/pipeline/hot-signals";
+import { HOT_PROVIDERS, type HotSignal } from "@/pipeline/hot-signals/types";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
 import { printifyEventLog } from "./ops-copy";
 import { registeredWebhookCount } from "./printify-webhooks";
@@ -22,6 +25,74 @@ import { getSetting } from "./settings";
 
 const DAY = 864e5;
 export const ANALYTICS_FRESHNESS_HOURS = 36;
+
+export function hotSignalsTodayQuery(db: DB, shopId: string, now = new Date()) {
+  return db.select({
+    provider: hotSignals.provider,
+    category: hotSignals.category,
+    title: hotSignals.title,
+    phrase: hotSignals.phrase,
+    rank: hotSignals.rank,
+    badge: hotSignals.badge,
+    labelText: hotSignals.labelText,
+    metric: hotSignals.metric,
+    sourceUrl: hotSignals.sourceUrl,
+    fetchedAt: hotSignals.fetchedAt,
+  }).from(hotSignals).where(and(
+    eq(hotSignals.shopId, shopId),
+    sql`(${hotSignals.fetchedAt} AT TIME ZONE 'Europe/Zurich')::date = ${dayKey(now)}::date`,
+    lte(hotSignals.fetchedAt, now),
+  )).orderBy(desc(hotSignals.fetchedAt));
+}
+
+function hotDemoItems(): HotTodayItem[] {
+  return [
+    {
+      phrase: "alpine mountain poster",
+      score: 0,
+      providers: [{ provider: "amazon", rank: 3, badge: "Fixture badge", labelText: "Illustrative rank", metric: null, sourceUrl: "https://example.invalid/hot/alpine-poster", fetchedAt: null }],
+    },
+    {
+      phrase: "gothic wall art",
+      score: 0,
+      providers: [{ provider: "pinterest", rank: null, badge: null, labelText: "Illustrative trend", metric: null, sourceUrl: "https://example.invalid/hot/gothic-art", fetchedAt: null }],
+    },
+  ];
+}
+
+export async function getHotSignalsToday(now = new Date()) {
+  const db = await getDb();
+  const shop = await resolveRequestShop(db);
+  const rows = await hotSignalsTodayQuery(db, shop.id, now);
+  const signals = rows.flatMap((row): HotSignal[] => {
+    const provider = HOT_PROVIDERS.find((value) => value === row.provider);
+    if (!provider || row.sourceUrl.startsWith("https://example.invalid/")) return [];
+    return [{
+      provider, category: row.category, title: row.title,
+      phrase: row.phrase.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase(),
+      rank: row.rank, badge: row.badge, label_text: row.labelText, metric: row.metric,
+      source_url: row.sourceUrl, fetched_at: row.fetchedAt,
+    }];
+  });
+  const groups = new Map<string, HotTodayItem>();
+  for (const signal of rankHotSignals(signals)) {
+    const phrase = signal.phrase.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+    if (!phrase) continue;
+    const item = groups.get(phrase) ?? { phrase, score: signal.score, providers: [] };
+    item.score = Math.max(item.score, signal.score);
+    if (!item.providers.some((evidence) => evidence.provider === signal.provider)) {
+      item.providers.push({
+        provider: signal.provider, rank: signal.rank, badge: signal.badge,
+        labelText: signal.label_text, metric: signal.metric,
+        sourceUrl: signal.source_url, fetchedAt: signal.fetched_at,
+      });
+    }
+    groups.set(phrase, item);
+  }
+  const items = [...groups.values()].sort((a, b) => b.score - a.score || a.phrase.localeCompare(b.phrase)).slice(0, 10);
+  const demo = isDemoMode(shop.etsyShopId ?? undefined) && items.length === 0;
+  return { items: demo ? hotDemoItems() : items, demo, observedDay: dayKey(now) };
+}
 
 function lastNDays(n: number, now = new Date()) {
   return Array.from({ length: n }, (_, i) => dayKey(new Date(now.getTime() - (n - 1 - i) * DAY)));
