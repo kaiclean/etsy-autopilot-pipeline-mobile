@@ -78,6 +78,13 @@
       "when": 1791662371669,
       "tag": "0011_design_quality",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791663600000,
+      "tag": "0012_design_concept",
+      "breakpoints": true
     }
   ]
 }

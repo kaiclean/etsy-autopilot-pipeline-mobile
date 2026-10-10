@@ -20,6 +20,38 @@ afterEach(() => {
 });
 
 describe("live visual gate", () => {
+  it.each(["unsupported", "failed"])("holds artwork for review when vision is %s", async (caseName) => {
+    process.env.DEMO_MODE = "false";
+    const client = new PGlite("memory://");
+    try {
+      const db = drizzle(client, { schema }) as DB;
+      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      await db.insert(keywords).values({ phrase: `winter forest ${caseName}`, niche: "alpine", source: "test", status: "selected", isDemo: false });
+      const image = `data:image/png;base64,${rgbPng(12, 18, [25, 25, 25]).toString("base64")}`;
+      setImageProviderForTests({ name: "test", estimatedCostChf: 0, generate: async () => ({ url: image, costChf: 0, provider: "test" }) });
+      const assessImage = vi.fn(async (url: string) => {
+        expect(url).toMatch(/^data:image\/png;base64,/);
+        expect(url.length).toBeLessThan(2_000_000);
+        throw new Error("vision unavailable");
+      });
+      setLLMProviderForTests({
+        name: "test", writeListing: vi.fn(),
+        ...(caseName === "failed" ? { assessImage } : {}),
+      });
+      const run = await runStage("design", "manual", { db, random: () => 0.1 });
+      expect(run.status).not.toBe("failed");
+      const [design] = await db.select().from(designs);
+      expect(design.status).toBe("needs_review");
+      expect(design.qualityScore).toBeNull();
+      expect(design.qualityReasons.join(" ")).toMatch(/human image review/i);
+      expect(assessImage).toHaveBeenCalledTimes(caseName === "failed" ? 1 : 0);
+      await runStage("listing", "manual", { db });
+      expect(await db.select().from(listings)).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("retries twice with different seeds, records rejection, and never lists bad art", async () => {
     process.env.DEMO_MODE = "false";
     const client = new PGlite("memory://");

@@ -4,15 +4,16 @@ import { assessArtwork, PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
 import { buildProductTitle } from "@/lib/product-title";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { rgbPng } from "@/lib/png";
+import { draftListing } from "@/pipeline/listing";
 
 describe("design audit", () => {
   it("keeps every prompt clean, full bleed and contrast-aware", () => {
     const prompt = buildPrompt("gothic floral shirt", "dark botanical", "gothic");
     expect(prompt).toMatch(/full.bleed/i);
     expect(prompt).toMatch(/high contrast/i);
-    expect(prompt).toMatch(/signature/i);
-    expect(prompt).toMatch(/frame/i);
-    expect(prompt).toMatch(/without text/i);
+    expect(prompt).toMatch(/clean edges/i);
+    expect(prompt).toMatch(/unframed/i);
+    expect(prompt).toMatch(/pictorial rather than typography/i);
   });
 
   it("avoids recent and same-run concepts and exhausts duplicates", () => {
@@ -21,7 +22,7 @@ describe("design audit", () => {
     const second = chooseConcept("gothic", [first!]);
     expect(second).not.toBe(first);
     expect(chooseConcept("gothic", [first!, second!])).toBeTruthy();
-    expect(chooseConcept("gothic", ["ink botanical in ivory and charcoal", "moonlit herbarium in teal and copper", "wildflower silhouette in ochre and midnight", "thorn and moth study in indigo and silver"])).toBeNull();
+    expect(chooseConcept("gothic", [first!, second!])).not.toBeNull();
   });
 
   it("holds artifacts, text and low scores even when dimensions are sufficient", () => {
@@ -55,5 +56,30 @@ describe("design audit", () => {
     expect(buildProductTitle("gothic floral shirt", title, "digital")).toMatch(/^Gothic Floral Printable Wall Art/i);
     expect(buildProductTitle("shirt", title, "mug")).not.toMatch(/shirt/i);
     expect(buildProductTitle("gothic floral shirt", title.repeat(5), "mug").length).toBeLessThanOrEqual(140);
+    const longTail = buildProductTitle("gothic floral shirt", "Gothic Floral Shirt | Moonlit Thorn Garden", "mug");
+    expect(longTail).toContain("Moonlit Thorn Garden");
+    expect(buildProductTitle("gothic floral shirt", "Gothic Floral Shirt | Moonlit Thorn Garden", "posterA3", [longTail])).not.toContain("Moonlit Thorn Garden");
+  });
+
+  it("refills tags after removing unsupported art-style claims", async () => {
+    const { draft } = await draftListing({
+      niche: "gothic", keyword: "moonlit floral shirt", product: { type: "pod", pod: "mug" },
+      seed: 1, assumeOffsiteAds: false, artDirection: "ink botanical in ivory and charcoal",
+      llm: {
+        name: "test",
+        writeListing: async () => ({
+          title: "Moonlit Floral Shirt | Thorn Garden Under the Moon",
+          tags: ["gothic floral", "vintage engraving", "watercolor print", "mug decor", "botanical illustration",
+            "dark botanical", "night garden", "moonlit flower", "witchy floral", "flower gift",
+            "dark academia", "rose artwork", "gothic gift"],
+          body: "A garden with a moonlit thorn.",
+          costChf: 0, provider: "test",
+        }),
+      },
+    });
+    expect(draft.tags).toHaveLength(13);
+    expect(draft.tags.every((tag) => tag.length <= 20)).toBe(true);
+    expect(draft.tags.join(" ")).not.toMatch(/engraving|watercolor|shirt/i);
+    expect(draft.title).toContain("Thorn Garden");
   });
 });

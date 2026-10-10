@@ -26,7 +26,7 @@ export class OpenAILLMProvider implements LLMProvider {
   async assessImage(url: string): Promise<VisionAssessment> {
     const key = !this.options ? config.openaiKey : this.options.apiKey;
     const base = (!this.options ? config.openaiBaseUrl : this.options.baseUrl ?? "").replace(/\/$/, "");
-    const model = !this.options ? config.openaiModel : this.options.model;
+    const model = config.visionModel ?? (!this.options ? config.openaiModel : this.options.model);
     if (!key || !base || !model) throw new Error("Vision LLM configuration missing");
     if (!isSafeArtworkUrl(url) && !/^data:image\/(?:png|jpeg|webp);base64,/i.test(url)) {
       throw new Error("Vision assessment requires an HTTPS artwork URL or image data");

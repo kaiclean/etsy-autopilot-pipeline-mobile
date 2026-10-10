@@ -62,6 +62,7 @@ export async function draftListing(opts: {
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
   artDirection?: string;
+  siblingTitles?: readonly string[];
 }) {
   const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
   const keyword = leadPhrase(productKeyword(opts.keyword) || "original art", opts.niche, opts.product.type);
@@ -74,7 +75,7 @@ export async function draftListing(opts: {
     artDirection: opts.artDirection,
   });
   const product = opts.product.type === "digital" ? "digital" : opts.product.pod ?? "posterA3";
-  const title = buildProductTitle(opts.keyword, copy.title, product);
+  const title = buildProductTitle(opts.keyword, copy.title, product, opts.siblingTitles, opts.artDirection);
   const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
   const tags = copy.tags.filter((tag) => !styleClaims.test(tag));
   const preset = opts.product.pod ?? "posterA3";
@@ -124,6 +125,7 @@ async function listRung(
   artworkUrl: string,
   automation: { podTargetMarginPct?: number; digitalTargetMarginPct?: number; assumeOffsiteAds: boolean },
   llm: LLMProvider,
+  siblingTitles: string[],
 ) {
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
@@ -136,6 +138,7 @@ async function listRung(
     priceChf: rung.priceChf,
     llm,
     artDirection: design.prompt,
+    siblingTitles,
   });
   const image = await listingImageForProduct({
     productType: rung.product.type,
@@ -181,6 +184,7 @@ async function listRung(
     status: gate.pass ? "pending_approval" : "quality_failed",
     isDemo: ctx.demo,
   });
+  siblingTitles.push(draft.title);
   if (llmCost > 0) {
     await ctx.db.insert(costs).values({
       shopId: ctx.shopId,
@@ -237,9 +241,10 @@ export const runListing: StageFn = async (ctx) => {
       log(`Design #${design.id} is DEMO placeholder art and will be held off the queue`, "warn");
     }
     let listed = 0;
+    const siblingTitles: string[] = [];
     for (const rung of quoteLadder(design.niche)) {
       try {
-        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm);
+        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm, siblingTitles);
         if (made.fixes.length) log(`Auto-fixed design #${design.id} ${rung.label} before the quality gate: ${made.fixes.join("; ")}`);
         if (made.errors.length) {
           invalid++;

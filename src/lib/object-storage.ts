@@ -106,7 +106,7 @@ export async function materializeImageUrl(url: string, deps: MaterializeDeps = {
   const remote = /^https?:\/\//i.test(url);
   const data = url.startsWith("data:");
   if (!remote && !data) return url;
-  if (storageBackend() === "none") return url;
+  if (storageBackend() === "none" && !deps.upload) return url;
 
   let bytes: Buffer;
   let contentType: string;

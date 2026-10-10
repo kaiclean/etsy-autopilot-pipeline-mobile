@@ -13,7 +13,7 @@ export type VisionAssessment = {
   artifacts: boolean;
 };
 
-export function assessArtwork(vision: VisionAssessment, width: number | null, height: number | null) {
+export function assessArtwork(vision: VisionAssessment, width: number | null, height: number | null, print = true) {
   const reasons = [...vision.reasons];
   if (!Number.isInteger(vision.score) || vision.score < MIN_DESIGN_SCORE || vision.score > 10) {
     reasons.push(`Print-worthiness ${vision.score}/10 (minimum ${MIN_DESIGN_SCORE}).`);
@@ -22,7 +22,7 @@ export function assessArtwork(vision: VisionAssessment, width: number | null, he
   if (vision.empty) reasons.push("Large empty or solid area.");
   if (vision.frameOnly) reasons.push("Frame-only composition.");
   if (vision.artifacts) reasons.push("Visible rendering artifacts.");
-  if (!width || !height || Math.min(width, height) < PRINT_WIDTH || Math.max(width, height) < PRINT_HEIGHT) {
+  if (print && (!width || !height || Math.min(width, height) < PRINT_WIDTH || Math.max(width, height) < PRINT_HEIGHT)) {
     reasons.push(`Print file ${width ?? "?"}×${height ?? "?"}px is below ${PRINT_WIDTH}×${PRINT_HEIGHT}px.`);
   }
   return { pass: reasons.length === 0, reasons };
