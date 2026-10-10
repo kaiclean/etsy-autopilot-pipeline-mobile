@@ -34,7 +34,11 @@ export class SupplierHttp {
         this.nextRequestAt = Math.max(this.nextRequestAt, Number.isFinite(until) ? until : Date.now() + 60_000);
       }
       if (!res.ok) throw new Error(`Supplier API returned ${res.status}${res.status === 429 ? " (rate limited)" : ""}`);
-      return await res.json() as T;
+      try {
+        return await res.json() as T;
+      } catch {
+        throw new Error("Invalid supplier API JSON response");
+      }
     });
     this.tail = run;
     return run;

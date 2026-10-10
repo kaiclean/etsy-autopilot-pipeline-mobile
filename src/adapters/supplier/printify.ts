@@ -19,6 +19,7 @@ export class PrintifySupplier implements Supplier {
   private catalog = new Map<PodPreset, Promise<SupplierProduct[]>>();
   private blueprints?: ReturnType<SupplierHttp["request"]>;
   private costs = new Map<string, number>();
+  private shopProducts?: Promise<{ id: string; blueprint_id: number; print_provider_id: number }[]>;
 
   constructor(fetchImpl: typeof fetch = fetch) {
     this.adapter = new PrintifyDryRunAdapter(() => 1);
@@ -64,8 +65,35 @@ export class PrintifySupplier implements Supplier {
 
   async quote(product: SupplierProduct, region: string): Promise<SupplierQuote> {
     if (product.supplier !== this.id || !/^[A-Z]{2}$/.test(region)) throw new Error("Invalid Printify quote input");
-    // Plan estimates in fees.ts are not live supplier quotes.
-    return { baseCostUsd: null, shippingUsd: this.costs.get(`${product.uid}:${region}`) ?? this.costs.get(`${product.uid}:REST_OF_THE_WORLD`) ?? null, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() };
+    let baseCostUsd: number | null = null;
+    let sourceUrl = product.sourceUrl;
+    if (hasPrintifyCredentials() && product.blueprintId != null && product.printProviderId != null && product.variantId != null) {
+      this.shopProducts ??= this.readShopProducts().catch((error) => { this.shopProducts = undefined; throw error; });
+      const existing = (await this.shopProducts).find((row) => row.blueprint_id === product.blueprintId && row.print_provider_id === product.printProviderId);
+      if (existing) {
+        sourceUrl = `${API}/shops/${encodeURIComponent(config.printify.shopId!)}/products/${encodeURIComponent(existing.id)}.json`;
+        // Source: https://developers.printify.com/#products — cost is USD cents;
+        // price is the seller's retail price and must never be used as production cost.
+        const payload = await this.http.request<{ variants?: { id: number; cost?: number; is_available?: boolean }[] }>(sourceUrl.slice(API.length));
+        const variant = payload.variants?.find((row) => row.id === product.variantId && row.is_available === true);
+        if (typeof variant?.cost === "number" && Number.isFinite(variant.cost) && variant.cost >= 0) baseCostUsd = variant.cost / 100;
+      }
+    }
+    return { baseCostUsd, shippingUsd: this.costs.get(`${product.uid}:${region}`) ?? this.costs.get(`${product.uid}:REST_OF_THE_WORLD`) ?? null, currency: "USD", sourceUrl, fetchedAt: new Date() };
+  }
+
+  private async readShopProducts() {
+    const out: { id: string; blueprint_id: number; print_provider_id: number }[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const payload = await this.http.request<{ data?: { id: string; blueprint_id: number; print_provider_id: number }[]; last_page?: number }>(
+        `/shops/${encodeURIComponent(config.printify.shopId!)}/products.json?limit=100&page=${page}`,
+      );
+      if (!Array.isArray(payload.data)) throw new Error("Invalid Printify products response");
+      out.push(...payload.data.filter((row) => row && typeof row.id === "string" && typeof row.blueprint_id === "number" && typeof row.print_provider_id === "number")
+        .map(({ id, blueprint_id, print_provider_id }) => ({ id, blueprint_id, print_provider_id })));
+      if (payload.data.length < 100 || (typeof payload.last_page === "number" && page >= payload.last_page)) break;
+    }
+    return out;
   }
 
   async createProduct(input: SupplierProductInput) {

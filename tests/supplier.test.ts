@@ -52,7 +52,8 @@ describe("supplier HTTP safety", () => {
         .mockResolvedValueOnce(Response.json([{ id: 101, title: "Cotton Tote Bag" }]))
         .mockResolvedValueOnce(Response.json([{ id: 201, title: "Printify Choice" }]))
         .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: '15" x 16" White' }] }))
-        .mockResolvedValueOnce(Response.json({ profiles: [{ variant_ids: [301], countries: ["CH"], first_item: { cost: 499, currency: "USD" } }] }));
+        .mockResolvedValueOnce(Response.json({ profiles: [{ variant_ids: [301], countries: ["CH"], first_item: { cost: 499, currency: "USD" } }] }))
+        .mockResolvedValueOnce(Response.json({ data: [], last_page: 1 }));
       const supplier = new PrintifySupplier(fetchImpl);
       const pending = supplier.listProducts("tote");
       await vi.runAllTimersAsync();
@@ -61,9 +62,30 @@ describe("supplier HTTP safety", () => {
       expect(product.sourceUrl).toMatch(/shipping\.json$/);
       expect(product.fetchedAt).toBeInstanceOf(Date);
       expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe(["Bearer", "fixture-token"].join(" "));
-      expect(await supplier.quote(product, "CH")).toMatchObject({ baseCostUsd: null, shippingUsd: 4.99 });
+      const quote = supplier.quote(product, "CH");
+      await vi.runAllTimersAsync();
+      expect(await quote).toMatchObject({ baseCostUsd: null, shippingUsd: 4.99 });
       await supplier.listProducts("tote");
-      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(fetchImpl).toHaveBeenCalledTimes(5);
+    });
+
+    it("reads available variant cost, not retail price, without creating a shop product", async () => {
+      vi.stubEnv("PRINTIFY_API_TOKEN", "fixture-token");
+      vi.stubEnv("PRINTIFY_SHOP_ID", "1");
+      vi.useFakeTimers();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(Response.json({ data: [{ id: "existing-product", blueprint_id: 101, print_provider_id: 201 }], last_page: 1 }))
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, cost: 1250, price: 2990, is_available: true }] }));
+      const supplier = new PrintifySupplier(fetchImpl);
+      const quote = supplier.quote({
+        supplier: "printify", preset: "tote", uid: "101:201:301", title: "Tote", baseCostUsd: null,
+        currency: null, blueprintId: 101, printProviderId: 201, variantId: 301,
+        sourceUrl: "https://api.printify.com/v1/catalog", fetchedAt: new Date(),
+      }, "CH");
+      await vi.runAllTimersAsync();
+      expect(await quote).toMatchObject({ baseCostUsd: 12.5, shippingUsd: null });
+      expect((await quote).sourceUrl).toContain("existing-product.json");
+      expect(fetchImpl.mock.calls.every((call) => call[1].method === "GET")).toBe(true);
     });
   });
 
@@ -80,5 +102,11 @@ describe("supplier HTTP safety", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(next).resolves.toEqual({ ok: true });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not expose malformed response content in JSON errors", async () => {
+    const http = new SupplierHttp("https://product.gelatoapis.com/v3", {},
+      vi.fn().mockResolvedValue(new Response("echoed-sensitive-content")));
+    await expect(http.request("/catalogs")).rejects.toThrow("Invalid supplier API JSON response");
   });
 });
