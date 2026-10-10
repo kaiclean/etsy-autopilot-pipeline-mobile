@@ -146,6 +146,11 @@ describe("observed Amazon products", () => {
 });
 
 describe("observed Etsy listing cards", () => {
+  it.each(["3 sold in the last 24 hours", "3 sold in last 24 hours"])("retains exact Etsy sold label %s without inventing a sales metric", (label) => {
+    const html = `<li data-listing-id="12345"><a href="/listing/12345"><h3>Swiss Alps Poster</h3></a><span>${label}</span></li>`;
+    expect(parseEtsyHtml(html, now)[0]).toMatchObject({ label_text: label, metric: null, rank: null, badge: null });
+  });
+
   it("recognizes scoped badges and preserves last24h label literally without turning it into a metric", () => {
     const signals = parseEtsyHtml(etsyHtml, now);
     expect(signals).toHaveLength(3);
@@ -379,6 +384,7 @@ describe("provider controls and failure propagation", () => {
       expect(url.toString()).toBe("https://webservices.amazon.com/paapi5/searchitems");
       expect(body).toMatchObject({ PartnerType: "Associates", Marketplace: "www.amazon.com", PartnerTag: "fixture-20" });
       expect(["HomeAndKitchen", "Apparel"]).toContain(body.SearchIndex);
+      expect(body.Resources).toEqual(["ItemInfo.Title", "BrowseNodeInfo.BrowseNodes", "BrowseNodeInfo.BrowseNodes.SalesRank", "BrowseNodeInfo.WebsiteSalesRank"]);
       expect(new Headers(init.headers).get("authorization")).toContain("AWS4-HMAC-SHA256");
     }
   });
@@ -391,6 +397,14 @@ describe("provider controls and failure propagation", () => {
     const denied = fixtureFetcher([JSON.stringify({ Errors: [{ Message: "fixture-secret-key" }] })]);
     await expect(createAmazonSource({ settings: () => amazonSettings, fetcher: denied.fetcher }).collectSignals(options())).rejects.toThrow("API rejected SearchItems");
     expect(denied.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not scrape with complete PAAPI credentials even when scraping is enabled", async () => {
+    const fixture = fixtureFetcher(Array.from({ length: 3 }, () => JSON.stringify({ SearchResult: { Items: [amazonItem] } })));
+    const signals = await createAmazonSource({ settings: () => ({ ...amazonSettings, scrapeEnabled: true }), fetcher: fixture.fetcher }).collectSignals(options());
+    expect(signals).toHaveLength(3);
+    expect(fixture.fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fixture.fetchImpl.mock.calls.every((call) => (call as unknown as [URL])[0].hostname === "webservices.amazon.com")).toBe(true);
   });
 
   it("only scrapes allowlisted POD best sellers / movers pages after robots allows", async () => {
