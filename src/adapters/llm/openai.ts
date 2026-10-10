@@ -41,7 +41,7 @@ export class OpenAILLMProvider implements LLMProvider {
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const json = await res.json();
-    const parsed = JSON.parse(json.choices[0].message.content);
+    const parsed = parseListingJson(json?.choices?.[0]?.message?.content);
     const usage = json.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
     // Rough gpt-4.1-mini pricing (USD 0.40 / 1.60 per 1M tokens) converted to CHF.
     const costChf = ((usage.prompt_tokens * 0.4 + usage.completion_tokens * 1.6) / 1_000_000) * 0.83;
@@ -53,4 +53,22 @@ export class OpenAILLMProvider implements LLMProvider {
       provider: `openai:${config.openaiModel}`,
     };
   }
+}
+
+/** Some OpenAI-compatible models (OpenRouter) wrap JSON in a ``` fence despite response_format. */
+export function parseListingJson(content: unknown): { title?: unknown; tags?: unknown; body?: unknown } {
+  if (typeof content !== "string" || !content.trim()) throw new Error("LLM response had no message content");
+  const text = content.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text)?.[1] ?? text;
+  const start = fenced.indexOf("{");
+  const end = fenced.lastIndexOf("}");
+  const body = start >= 0 && end > start ? fenced.slice(start, end + 1) : fenced;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error(`LLM response was not JSON: ${text.slice(0, 120)}`);
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("LLM response JSON was not an object");
+  return parsed as { title?: unknown; tags?: unknown; body?: unknown };
 }

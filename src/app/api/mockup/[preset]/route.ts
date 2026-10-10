@@ -1,20 +1,12 @@
-import { isPlaceholderUrl, isSafeArtworkUrl } from "@/lib/art-quality";
+import { isPlaceholderUrl } from "@/lib/art-quality";
+import { loadArtworkImage } from "@/lib/artwork-source";
 import { decodePng, placeholderPng, podMockupPng, previewPng, type RgbImage } from "@/lib/png";
 
 async function artworkFor(src: string | null): Promise<RgbImage | null> {
   if (!src || isPlaceholderUrl(src) || src.includes("/api/mockup/")) return null;
   const local = placeholderPng(src) ?? previewPng(src);
   if (local) return decodePng(local);
-  if (!isSafeArtworkUrl(src)) return null;
-  try {
-    const res = await fetch(src, { redirect: "error", signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.length === 0 || bytes.length > 12_000_000) return null;
-    return decodePng(bytes);
-  } catch {
-    return null;
-  }
+  return loadArtworkImage(src);
 }
 
 const PRESETS = ["posterA3", "mug", "tshirt", "sweatshirt"] as const;

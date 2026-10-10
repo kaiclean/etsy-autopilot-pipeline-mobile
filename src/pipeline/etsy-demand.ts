@@ -105,10 +105,15 @@ export function preferMeasuredDemand(candidates: KeywordCandidate[]): KeywordCan
   return [...byPhrase.values()];
 }
 
-export async function loadEtsyDemandSignals(): Promise<EtsyDemandSignal[]> {
+/**
+ * The committed fixture holds made-up volumes. It is read only for demo shops;
+ * a live shop needs ETSY_INSIGHTS_CSV or ETSY_INSIGHTS_PATH from a real export.
+ */
+export async function loadEtsyDemandSignals(opts: { demo?: boolean } = {}): Promise<EtsyDemandSignal[]> {
   const inline = process.env.ETSY_INSIGHTS_CSV;
   if (inline && inline.trim()) return parseEtsyInsights(inline);
-  const file = process.env.ETSY_INSIGHTS_PATH ?? (process.env.ETSY_DEMAND_SOURCE === "fixture" ? path.join(process.cwd(), "data/etsy-insights.fixture.csv") : "");
+  const fixture = process.env.ETSY_DEMAND_SOURCE === "fixture" && opts.demo === true;
+  const file = process.env.ETSY_INSIGHTS_PATH ?? (fixture ? path.join(process.cwd(), "data/etsy-insights.fixture.csv") : "");
   if (!file) return [];
   try {
     return parseEtsyInsights(await readFile(file, "utf8"));
@@ -117,11 +122,11 @@ export async function loadEtsyDemandSignals(): Promise<EtsyDemandSignal[]> {
   }
 }
 
-/** KeywordSource adapter. Returns nothing until a CSV, path, or ETSY_DEMAND_SOURCE=fixture is set. */
+/** KeywordSource adapter. Returns nothing until a CSV or path is set (or ETSY_DEMAND_SOURCE=fixture in demo mode). */
 export const etsyInsightsSource = {
   name: "etsy-insights",
-  async collect(): Promise<KeywordCandidate[]> {
-    const signals = await loadEtsyDemandSignals();
+  async collect(opts: { demo?: boolean } = {}): Promise<KeywordCandidate[]> {
+    const signals = await loadEtsyDemandSignals(opts);
     return signals.map(signalToCandidate);
   },
 };

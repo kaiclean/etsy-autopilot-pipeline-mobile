@@ -20,7 +20,7 @@ export type KeywordCandidate = {
  */
 export interface KeywordSource {
   readonly name: string;
-  collect(): Promise<KeywordCandidate[]>;
+  collect(opts?: { demo?: boolean }): Promise<KeywordCandidate[]>;
 }
 
 export const seedListSource: KeywordSource = {

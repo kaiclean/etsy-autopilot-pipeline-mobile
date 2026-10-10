@@ -366,6 +366,41 @@ export function scaleToLongEdge(image: RgbImage, edge: number): RgbImage {
   return { width, height, rgb };
 }
 
+/** Box-filter downscale so the long edge is at most `edge` pixels. Smaller images are unchanged. */
+export function shrinkToLongEdge(image: RgbImage, edge: number): RgbImage {
+  const long = Math.max(image.width, image.height);
+  if (long <= edge || edge < 1) return image;
+  const width = Math.max(1, Math.round((image.width * edge) / long));
+  const height = Math.max(1, Math.round((image.height * edge) / long));
+  const rgb = new Uint8Array(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.floor((y * image.height) / height);
+    const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * image.height) / height));
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.floor((x * image.width) / width);
+      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * image.width) / width));
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const s = (sy * image.width + sx) * 3;
+          r += image.rgb[s] ?? 0;
+          g += image.rgb[s + 1] ?? 0;
+          b += image.rgb[s + 2] ?? 0;
+          n++;
+        }
+      }
+      const d = (y * width + x) * 3;
+      rgb[d] = Math.round(r / n);
+      rgb[d + 1] = Math.round(g / n);
+      rgb[d + 2] = Math.round(b / n);
+    }
+  }
+  return { width, height, rgb };
+}
+
 export function encodeRgbPng(image: RgbImage) {
   const { width, height, rgb } = image;
   const stride = width * 3 + 1;
