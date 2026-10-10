@@ -83,15 +83,34 @@ export const SETUP_STEPS: SetupStep[] = [
   {
     id: "llm",
     title: "LLM and image providers",
-    href: "https://openrouter.ai/keys",
-    hrefLabel: "OpenRouter keys",
-    summary: "Listing copy and art stay on mock providers until you point OPENAI_* at OpenAI or OpenRouter. The key itself is never shown.",
-    envVars: ["OPENAI_API_KEY"],
-    optionalEnvVars: ["LLM_PROVIDER", "IMAGE_PROVIDER", "OPENAI_BASE_URL", "OPENAI_MODEL", "OPENAI_IMAGE_MODEL"],
+    href: "https://ollama.com",
+    hrefLabel: "Ollama Cloud",
+    summary:
+      "Text and images use separate endpoints. Ollama Cloud can write listings, and it has no image API. A shared OPENAI_BASE_URL of https://ollama.com/v1 returns 404 on every image call.",
+    envVars: [],
+    optionalEnvVars: [
+      "LLM_PROVIDER",
+      "IMAGE_PROVIDER",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "OPENAI_MODEL",
+      "OPENAI_IMAGE_MODEL",
+      "IMAGE_BASE_URL",
+      "IMAGE_API_KEY",
+      "IMAGE_MODEL",
+      "OLLAMA_API_KEY",
+      "OLLAMA_MODEL",
+      "OMNIROUTE_BASE_URL",
+      "OMNIROUTE_API_KEY",
+      "OMNIROUTE_MODEL",
+      "OMNIROUTE_IMAGE_MODEL",
+    ],
     bullets: [
-      "OpenAI keys: https://platform.openai.com/api-keys. OpenRouter keys: https://openrouter.ai/keys.",
-      "Set LLM_PROVIDER=openai and IMAGE_PROVIDER=openai, plus OPENAI_API_KEY.",
-      "For OpenRouter set OPENAI_BASE_URL=https://openrouter.ai/api/v1. Model names go in OPENAI_MODEL and OPENAI_IMAGE_MODEL.",
+      "Ollama Cloud text: LLM_PROVIDER=ollama, OLLAMA_API_KEY, and OLLAMA_MODEL (default gemma4:31b). The base is fixed at https://ollama.com/v1. Chat calls POST /chat/completions.",
+      "Do not send images to that host. Set IMAGE_BASE_URL, IMAGE_API_KEY, and IMAGE_MODEL. Each one falls back to OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_IMAGE_MODEL when it is empty.",
+      "OmniRoute for both: LLM_PROVIDER=omniroute and IMAGE_PROVIDER=omniroute, plus OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY, OMNIROUTE_MODEL, and OMNIROUTE_IMAGE_MODEL. Text POSTs /chat/completions. Images POST /images/generations and accept url or b64_json.",
+      "OpenAI or OpenRouter still work with LLM_PROVIDER=openai and IMAGE_PROVIDER=openai. OpenRouter uses OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
+      "Connections → Test connection sends one tiny text request and, when an OpenAI-compatible image provider is set, one low-cost image request. The result is ok, 401, 402, 404, or model not found. Keys are not shown.",
     ],
   },
   {
@@ -164,6 +183,12 @@ export function stepStatus(step: SetupStep, presence: Record<string, boolean>, e
     if (required.length > 0 || etsyConnected) return "partial";
     return "missing";
   }
+  if (step.id === "llm") {
+    const keys = ["OPENAI_API_KEY", "OLLAMA_API_KEY", "OMNIROUTE_API_KEY"];
+    if (keys.some((name) => presence[name])) return "ready";
+    if (step.optionalEnvVars.some((name) => presence[name])) return "partial";
+    return "missing";
+  }
   if (required.length === step.envVars.length) return "ready";
   if (required.length > 0) return "partial";
   return "missing";
@@ -204,6 +229,15 @@ export function setupChecklist(): string {
     "OPENAI_BASE_URL=",
     "OPENAI_MODEL=",
     "OPENAI_IMAGE_MODEL=",
+    "IMAGE_API_KEY=",
+    "IMAGE_BASE_URL=",
+    "IMAGE_MODEL=",
+    "OLLAMA_API_KEY=",
+    "OLLAMA_MODEL=",
+    "OMNIROUTE_API_KEY=",
+    "OMNIROUTE_BASE_URL=",
+    "OMNIROUTE_MODEL=",
+    "OMNIROUTE_IMAGE_MODEL=",
     "PUBLISH_MODE=dry-run",
     "DEMO_MODE=",
   ].join("\n");
