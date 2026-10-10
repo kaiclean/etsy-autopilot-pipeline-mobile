@@ -77,12 +77,16 @@ export const DEFAULT_STAGES: StageSettings = {
   health: { paused: false, cron: "0 9 * * 1" },
 };
 
+/** Where the next digital manifest backfill resumes, so rows that keep failing cannot block later ids. */
+export type ManifestBackfillCursor = { afterId: number };
+
 type SettingMap = {
   automation: AutomationSettings;
   stages: StageSettings;
   etsyTokens: EtsyTokens | null;
   pushPrefs: PushPrefs;
   catalogDraft: CatalogDraftSetting;
+  manifestBackfill: ManifestBackfillCursor;
 };
 
 const DEFAULTS: SettingMap = {
@@ -91,6 +95,7 @@ const DEFAULTS: SettingMap = {
   etsyTokens: null,
   pushPrefs: DEFAULT_PUSH_PREFS,
   catalogDraft: DEFAULT_CATALOG_DRAFT,
+  manifestBackfill: { afterId: 0 },
 };
 
 export async function getSetting<K extends keyof SettingMap>(db: DB, key: K): Promise<SettingMap[K]> {

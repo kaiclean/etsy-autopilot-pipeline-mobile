@@ -207,6 +207,39 @@ describe("digital file manifest", () => {
     const [brokenRow] = await db.select().from(listings).where(eq(listings.id, broken.id));
     expect(brokenRow.fileManifest).toBeNull();
   });
+
+  it("resumes after rows that keep failing so they cannot block later ids", async () => {
+    const db = await memoryDb();
+    const shop = await omnishop(db);
+    const png = tinyPng(150);
+    const BROKEN_KEY = "designs/2026-10-10/cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee.png";
+    const row = (title: string, key: string) => ({
+      shopId: shop.id,
+      niche: "alpine" as const,
+      productType: "digital" as const,
+      title,
+      tags: ["alpine art"],
+      description: "A print.",
+      imageUrl: "/api/preview?niche=alpine",
+      deliveryUrl: `/api/media/${key}`,
+      priceChf: 5.9,
+      netChf: 3,
+      marginPct: 50,
+      isDemo: false,
+    });
+    await db.insert(listings).values([row("Broken 1", BROKEN_KEY), row("Broken 2", BROKEN_KEY)]);
+    const [late] = await db.insert(listings).values(row("Late", MEDIA_KEY)).returning({ id: listings.id });
+    const deps = {
+      readObject: async (key: string) => (key === BROKEN_KEY ? null : { bytes: png }),
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    };
+
+    expect(await backfillDigitalManifests(db, deps, { limit: 2 })).toEqual({ recorded: 0, remaining: 3 });
+    expect(await backfillDigitalManifests(db, deps, { limit: 2 })).toEqual({ recorded: 1, remaining: 2 });
+    const [lateRow] = await db.select().from(listings).where(eq(listings.id, late.id));
+    expect(lateRow.fileManifest?.delivery.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(await backfillDigitalManifests(db, deps, { limit: 2 })).toEqual({ recorded: 0, remaining: 2 });
+  });
 });
 
 describe("provider credit health", () => {

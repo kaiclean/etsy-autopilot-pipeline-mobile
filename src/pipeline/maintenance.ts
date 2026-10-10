@@ -1,4 +1,4 @@
-import { and, asc, count, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { cleanupFakeOrdersIfPresent, type ClearCounts } from "@/db/clear-fake-orders";
 import type { DB } from "@/db";
 import { listings } from "@/db/schema";
@@ -7,6 +7,7 @@ import { manifestIsComplete, type ManifestLoadDeps } from "@/lib/file-manifest";
 import { storageBackend } from "@/lib/config";
 import { materializeImageUrl } from "@/lib/object-storage";
 import { ensurePrintifyWebhooks } from "@/lib/printify-webhooks";
+import { getSetting, setSetting } from "@/lib/settings";
 import { recordDeliveryManifest } from "./human-publish";
 import type { StageFn } from "./types";
 
@@ -101,15 +102,25 @@ function incompleteDigitalManifest() {
 
 /**
  * Hashes digital delivery files that are still missing a manifest, oldest id first so listing 46 is in the first batch.
- * An unreadable file is left for the next run and never fails maintenance.
+ * Each run resumes after the last id it tried and wraps to the start, so rows that keep failing cannot block later ids.
+ * An unreadable file is left for a later run and never fails maintenance.
  */
-export async function backfillDigitalManifests(db: DB, deps: ManifestLoadDeps = {}): Promise<MaintenanceSummary["manifests"]> {
-  const rows = await db
-    .select({ id: listings.id, fileManifest: listings.fileManifest })
-    .from(listings)
-    .where(incompleteDigitalManifest())
-    .orderBy(asc(listings.id))
-    .limit(MANIFEST_BACKFILL_BATCH_LIMIT);
+export async function backfillDigitalManifests(
+  db: DB,
+  deps: ManifestLoadDeps = {},
+  opts: { limit?: number } = {},
+): Promise<MaintenanceSummary["manifests"]> {
+  const limit = opts.limit ?? MANIFEST_BACKFILL_BATCH_LIMIT;
+  const batchAfter = (afterId: number) =>
+    db
+      .select({ id: listings.id, fileManifest: listings.fileManifest })
+      .from(listings)
+      .where(and(incompleteDigitalManifest(), gt(listings.id, afterId)))
+      .orderBy(asc(listings.id))
+      .limit(limit);
+  const { afterId } = await getSetting(db, "manifestBackfill");
+  let rows = await batchAfter(afterId);
+  if (rows.length === 0 && afterId > 0) rows = await batchAfter(0);
   let recorded = 0;
   for (const row of rows) {
     if (manifestIsComplete(row.fileManifest)) continue;
@@ -117,9 +128,11 @@ export async function backfillDigitalManifests(db: DB, deps: ManifestLoadDeps = 
       const result = await recordDeliveryManifest(db, row.id, new Date(), deps);
       if (result.ok) recorded++;
     } catch {
-      /* Counted in `remaining` below; the next run retries. */
+      /* Counted in `remaining` below; a later run retries. */
     }
   }
+  const lastId = rows.at(-1)?.id ?? 0;
+  await setSetting(db, "manifestBackfill", { afterId: rows.length === limit ? lastId : 0 });
   const [left] = await db.select({ n: count() }).from(listings).where(incompleteDigitalManifest());
   return { recorded, remaining: Number(left?.n ?? 0) };
 }
