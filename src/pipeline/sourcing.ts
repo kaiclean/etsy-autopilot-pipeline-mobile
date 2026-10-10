@@ -15,7 +15,7 @@ import {
 } from "@/lib/sourcing";
 import type { StageContext } from "./types";
 
-/** 0015 is deliberately manual, not journaled. Existing installations continue using estimates. */
+/** 0016 is deliberately manual, not journaled. Existing installations continue using estimates. */
 export async function sourcingAvailable(db: DB) {
   const result = await db.execute(sql`select
     to_regclass('public.supplier_quotes') is not null and
@@ -101,7 +101,7 @@ export async function fetchQuotes(db: DB, preset: PodPreset, region: SourcingReg
 
 export async function refreshSourcing(ctx: Pick<StageContext, "db" | "now" | "log" | "shopId" | "demo">, suppliers = getSuppliers()) {
   if (!await sourcingAvailable(ctx.db)) {
-    ctx.log("Sourcing unavailable: apply drizzle/0015_sourcing.sql manually; pricing remains an estimate.", "warn");
+    ctx.log("Sourcing unavailable: apply drizzle/0016_sourcing.sql manually; pricing remains an estimate.", "warn");
     return { comparisons: 0, alerts: 0, available: false };
   }
   const settings = await getSetting(ctx.db, "podProducts");

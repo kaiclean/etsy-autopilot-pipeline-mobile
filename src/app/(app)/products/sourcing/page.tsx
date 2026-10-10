@@ -21,7 +21,7 @@ export default async function SourcingPage() {
     <div className="space-y-6">
       <PageHeader title="Supplier sourcing" subtitle="Cheapest verified in-stock landed cost · CH / EU (Germany representative) / US" />
       <p className="text-sm text-muted-foreground">Refreshed daily by Maintenance. Unknown values are — and excluded from automatic selection. Order rechecks use the buyer country and only record dry-run recommendations; no orders are placed or moved.</p>
-      {!available && <p>Apply drizzle/0015_sourcing.sql manually to enable sourcing. Pricing currently uses preset estimates.</p>}
+      {!available && <p>Apply drizzle/0016_sourcing.sql manually to enable sourcing. Pricing currently uses preset estimates.</p>}
       <SourcingTable quotes={quotes} choices={choices} />
     </div>
   );

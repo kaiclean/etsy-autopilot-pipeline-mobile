@@ -111,7 +111,7 @@ async function withDb(test: (db: DB, client: PGlite) => Promise<void>) {
 }
 
 async function applySourcing(client: PGlite) {
-  await client.exec(await fs.readFile(path.join(process.cwd(), "drizzle/0015_sourcing.sql"), "utf8"));
+  await client.exec(await fs.readFile(path.join(process.cwd(), "drizzle/0016_sourcing.sql"), "utf8"));
 }
 
 function supplierFixture(): Supplier {

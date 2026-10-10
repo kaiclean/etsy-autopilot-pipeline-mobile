@@ -142,7 +142,7 @@ async function listRung(
   supplierProduct?: SupplierProduct,
 ) {
   const podProvider = rung.product.type === "pod" && rung.product.pod ? `${supplierId}:${rung.product.pod}` : null;
-  const dryRunOnly = rung.product.type === "pod" && (supplierProduct != null || supplierId !== "printify" || !DEFAULT_POD_PRESETS.includes(rung.product.pod!));
+  const dryRunOnly = rung.product.type === "pod" && (supplierId !== "printify" || !DEFAULT_POD_PRESETS.includes(rung.product.pod!));
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
     keyword: keywordForRung(phrase, rung),
@@ -210,7 +210,7 @@ async function listRung(
     marginPct: fees.marginPct,
     validation,
     status: gate.pass ? "pending_approval" : "quality_failed",
-    isDemo: ctx.demo || supplierProduct != null,
+    isDemo: ctx.demo,
   });
   siblingTitles.push(draft.title);
   if (llmCost > 0) {
