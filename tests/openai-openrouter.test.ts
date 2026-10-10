@@ -112,9 +112,9 @@ describe("OpenAI image adapter", () => {
     expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
       model: "gpt-image-1",
       size: "1024x1536",
-      aspect_ratio: "2:3",
       n: 1,
     });
+    expect(JSON.parse(String(calls[0].init?.body))).not.toHaveProperty("aspect_ratio");
     expect(image.url).toBe("data:image/png;base64,abc");
     expect(image.costChf).toBe(0.05);
   });
@@ -134,6 +134,7 @@ describe("OpenAI image adapter", () => {
       prompt: "alpine poster",
       niche: "alpine",
       seed: 1,
+      aspectRatio: "16:9",
     });
 
     expect(calls.map((call) => call.url)).toEqual([
@@ -143,7 +144,11 @@ describe("OpenAI image adapter", () => {
     const headers = calls[0].init?.headers ?? {};
     expect(headers["HTTP-Referer"]).toBe("https://shop.example");
     expect(headers["X-Title"]).toBe("DesignedByKaiArt");
-    expect(JSON.parse(String(calls[0].init?.body)).model).toBe("google/gemini-2.5-flash-image");
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      model: "google/gemini-2.5-flash-image",
+      size: "1536x1024",
+      aspect_ratio: "16:9",
+    });
     expect(image).toMatchObject({ url: "https://cdn.example/a.png", costChf: 0.04, provider: "openai" });
   });
 
