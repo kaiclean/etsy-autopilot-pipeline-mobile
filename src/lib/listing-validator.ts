@@ -303,7 +303,7 @@ const NEUTRAL_TAGS = [
   "styled print",
 ];
 
-const PRODUCT_FAMILY = /\b(?:mugs?|posters?|sweatshirts?|t-?shirts?|tees?)\b/i;
+const PRODUCT_FAMILY = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|mugs?|posters?|sweatshirts?|t-?shirts?|tees?)\b/i;
 
 function rememberTag(tags: string[], seen: Set<string>, raw: string) {
   if (tags.length >= ETSY_LIMITS.tagCount) return;
@@ -318,6 +318,13 @@ const FAMILIES = [
   { family: "poster", pattern: /\bposters?\b/i, presets: ["posterA3"] },
   { family: "sweatshirt", pattern: /\bsweatshirts?\b/i, presets: ["sweatshirt"] },
   { family: "shirt", pattern: /\b(?:t-?shirts?|tees?)\b/i, presets: ["tshirt"] },
+  { family: "tote", pattern: /\btote(?: bags?)?\b/i, presets: ["tote"] },
+  { family: "phoneCase", pattern: /\bphone cases?\b/i, presets: ["phoneCase"] },
+  { family: "canvas", pattern: /\b(?:canvas|canvases)\b/i, presets: ["canvas"] },
+  { family: "sticker", pattern: /\bstickers?\b/i, presets: ["sticker"] },
+  { family: "blanket", pattern: /\bblankets?\b/i, presets: ["blanket"] },
+  { family: "hoodie", pattern: /\bhoodies?\b/i, presets: ["hoodie"] },
+  { family: "ornament", pattern: /\bornaments?\b/i, presets: ["ornament"] },
 ] as const;
 
 function allowedFamilies(product: { type: ListingDraft["productType"]; pod?: string }) {

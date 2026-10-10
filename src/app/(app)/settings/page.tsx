@@ -8,11 +8,12 @@ import {
   EtsyStatusToast,
   KillSwitchCard,
   NotificationsCard,
+  PodProductsForm,
   PushEventPrefs,
   SchedulesList,
   ThemeToggle,
 } from "@/components/settings/settings-client";
-import { config, vapidConfigured } from "@/lib/config";
+import { config, hasGelatoCredentials, vapidConfigured } from "@/lib/config";
 import { settingsModeSubtitle } from "@/lib/operator-mode";
 import { getSettingsData } from "@/lib/queries";
 
@@ -38,6 +39,11 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
       <section>
         <SectionTitle>Budgets &amp; caps</SectionTitle>
         <BudgetsForm automation={d.automation} />
+      </section>
+
+      <section>
+        <SectionTitle>POD products &amp; suppliers</SectionTitle>
+        <PodProductsForm podProducts={d.podProducts} gelatoConfigured={hasGelatoCredentials()} />
       </section>
 
       <section>

@@ -467,11 +467,12 @@ export async function getConnectionsData() {
 
 export async function getSettingsData() {
   const db = await getDb();
-  const [automation, stages, pushPrefs, connections] = await Promise.all([
+  const [automation, stages, pushPrefs, podProducts, connections] = await Promise.all([
     getSetting(db, "automation"),
     getSetting(db, "stages"),
     getSetting(db, "pushPrefs"),
+    getSetting(db, "podProducts"),
     getConnectionsData(),
   ]);
-  return { ...connections, automation, stages, pushPrefs };
+  return { ...connections, automation, stages, pushPrefs, podProducts };
 }

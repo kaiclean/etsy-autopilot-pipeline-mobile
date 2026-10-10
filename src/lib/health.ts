@@ -1,4 +1,4 @@
-import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { config, hasEtsyCredentials, hasGelatoCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
 import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
@@ -138,6 +138,20 @@ function webhookNote(secret: string | undefined) {
   return secret
     ? "PRINTIFY_WEBHOOK_SECRET is set. Callback is POST /api/webhooks/printify."
     : "PRINTIFY_WEBHOOK_SECRET is missing. Production rejects unsigned webhook deliveries.";
+}
+
+function gelatoCheck(): HealthCheck {
+  const configured = hasGelatoCredentials();
+  return {
+    id: "gelato",
+    name: "Gelato API",
+    level: configured ? "green" : "yellow",
+    label: configured ? "Configured" : "Skipped",
+    detail: configured
+      ? "API key is configured and hidden. Gelato writes remain dry-run only; costs are unverified."
+      : "Optional supplier skipped because GELATO_API_KEY is unset. Gelato writes remain dry-run only.",
+    envVars: ["GELATO_API_KEY"],
+  };
 }
 
 function storageCheck(): HealthCheck {
@@ -549,6 +563,7 @@ export function connectionHealth(input: {
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
     printifyCheck(input.webhooksRegistered),
+    gelatoCheck(),
     storageCheck(),
     pushCheck(),
     llmCheck("ok"),
