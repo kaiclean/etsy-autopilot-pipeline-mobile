@@ -13,9 +13,10 @@ import { evaluateQualityGate } from "@/lib/quality-gate";
 import { containsInlineImage, persistableImageUrl } from "@/lib/compact-image-url";
 import { tryBuildFileManifest } from "@/lib/file-manifest";
 import { isNichePaused, NICHES } from "@/lib/niches";
+import { yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
-import type { StageContext, StageFn } from "./types";
+import { stageResult, type StageContext, type StageFn } from "./types";
 
 export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?: PodPreset } {
   const mix = NICHES[niche].productMix;
@@ -202,6 +203,7 @@ export const runListing: StageFn = async (ctx) => {
   let created = 0;
   let held = 0;
   let invalid = 0;
+  let rungFailures = 0;
   const notes: string[] = [];
   for (const { design, phrase } of pending) {
     if (isNichePaused(design.niche)) {
@@ -234,6 +236,7 @@ export const runListing: StageFn = async (ctx) => {
         listed++;
         log(`Listed “${made.title.slice(0, 60)}…” (${rung.label}) at CHF ${made.priceChf.toFixed(2)} → net ${made.netChf.toFixed(2)} (${made.marginPct}%)`);
       } catch (e) {
+        rungFailures++;
         log(`Listing failed for design #${design.id} ${rung.label}: ${(e as Error).message}`, "error");
       }
     }
@@ -259,5 +262,8 @@ export const runListing: StageFn = async (ctx) => {
     }, ctx.demo);
   }
   const detail = notes.length ? `: ${notes.join(" | ").slice(0, 420)}` : "";
-  return `Drafted ${queued} listings for approval${held ? `, held ${held} at the quality gate` : ""}${invalid ? ` (${invalid} need fixes)` : ""}${detail}`;
+  const summary = `Drafted ${queued} listings for approval${held ? `, held ${held} at the quality gate` : ""}${invalid ? ` (${invalid} need fixes)` : ""}${detail}`;
+  const status = yieldStatus(created, rungFailures);
+  if (status === "success") return summary;
+  return stageResult(summary, status);
 };

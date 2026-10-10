@@ -1,5 +1,6 @@
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
+import { isProviderCreditsError } from "@/lib/provider-errors";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
 /** OpenAI-compatible Images API (OpenAI or OpenRouter). Bytes are uploaded to object storage when S3 or Blob is configured. */
@@ -44,7 +45,9 @@ export class OpenAIImageProvider implements ImageProvider {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        lastErr = `${path} ${res.status}: ${(await res.text()).slice(0, 300)}`;
+        const text = (await res.text()).slice(0, 300);
+        lastErr = `${path} ${res.status}: ${text}`;
+        if (res.status === 402 || isProviderCreditsError(text)) break;
         continue;
       }
       const json = (await res.json()) as {

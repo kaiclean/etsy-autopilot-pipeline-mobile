@@ -5,11 +5,12 @@ import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
+import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { preparePrintFile } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   const [row] = await db
@@ -65,6 +66,8 @@ export const runDesign: StageFn = async (ctx) => {
 
   let made = 0;
   let briefed = 0;
+  let failures = 0;
+  let creditsStopped = false;
   for (const kw of queue) {
     if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf) {
       log(`Daily AI cap reached (CHF ${spentToday.toFixed(2)} / ${automation.dailyAiCapChf}); stopping`, "warn");
@@ -96,12 +99,16 @@ export const runDesign: StageFn = async (ctx) => {
       });
       const prepared = await preparePrintFile(img.url);
       if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
+        failures++;
         log(`Refusing placeholder art for “${kw.phrase}”`, "error");
         continue;
       }
       if (prepared.variance != null && prepared.variance < MIN_COLOR_STDDEV) {
         log(`Rejected flat artwork for “${kw.phrase}” (variation ${prepared.variance.toFixed(1)})`, "error");
-        if (!ctx.demo) continue;
+        if (!ctx.demo) {
+          failures++;
+          continue;
+        }
       }
       const imageUrl = await persistableImageUrl(prepared.url);
       if (ctx.demo && isPlaceholderUrl(imageUrl)) {
@@ -130,11 +137,21 @@ export const runDesign: StageFn = async (ctx) => {
       made++;
       log(`Generated design for “${kw.phrase}”`);
     } catch (e) {
-      log(`Generation failed for “${kw.phrase}”: ${(e as Error).message}`, "error");
+      const message = (e as Error).message;
+      failures++;
+      log(`Generation failed for “${kw.phrase}”: ${message}`, "error");
+      if (isProviderCreditsError(message)) {
+        creditsStopped = true;
+        log("Image provider out of credits. Stopping this run so the provider is not called again.", "error");
+        break;
+      }
     }
   }
   if (made) {
     await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" }, ctx.demo);
   }
-  return `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
+  const summary = `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
+  const status = yieldStatus(made, failures);
+  if (status === "success") return summary;
+  return stageResult(creditsStopped ? `Image provider out of credits. ${summary}` : summary, status);
 };

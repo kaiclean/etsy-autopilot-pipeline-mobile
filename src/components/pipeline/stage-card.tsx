@@ -31,6 +31,7 @@ function untilLabel(d: Date) {
 
 const STATUS_CLS: Record<JobRun["status"], string> = {
   success: "bg-success/15 text-success",
+  warning: "bg-warning/15 text-warning",
   failed: "bg-destructive/15 text-destructive",
   running: "bg-chart-4/15 text-chart-4",
   skipped: "bg-warning/15 text-warning",

@@ -313,7 +313,7 @@ export const jobRuns = pgTable("job_runs", {
     .default(omnishopId)
     .references(() => shops.id),
   stage: text("stage").$type<StageName>().notNull(),
-  status: text("status").$type<"running" | "success" | "failed" | "skipped">().notNull(),
+  status: text("status").$type<"running" | "success" | "warning" | "failed" | "skipped">().notNull(),
   trigger: text("trigger").$type<"manual" | "cron" | "chain">().notNull(),
   summary: text("summary"),
   logs: jsonb("logs").$type<LogLine[]>().notNull().default([]),

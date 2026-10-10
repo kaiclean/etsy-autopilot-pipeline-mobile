@@ -3,6 +3,7 @@ import { getDb, type DB } from "@/db";
 import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
+import { isProviderCreditsError } from "@/lib/provider-errors";
 import { utcDayKey } from "@/lib/utc-day";
 import { getSetting, setSetting } from "@/lib/settings";
 import { resolveActiveShop } from "@/lib/shops";
@@ -16,18 +17,19 @@ import { runOrders } from "./orders";
 import { runPublish } from "./publish";
 import { runResearch } from "./research";
 import { writeStageLog } from "./stage-log";
-import { STAGES, type StageContext, type StageFn } from "./types";
+import { STAGES, asStageResult, stageResult, type StageContext, type StageFn, type StageStatus } from "./types";
 
 const CHAIN_STAGES = ["research", "design", "listing"] as const;
 
 /** Research, then a design brief, then a listing draft. Never publishes or arms go-live. */
-async function runDailyChain(ctx: StageContext): Promise<string> {
+async function runDailyChain(ctx: StageContext) {
   if (!ctx.force && (await stageSucceededToday(ctx.db, ctx.shopId, "daily", ctx.now))) {
     return `Daily chain already completed for ${utcDayKey(ctx.now)}. Drafts stay pending approval. Publish mode was not changed.`;
   }
   const before = await getSetting(ctx.db, "automation");
   const stageSettings = await getSetting(ctx.db, "stages");
   const parts: string[] = [];
+  let warned = false;
   for (const stage of CHAIN_STAGES) {
     if (stageSettings[stage]?.paused) {
       parts.push(`${stage}: paused`);
@@ -43,13 +45,16 @@ async function runDailyChain(ctx: StageContext): Promise<string> {
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
+    if (run.status === "warning") warned = true;
   }
   const after = await getSetting(ctx.db, "automation");
   if (after.publishMode !== before.publishMode) {
     await setSetting(ctx.db, "automation", { ...after, publishMode: before.publishMode });
     ctx.log("Restored publish mode. The daily chain does not change go-live.", "warn");
   }
-  return `Daily chain finished (${parts.join(" · ")}). New drafts are pending approval or held by the quality gate. Nothing was activated.`;
+  const summary = `Daily chain finished (${parts.join(" · ")}). New drafts are pending approval or held by the quality gate. Nothing was activated.`;
+  if (warned) return stageResult(summary, "warning");
+  return summary;
 }
 
 const runHealth: StageFn = async (ctx) => {
@@ -130,14 +135,14 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
     }
   };
   try {
-    const summary = await STAGE_FNS[stage](ctx);
+    const result = asStageResult(await STAGE_FNS[stage](ctx));
     await afterOrders();
     const [done] = await db
       .update(jobRuns)
-      .set({ status: "success", summary, logs, finishedAt: new Date() })
+      .set({ status: result.status, summary: result.summary, logs, finishedAt: new Date() })
       .where(eq(jobRuns.id, run.id))
       .returning();
-    await emit(db, { type: "job.success", title: `${label} finished`, body: summary, severity: "info", href: "/pipeline" }, demo);
+    await emitStageOutcome(db, demo, trigger, label, result.status, result.summary);
     return done;
   } catch (e) {
     const msg = writeStageLog(stage, "error", (e as Error).message);
@@ -148,9 +153,43 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
       .set({ status: "failed", summary: msg, logs, finishedAt: new Date() })
       .where(eq(jobRuns.id, run.id))
       .returning();
-    await emit(db, { type: "job.failed", title: `${label} failed`, body: msg, severity: "error", href: "/pipeline" }, demo);
+    await emitStageOutcome(db, demo, trigger, label, "failed", msg);
     return done;
   }
+}
+
+/** One credits push per run. A nested chain stage stays quiet so the cron parent is the push. */
+async function emitStageOutcome(
+  db: DB,
+  demo: boolean,
+  trigger: StageContext["trigger"],
+  label: string,
+  status: StageStatus,
+  summary: string,
+) {
+  if (isProviderCreditsError(summary)) {
+    await emit(
+      db,
+      { type: "job.failed", title: "Image provider out of credits", body: summary, severity: "error", href: "/pipeline/live" },
+      demo,
+      trigger === "chain" ? { push: false } : undefined,
+    );
+    return;
+  }
+  if (status === "failed") {
+    await emit(db, { type: "job.failed", title: `${label} failed`, body: summary, severity: "error", href: "/pipeline" }, demo);
+    return;
+  }
+  if (status === "warning") {
+    await emit(
+      db,
+      { type: "job.warning", title: `${label} finished with warnings`, body: summary, severity: "warning", href: "/pipeline/live" },
+      demo,
+      { push: false },
+    );
+    return;
+  }
+  await emit(db, { type: "job.success", title: `${label} finished`, body: summary, severity: "info", href: "/pipeline" }, demo);
 }
 
 const ORCHESTRATORS = new Set<StageName>(["daily", "health"]);

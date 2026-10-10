@@ -18,7 +18,7 @@ export type StageSnapshot = {
   label: string;
   paused: boolean;
   cron: string;
-  lastStatus: "running" | "success" | "failed" | "skipped" | null;
+  lastStatus: "running" | "success" | "warning" | "failed" | "skipped" | null;
   lastStartedAt: string | null;
   lastSummary: string | null;
 };
@@ -53,7 +53,7 @@ export function toStageSnapshots(
   lastRuns: {
     id: StageName;
     label: string;
-    run: { status: "running" | "success" | "failed" | "skipped"; startedAt: Date | string; summary: string | null } | null;
+    run: { status: "running" | "success" | "warning" | "failed" | "skipped"; startedAt: Date | string; summary: string | null } | null;
   }[],
   stageSettings: Record<StageName, { paused: boolean; cron: string }>,
 ): StageSnapshot[] {
