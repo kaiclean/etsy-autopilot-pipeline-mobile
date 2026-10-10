@@ -1,4 +1,5 @@
 import type { ListingStatus, Niche, ProductType } from "@/db/schema";
+import { isPlaceholderUrl } from "@/lib/art-quality";
 
 /** Media present and no Etsy listing id. */
 export function listingNeedsEtsyId(row: { etsyListingId?: string | null; imageUrl?: string | null }) {
@@ -118,6 +119,7 @@ export type ProductFilter = {
   niche: "all" | Niche;
   status: "all" | ListingStatus;
   triage?: QueueTriage;
+  art?: "all" | "placeholder";
 };
 
 export function filterProducts<T extends ProductRow>(listings: T[], filter: ProductFilter): T[] {
@@ -126,6 +128,7 @@ export function filterProducts<T extends ProductRow>(listings: T[], filter: Prod
   return listings.filter((listing) => {
     if (filter.status !== "all" && listing.status !== filter.status) return false;
     if (filter.niche !== "all" && listing.niche !== filter.niche) return false;
+    if (filter.art === "placeholder" && !isPlaceholderUrl(listing.imageUrl)) return false;
     if (!matchesTriage(listing, triage)) return false;
     if (!query) return true;
     return listing.title.toLowerCase().includes(query) || listing.tags.some((tag) => tag.toLowerCase().includes(query));

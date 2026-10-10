@@ -1,5 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
-import { type ProviderCreditSignal } from "./provider-errors";
+import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -496,6 +496,17 @@ function authCheck(): HealthCheck {
   };
 }
 
+function overlayImageRun(check: HealthCheck, run: ImageRunFact | null | undefined): HealthCheck {
+  const error = lastImageProviderError(run);
+  if (!error || check.label === "Key missing") return check;
+  return {
+    ...check,
+    level: run?.status === "warning" ? "yellow" : "red",
+    label: imageProviderStatusLabel(error),
+    detail: error,
+  };
+}
+
 /** Status for the command center. Reports env var names and modes only, never secret values. */
 export function connectionHealth(input: {
   etsyConnected: boolean;
@@ -505,6 +516,8 @@ export function connectionHealth(input: {
   webhooksRegistered?: number | null;
   /** Latest design run. 402/credit errors turn image and LLM checks red or amber. */
   providerCredits?: ProviderCreditSignal;
+  /** Latest design run. A 401, 404, or model error replaces the image check's Ready. */
+  imageRun?: ImageRunFact | null;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
   const providerCredits = input.providerCredits ?? "ok";
@@ -515,7 +528,7 @@ export function connectionHealth(input: {
     storageCheck(),
     pushCheck(),
     llmCheck(providerCredits),
-    imageCheck(providerCredits),
+    overlayImageRun(imageCheck(providerCredits), input.imageRun),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
     authCheck(),

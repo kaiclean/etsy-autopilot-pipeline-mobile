@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
-import { costs, designBriefs, designs, keywords } from "@/db/schema";
+import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
@@ -135,6 +135,46 @@ export const runDesign: StageFn = async (ctx) => {
       const imageUrl = await persistableImageUrl(prepared.url);
       if (ctx.demo && isPlaceholderUrl(imageUrl)) {
         log(`DEMO placeholder for “${kw.phrase}” (${prepared.width ?? "?"}×${prepared.height ?? "?"}px). It will be held off the approval queue.`, "warn");
+      }
+      const existingListings = await db.select().from(listings).where(eq(listings.keywordId, kw.id));
+      const placeholders = existingListings.filter((row) => isPlaceholderUrl(row.imageUrl) || isPlaceholderUrl(row.deliveryUrl));
+      if (placeholders.length && !isPlaceholderUrl(imageUrl)) {
+        const refreshed = {
+          imageUrl,
+          provider: img.provider,
+          imageWidth: prepared.width,
+          imageHeight: prepared.height,
+          colorVariance: prepared.variance,
+          costChf: img.costChf,
+        };
+        for (const listing of placeholders) {
+          const deliveryReplaced = Boolean(listing.deliveryUrl && isPlaceholderUrl(listing.deliveryUrl));
+          await db
+            .update(listings)
+            .set({
+              imageUrl: isPlaceholderUrl(listing.imageUrl) ? imageUrl : listing.imageUrl,
+              deliveryUrl: deliveryReplaced ? imageUrl : listing.deliveryUrl,
+              // A new delivery file needs a fresh manifest and a fresh human check.
+              ...(deliveryReplaced ? { fileManifest: null, fileVerifiedAt: null, fileVerifiedBy: null } : {}),
+              updatedAt: ctx.now,
+            })
+            .where(eq(listings.id, listing.id));
+        }
+        const existingDesigns = await db.select().from(designs).where(eq(designs.keywordId, kw.id));
+        for (const design of existingDesigns) {
+          if (!isPlaceholderUrl(design.imageUrl)) continue;
+          await db.update(designs).set(refreshed).where(eq(designs.id, design.id));
+        }
+        if (img.costChf > 0) {
+          await db.insert(costs).values({ shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf, note: `${img.provider}: ${kw.phrase}`, isDemo: ctx.demo });
+        }
+        spentToday += img.costChf;
+        spentMonth += img.costChf;
+        await db.update(keywords).set({ status: "used", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+        await db.update(designBriefs).set({ status: "designed" }).where(eq(designBriefs.keywordId, kw.id));
+        made++;
+        log(`Replaced placeholder art for “${kw.phrase}” on ${placeholders.length} listing${placeholders.length === 1 ? "" : "s"}`);
+        continue;
       }
       await db.insert(designs).values({
         shopId: ctx.shopId,

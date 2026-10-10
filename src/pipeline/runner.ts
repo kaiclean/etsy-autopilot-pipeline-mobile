@@ -3,6 +3,7 @@ import { getDb, type DB } from "@/db";
 import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { isProviderCreditsError } from "@/lib/provider-errors";
 import { utcDayKey } from "@/lib/utc-day";
 import { getSetting, setSetting } from "@/lib/settings";
@@ -142,7 +143,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
       .set({ status: result.status, summary: result.summary, logs, finishedAt: new Date() })
       .where(eq(jobRuns.id, run.id))
       .returning();
-    await emitStageOutcome(db, demo, trigger, label, result.status, result.summary);
+    await emitStageOutcome(db, demo, trigger, label, result.status, formatMaintenanceSummary(result.summary));
     return done;
   } catch (e) {
     const msg = writeStageLog(stage, "error", (e as Error).message);

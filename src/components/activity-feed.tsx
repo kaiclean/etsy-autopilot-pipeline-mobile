@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { AppEvent } from "@/db/schema";
 import { relTime } from "@/lib/format";
+import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { cn } from "@/lib/utils";
 
 const ICON = {
@@ -39,7 +40,7 @@ export function ActivityFeed({ events, limit = 12 }: { events: AppEvent[]; limit
                   {relTime(e.createdAt)}
                 </span>
               </div>
-              {e.body && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{e.body}</p>}
+              {e.body && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{formatMaintenanceSummary(e.body)}</p>}
             </div>
           </div>
         );

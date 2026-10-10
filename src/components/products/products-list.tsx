@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { activateListing, publishPodListing, readDeliveryFile, savePodSample, verifyDeliveryFile } from "@/app/actions";
+import { activateListing, publishPodListing, queueArtRegeneration, readDeliveryFile, savePodSample, verifyDeliveryFile } from "@/app/actions";
 import { EmptyState, ListingStatusPill, NicheTag, Panel, Thumb } from "@/components/common";
 import { ProvenanceBadge } from "@/components/provenance-badge";
 import { FeeBreakdown } from "@/components/fee-breakdown";
@@ -37,13 +37,17 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
   const [niche, setNiche] = useState<"all" | Niche>("all");
   const [triage, setTriage] = useState<QueueTriage>(initialTriage);
   const [query, setQuery] = useState("");
+  const [art, setArt] = useState<"all" | "placeholder">("all");
   const [selected, setSelected] = useState<Listing | null>(null);
+  const [regenerating, startRegenerate] = useTransition();
+  const router = useRouter();
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: listings.length };
     for (const l of listings) c[l.status] = (c[l.status] ?? 0) + 1;
     return c;
   }, [listings]);
-  const rows = filterProducts(listings, { query, niche, status: filter, triage });
+  const rows = filterProducts(listings, { query, niche, status: filter, triage, art });
+  const placeholderCount = listings.filter((listing) => isPlaceholderUrl(listing.imageUrl)).length;
   const liveDrafts = listings.filter((l) => l.status === "published" && l.publishMode === "live").length;
   const awaitingEtsyId = listings.filter((l) => l.status === "publishing").length;
   const invalid = listings.filter((l) => listingHasErrors(l.validation)).length;
@@ -98,6 +102,30 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
         {QUEUE_TRIAGE.map((item) => (
           <FilterChip key={item.id} active={triage === item.id} onClick={() => setTriage(item.id)} label={item.label} />
         ))}
+      </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <FilterChip active={art === "placeholder"} onClick={() => setArt(art === "placeholder" ? "all" : "placeholder")} label={`Placeholder art ${placeholderCount}`} />
+        {art === "placeholder" && rows.length > 0 && (
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-9 rounded-full px-3.5 text-[13px]"
+            disabled={regenerating}
+            onClick={() =>
+              startRegenerate(async () => {
+                const result = await queueArtRegeneration(rows.map((listing) => listing.id));
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                toast.success(`${result.queued} queued for Design. Nothing was published.`);
+                router.refresh();
+              })
+            }
+          >
+            Regenerate art
+          </Button>
+        )}
       </div>
       <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
         {FILTERS.map((f) => (
