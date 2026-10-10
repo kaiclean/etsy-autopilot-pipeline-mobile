@@ -3,6 +3,15 @@ import { RunPodImageProvider } from "@/adapters/image/runpod";
 import { isSafeArtworkUrl } from "@/lib/art-quality";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { rgbPng } from "@/lib/png";
+import { materializeImageUrl } from "@/lib/object-storage";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+vi.mock("@aws-sdk/client-s3", () => ({
+  S3Client: class { async send() {} },
+  PutObjectCommand: class {},
+  GetObjectCommand: class {},
+}));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: vi.fn(async () => "https://bucket.example/stored?X-Amz-Expires=604800") }));
 
 const request = { prompt: "mountain poster", niche: "alpine" as const, seed: 1, print: true };
 beforeEach(() => {
@@ -16,6 +25,21 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("RunPod output", () => {
+  it("uses the stable media proxy even when app S3 storage normally returns signed URLs", async () => {
+    vi.stubEnv("AWS_ACCESS_KEY_ID", "test");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "test");
+    vi.stubEnv("AWS_ENDPOINT_URL_S3", "https://storage.example");
+    vi.stubEnv("S3_BUCKET", "test");
+    vi.stubEnv("S3_PUBLIC_BASE_URL", "");
+    vi.stubEnv("S3_URL_MODE", "signed");
+    vi.stubEnv("APP_URL", "https://app.example");
+    const fetchImpl = vi.fn(async () => new Response("png", { headers: { "content-type": "image/png" } }));
+    const stored = await materializeImageUrl("https://bucket.example/art?X-Amz-Signature=test", { requireStored: true, fetchImpl });
+    expect(stored).toMatch(/^https:\/\/app.example\/api\/media\/designs\/.*\.png$/);
+    expect(stored).not.toContain("?");
+    expect(getSignedUrl).not.toHaveBeenCalled();
+  });
+
   it("downloads presigned S3 print art immediately and stores a permanent A3 master", async () => {
     const source = "https://bucket.example/poster.png?X-Amz-Signature=test-signature";
     const bytes = rgbPng(4096, 6144, [100, 120, 140]);
