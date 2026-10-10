@@ -1,4 +1,5 @@
 import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -194,7 +195,27 @@ function pushCheck(): HealthCheck {
   };
 }
 
-function llmCheck(): HealthCheck {
+function overlayCredits(check: HealthCheck, signal: ProviderCreditSignal, which: "images" | "llm"): HealthCheck {
+  if (signal === "ok" || check.label === "Key missing") return check;
+  const failed = signal === "failed";
+  const who = which === "images" ? "Image generation" : "The listing writer";
+  return {
+    ...check,
+    level: failed ? "red" : "yellow",
+    label: failed ? "Out of credits" : "Low credits",
+    detail: `${who} returned 402 Insufficient credits on the latest design run. Keys are still set. Token values are hidden.`,
+  };
+}
+
+function llmCheck(signal: ProviderCreditSignal): HealthCheck {
+  return overlayCredits(llmProviderCheck(), signal, "llm");
+}
+
+function imageCheck(signal: ProviderCreditSignal): HealthCheck {
+  return overlayCredits(imageProviderCheck(), signal, "images");
+}
+
+function llmProviderCheck(): HealthCheck {
   const envVars = [
     "LLM_PROVIDER",
     "OPENAI_API_KEY",
@@ -280,7 +301,7 @@ function llmCheck(): HealthCheck {
   };
 }
 
-function imageCheck(): HealthCheck {
+function imageProviderCheck(): HealthCheck {
   const envVars = [
     "IMAGE_PROVIDER",
     "IMAGE_API_KEY",
@@ -482,16 +503,19 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
+  /** Latest design run. 402/credit errors turn image and LLM checks red or amber. */
+  providerCredits?: ProviderCreditSignal;
 }): HealthCheck[] {
   const publishMode = effectivePublishMode(input.publishMode);
+  const providerCredits = input.providerCredits ?? "ok";
   return [
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
     printifyCheck(input.webhooksRegistered),
     storageCheck(),
     pushCheck(),
-    llmCheck(),
-    imageCheck(),
+    llmCheck(providerCredits),
+    imageCheck(providerCredits),
     publishCheck(publishMode),
     demoCheck(input.etsyShopId),
     authCheck(),

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { costs, designBriefs, designs, keywords } from "@/db/schema";
 import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
@@ -33,6 +33,9 @@ const NICHE_PROMPTS: Record<string, string> = {
     "Bestselling Etsy neon scene: saturated purple and cyan light, a solid opaque background, crisp shapes, high contrast, no frames and no interface chrome",
 };
 
+/** After this many provider failures, the keyword returns to the backlog so research can pick another. */
+export const DESIGN_FAILURE_COOLDOWN = 2;
+
 export function buildPrompt(phrase: string, style: string, niche?: string) {
   const look = (niche && NICHE_PROMPTS[niche]) || style;
   return `${look}. Subject: ${phrase}. Original composition in a bestselling Etsy style. High detail, rich color variation across the whole image, opaque background, not a flat color block, not a simple rectangle, not stripes, not transparent, no text, no lettering, no watermark, no logos, no brand names, no trademarked characters.`;
@@ -48,12 +51,17 @@ export const runDesign: StageFn = async (ctx) => {
     .select()
     .from(keywords)
     .where(eq(keywords.status, "selected"))
-    .orderBy(desc(keywords.score))
+    .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(automation.designsPerRun);
   if (queue.length === 0) {
     const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
     if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
-    queue = await db.select().from(keywords).where(eq(keywords.status, "new")).orderBy(desc(keywords.score)).limit(automation.designsPerRun);
+    queue = await db
+      .select()
+      .from(keywords)
+      .where(eq(keywords.status, "new"))
+      .orderBy(asc(keywords.designFailures), desc(keywords.score))
+      .limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");
   }
   if (queue.length === 0) return "No keywords to design for. Run Research first.";
@@ -68,6 +76,16 @@ export const runDesign: StageFn = async (ctx) => {
   let briefed = 0;
   let failures = 0;
   let creditsStopped = false;
+  const noteFailure = async (kw: (typeof queue)[number]) => {
+    const next = kw.designFailures + 1;
+    kw.designFailures = next;
+    const release = next >= DESIGN_FAILURE_COOLDOWN;
+    await db
+      .update(keywords)
+      .set({ designFailures: next, ...(release ? { status: "new" as const } : {}), updatedAt: ctx.now })
+      .where(eq(keywords.id, kw.id));
+    if (release) log(`Returned “${kw.phrase}” to the backlog after ${next} provider failures`, "warn");
+  };
   for (const kw of queue) {
     if (spentToday + provider.estimatedCostChf > automation.dailyAiCapChf) {
       log(`Daily AI cap reached (CHF ${spentToday.toFixed(2)} / ${automation.dailyAiCapChf}); stopping`, "warn");
@@ -100,6 +118,7 @@ export const runDesign: StageFn = async (ctx) => {
       const prepared = await preparePrintFile(img.url);
       if (!ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")) {
         failures++;
+        await noteFailure(kw);
         log(`Refusing placeholder art for “${kw.phrase}”`, "error");
         continue;
       }
@@ -107,6 +126,7 @@ export const runDesign: StageFn = async (ctx) => {
         log(`Rejected flat artwork for “${kw.phrase}” (variation ${prepared.variance.toFixed(1)})`, "error");
         if (!ctx.demo) {
           failures++;
+          await noteFailure(kw);
           continue;
         }
       }
@@ -139,10 +159,13 @@ export const runDesign: StageFn = async (ctx) => {
     } catch (e) {
       const message = (e as Error).message;
       failures++;
+      await noteFailure(kw);
       log(`Generation failed for “${kw.phrase}”: ${message}`, "error");
       if (isProviderCreditsError(message)) {
         creditsStopped = true;
         log("Image provider out of credits. Stopping this run so the provider is not called again.", "error");
+        const start = queue.indexOf(kw) + 1;
+        for (const rest of queue.slice(start)) await noteFailure(rest);
         break;
       }
     }

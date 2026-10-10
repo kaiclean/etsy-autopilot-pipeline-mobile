@@ -1,9 +1,13 @@
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { cleanupFakeOrdersIfPresent, type ClearCounts } from "@/db/clear-fake-orders";
 import type { DB } from "@/db";
+import { listings } from "@/db/schema";
 import { backfillInlineImages, IMAGE_BACKFILL_BATCH_LIMIT } from "@/lib/image-backfill";
+import { manifestIsComplete, type ManifestLoadDeps } from "@/lib/file-manifest";
 import { storageBackend } from "@/lib/config";
 import { materializeImageUrl } from "@/lib/object-storage";
 import { ensurePrintifyWebhooks } from "@/lib/printify-webhooks";
+import { recordDeliveryManifest } from "./human-publish";
 import type { StageFn } from "./types";
 
 export type MaintenanceSummary = {
@@ -17,6 +21,8 @@ export type MaintenanceSummary = {
     events: number;
     reason: string | null;
   };
+  /** Digital rows whose delivery file was hashed this run, including older ids such as listing 46. */
+  manifests: { recorded: number; remaining: number };
 };
 
 function emptyFakeRows(reason: string | null): MaintenanceSummary["fakeRows"] {
@@ -70,6 +76,25 @@ async function rewriteInlineImages(db: DB): Promise<MaintenanceSummary["images"]
   };
 }
 
+/** Hashes digital delivery files that are still missing a manifest. Ordered by id so listing 46 is in the first batch. */
+export async function backfillDigitalManifests(db: DB, deps: ManifestLoadDeps = {}): Promise<MaintenanceSummary["manifests"]> {
+  const rows = await db
+    .select({ id: listings.id, fileManifest: listings.fileManifest })
+    .from(listings)
+    .where(and(eq(listings.productType, "digital"), isNotNull(listings.deliveryUrl)))
+    .orderBy(asc(listings.id))
+    .limit(200);
+  let recorded = 0;
+  let remaining = 0;
+  for (const row of rows) {
+    if (manifestIsComplete(row.fileManifest)) continue;
+    const result = await recordDeliveryManifest(db, row.id, new Date(), deps);
+    if (result.ok) recorded++;
+    else remaining++;
+  }
+  return { recorded, remaining };
+}
+
 async function removeFakeRows(db: DB): Promise<MaintenanceSummary["fakeRows"]> {
   try {
     return fakeRowsFrom(await cleanupFakeOrdersIfPresent(db));
@@ -83,7 +108,7 @@ async function removeFakeRows(db: DB): Promise<MaintenanceSummary["fakeRows"]> {
 }
 
 /** Idempotent housekeeping. Counts only; skip reasons name the gate, never a secret. */
-export async function runMaintenanceTasks(db: DB, log: (msg: string) => void = () => {}): Promise<MaintenanceSummary> {
+export async function runMaintenanceTasks(db: DB, log: (msg: string) => void = () => {}, deps: ManifestLoadDeps = {}): Promise<MaintenanceSummary> {
   const webhooks = await ensurePrintifyWebhooks();
   log(
     webhooks.reason
@@ -102,14 +127,18 @@ export async function runMaintenanceTasks(db: DB, log: (msg: string) => void = (
       ? `Fake-order cleanup skipped: ${fakeRows.reason}`
       : `Fake-order cleanup orders=${fakeRows.orders} costs=${fakeRows.costs} daily_stats=${fakeRows.daily_stats} job_runs=${fakeRows.job_runs} events=${fakeRows.events}`,
   );
-  return { webhooks, images, fakeRows };
+  const manifests = await backfillDigitalManifests(db, deps);
+  log(`Digital file manifests recorded=${manifests.recorded} remaining=${manifests.remaining}`);
+  return { webhooks, images, fakeRows, manifests };
 }
 
 export function parseMaintenanceSummary(summary: string | null): MaintenanceSummary | string | null {
   if (!summary) return summary;
   try {
     const parsed = JSON.parse(summary) as MaintenanceSummary;
-    if (parsed && typeof parsed === "object" && parsed.webhooks && parsed.images && parsed.fakeRows) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.webhooks && parsed.images && parsed.fakeRows) {
+      return { ...parsed, manifests: parsed.manifests ?? { recorded: 0, remaining: 0 } };
+    }
   } catch {
     /* Older rows store a sentence. */
   }

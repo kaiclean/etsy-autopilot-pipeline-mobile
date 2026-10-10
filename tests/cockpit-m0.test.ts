@@ -78,12 +78,15 @@ describe("alert count query", () => {
     expect(html).not.toContain("Cron auth,");
   });
 
-  it("counts only rows that have media and a null etsy id", () => {
+  it("counts published rows that have media and a null etsy id", () => {
     const count = countMissingEtsyIds([
-      { etsyListingId: null, imageUrl: "/art/1.png" },
-      { etsyListingId: null, imageUrl: "  " },
-      { etsyListingId: "4584533845", imageUrl: "/art/2.png" },
-      { etsyListingId: null, imageUrl: null },
+      { status: "published", etsyListingId: null, imageUrl: "/art/1.png" },
+      { status: "published", etsyListingId: null, imageUrl: "  " },
+      { status: "published", etsyListingId: "4584533845", imageUrl: "/art/2.png" },
+      { status: "published", etsyListingId: null, imageUrl: null },
+      { status: "rejected", etsyListingId: null, imageUrl: "/art/3.png" },
+      { status: "failed", etsyListingId: null, imageUrl: "/art/4.png" },
+      { status: "pending_approval", etsyListingId: null, imageUrl: "/art/5.png" },
     ]);
     expect(count).toBe(1);
   });
@@ -126,7 +129,9 @@ describe("alert count query", () => {
 
   it("queries the database count of media rows with a null etsy id", async () => {
     const db = await getDb();
-    const rows = await db.select({ etsyListingId: listings.etsyListingId, imageUrl: listings.imageUrl, isDemo: listings.isDemo }).from(listings);
+    const rows = await db
+      .select({ status: listings.status, etsyListingId: listings.etsyListingId, imageUrl: listings.imageUrl, isDemo: listings.isDemo })
+      .from(listings);
     const visibleRows = isDemoMode() ? rows : rows.filter((row) => !row.isDemo);
     const counted = await countListingsMissingEtsyId(db);
     expect(counted).toBe(countMissingEtsyIds(visibleRows));

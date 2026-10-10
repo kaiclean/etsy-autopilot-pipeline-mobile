@@ -15,3 +15,15 @@ export function yieldStatus(produced: number, failures: number): StageYield {
   if (failures > 0) return "warning";
   return "success";
 }
+
+export type ProviderCreditSignal = "ok" | "warning" | "failed";
+
+/** Latest design run: failed credits are red, any other credit error is amber. */
+export function providerCreditSignal(
+  run: { status: string; summary: string | null; logs: { msg: string }[] } | null | undefined,
+): ProviderCreditSignal {
+  if (!run) return "ok";
+  const text = `${run.summary ?? ""}\n${(run.logs ?? []).map((line) => line.msg).join("\n")}`;
+  if (!isProviderCreditsError(text)) return "ok";
+  return run.status === "failed" ? "failed" : "warning";
+}

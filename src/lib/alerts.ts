@@ -30,17 +30,30 @@ export type PublishFailureFact = {
   publishError: string;
 };
 
-const OAUTH_EXPIRY_WINDOW_MS = 48 * 60 * 60 * 1000;
+/** Published rows are the ones that should already have an Etsy id. Rejected and failed rows are not. */
+const ETSY_ID_EXPECTED = new Set(["published"]);
 
-export function countMissingEtsyIds(rows: { etsyListingId: string | null; imageUrl: string | null }[]) {
-  return rows.filter(listingNeedsEtsyId).length;
+export function listingShouldHaveEtsyId(row: { status?: string | null; etsyListingId: string | null; imageUrl: string | null }) {
+  if (!row.status || !ETSY_ID_EXPECTED.has(row.status)) return false;
+  return listingNeedsEtsyId(row);
+}
+
+export function countMissingEtsyIds(rows: { status?: string | null; etsyListingId: string | null; imageUrl: string | null }[]) {
+  return rows.filter(listingShouldHaveEtsyId).length;
 }
 
 export async function countListingsMissingEtsyId(db: DB) {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(listings)
-    .where(and(visible(listings.isDemo), sql`${listings.etsyListingId} is null`, sql`length(trim(${listings.imageUrl})) > 0`));
+    .where(
+      and(
+        visible(listings.isDemo),
+        eq(listings.status, "published"),
+        sql`${listings.etsyListingId} is null`,
+        sql`length(trim(${listings.imageUrl})) > 0`,
+      ),
+    );
   return Number(row?.n ?? 0);
 }
 
@@ -79,13 +92,12 @@ export function buildCockpitAlerts(input: {
   cronRuns: CronRunFact[];
   nullEtsyIdCount: number;
   deploySha: string | null;
-  tokens: Pick<EtsyTokens, "accessToken" | "expiresAt"> | null;
+  tokens: (Pick<EtsyTokens, "accessToken" | "expiresAt"> & { refreshToken?: string | null; refreshError?: string | null }) | null;
   now?: number;
   killSwitch: boolean;
   catalogDraftPending: boolean;
   publishFailures?: PublishFailureFact[];
 }): CockpitAlert[] {
-  const now = input.now ?? Date.now();
   const alerts: CockpitAlert[] = [];
   const latest = latestCronRuns(input.cronRuns);
   const unauthorized = latest.find((run) => run.status === "failed" && cronRunIsUnauthorized(run));
@@ -167,13 +179,21 @@ export function buildCockpitAlerts(input: {
       href: "/connections",
       hrefLabel: "Open connections",
     });
-  } else if (input.tokens.expiresAt - now < OAUTH_EXPIRY_WINDOW_MS) {
-    const hours = Math.max(0, Math.round((input.tokens.expiresAt - now) / 36e5));
+  } else if ("refreshToken" in input.tokens && !input.tokens.refreshToken) {
     alerts.push({
-      id: "oauth-expiry",
-      severity: "watch",
-      title: "Etsy access token expires soon",
-      evidence: `Access token expiry is inside 48 hours (${hours}h left). Refresh still uses the stored refresh token.`,
+      id: "oauth-refresh",
+      severity: "blocker",
+      title: "Etsy refresh token missing",
+      evidence: "The access token is stored, but the refresh token is missing. Shop reads fail once that access token expires. Token values are hidden.",
+      href: "/connections",
+      hrefLabel: "Open connections",
+    });
+  } else if (input.tokens.refreshError) {
+    alerts.push({
+      id: "oauth-refresh",
+      severity: "blocker",
+      title: "Etsy token refresh failed",
+      evidence: "The last Etsy token refresh failed. Shop reads stay unauthorized until the shop is connected again. Token values are hidden.",
       href: "/connections",
       hrefLabel: "Open connections",
     });
