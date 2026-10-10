@@ -213,3 +213,14 @@ describe("Replicate adapter", () => {
     await expect(new ReplicateImageProvider({ pollMs: 1 }).generate({ prompt: "x", niche: "alpine", seed: 1 })).rejects.toThrow(/status failed\): NSFW/);
   });
 });
+
+describe("artwork URL safety", () => {
+  it("rejects bracketed IPv6 loopback, private, and mapped hosts", async () => {
+    const { isSafeArtworkUrl } = await import("@/lib/art-quality");
+    for (const url of ["https://[::1]/a.png", "https://[fd00::1]/a.png", "https://[fe80::1]/a.png", "https://[::ffff:7f00:1]/a.png"]) {
+      expect(isSafeArtworkUrl(url)).toBe(false);
+    }
+    expect(isSafeArtworkUrl("https://[2606:4700::1111]/a.png")).toBe(true);
+    expect(isSafeArtworkUrl("https://cdn.example.com/a.png")).toBe(true);
+  });
+});
