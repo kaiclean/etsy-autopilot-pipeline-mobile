@@ -42,6 +42,9 @@ export const config = {
       webhookSecret: env("PRINTIFY_WEBHOOK_SECRET"),
     };
   },
+  get gelato() {
+    return { apiKey: env("GELATO_API_KEY") };
+  },
   get vapid() {
     return {
       publicKey: env("VAPID_PUBLIC_KEY"),
@@ -195,6 +198,10 @@ export function hasPrintifyCredentials() {
   return Boolean(p.token && p.shopId);
 }
 
+export function hasGelatoCredentials() {
+  return Boolean(config.gelato.apiKey);
+}
+
 /** Demo mode = seeded demo rows visible + mock adapters. Switches off once Etsy creds exist. */
 export function isDemoMode(shopId?: string | null) {
   if (env("DEMO_MODE") === "true") return true;
@@ -205,7 +212,7 @@ export function isDemoMode(shopId?: string | null) {
 export type IntegrationStatus = {
   id: string;
   name: string;
-  status: "connected" | "configured" | "mock" | "missing";
+  status: "connected" | "configured" | "mock" | "missing" | "skipped";
   detail: string;
   envVars: string[];
 };
@@ -260,6 +267,15 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
           : "Dry-run adapter."
       } Webhook POST ${printifyWebhookUrl()}.${p.webhookSecret ? " Signatures are checked with PRINTIFY_WEBHOOK_SECRET." : " Set PRINTIFY_WEBHOOK_SECRET so production deliveries are verified."}`,
       envVars: ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_WEBHOOK_SECRET"],
+    },
+    {
+      id: "gelato",
+      name: "Gelato",
+      status: hasGelatoCredentials() ? "configured" : "skipped",
+      detail: hasGelatoCredentials()
+        ? "API key is configured and hidden. Gelato writes remain dry-run only; costs are unverified."
+        : "Optional supplier skipped. Set GELATO_API_KEY to select Gelato. Writes remain dry-run only.",
+      envVars: ["GELATO_API_KEY"],
     },
     {
       id: "storage",

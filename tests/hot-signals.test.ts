@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { PGlite } from "@electric-sql/pglite";
 import { eq, sql } from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { drizzle } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
 import { hotSignalFetches, hotSignals, keywords } from "@/db/schema";
@@ -77,12 +82,14 @@ describe("hot scan persistence and keyword integration", () => {
   });
 
   it("migration is idempotent, registers next journal entry and creates usable UTC daily index", async () => {
-    const migration = readFileSync(new URL("../drizzle/0013_hot_signals.sql", import.meta.url), "utf8");
+    const migration = readFileSync(new URL("../drizzle/0015_hot_signals.sql", import.meta.url), "utf8");
     for (let repeat = 0; repeat < 2; repeat++) {
       for (const statement of migration.split("--> statement-breakpoint")) await db.execute(sql.raw(statement));
     }
     const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 12, tag: "0013_hot_signals" });
+    expect(journal.entries.at(-2)).toMatchObject({ idx: 12, tag: "0014_suppliers", when: 1791671460000 });
+    expect(journal.entries.at(-1)).toMatchObject({ idx: 13, tag: "0015_hot_signals" });
+    expect(journal.entries.at(-1).when).toBeGreaterThan(journal.entries.at(-2).when);
     const collect = vi.fn(async () => [signal({ rank: 1 }), signal({ rank: 1 })]);
     await scanHotSignals(ctx, [source("amazon", collect)]);
     expect(await db.select().from(hotSignals)).toHaveLength(1);
@@ -198,6 +205,44 @@ describe("hot scan persistence and keyword integration", () => {
     expect(row.demandScore).toBeGreaterThan(0);
     expect(row.score).toBeGreaterThan(0.1);
   });
+});
+
+it("upgrades an already-migrated suppliers database without changing supplier data or replaying migrations", async () => {
+  const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
+  const migrations = readMigrationFiles({ migrationsFolder });
+  const client = new PGlite();
+  try {
+    const prior = migrations.slice(0, -1);
+    for (const migration of prior) {
+      for (const statement of migration.sql) await client.exec(statement);
+    }
+    await client.exec(`
+      CREATE SCHEMA drizzle;
+      CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint);
+      INSERT INTO supplier_products (supplier, preset, external_product_uid, title, fetched_at)
+        VALUES ('gelato', 'poster', 'existing-product', 'Existing supplier product', now());
+    `);
+    for (const migration of prior) {
+      await client.query("INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)",
+        [migration.hash, migration.folderMillis]);
+    }
+    const db = drizzle(client);
+    await migrate(db, { migrationsFolder });
+    await migrate(db, { migrationsFolder });
+    const ledger = await client.query<{ hash: string; created_at: number }>(
+      "SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at",
+    );
+    expect(ledger.rows.map((row) => row.hash)).toEqual(migrations.map((migration) => migration.hash));
+    expect(Number(ledger.rows.at(-1)?.created_at)).toBe(migrations.at(-1)?.folderMillis);
+    const tables = await client.query<{ signals: string; fetches: string }>(
+      "SELECT to_regclass('hot_signals')::text AS signals, to_regclass('hot_signal_fetches')::text AS fetches",
+    );
+    expect(tables.rows).toEqual([{ signals: "hot_signals", fetches: "hot_signal_fetches" }]);
+    const products = await client.query<{ title: string }>("SELECT title FROM supplier_products");
+    expect(products.rows).toEqual([{ title: "Existing supplier product" }]);
+  } finally {
+    await client.close();
+  }
 });
 
 it("registers a read-only daily hot stage and CRON_SECRET-only workflow authentication", () => {

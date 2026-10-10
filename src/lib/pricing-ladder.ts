@@ -1,11 +1,11 @@
 import type { Niche, ProductType } from "@/db/schema";
-import { calculateFees, podCostChf, POD_PRESETS, suggestPrice, type PodPreset } from "@/lib/fees";
+import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, suggestPrice, type PodPreset } from "@/lib/fees";
 import { NICHES } from "@/lib/niches";
 
 /** POD rungs are priced at this net margin with the 15% offsite-ads fee included. */
 export const LADDER_MARGIN_PCT = 30;
 
-export type LadderRungId = "digital-entry" | "digital-mid" | "poster" | "mug" | "tee" | "sweatshirt";
+export type LadderRungId = "digital-entry" | "digital-mid" | "poster" | "tee" | PodPreset;
 
 export type LadderRung = {
   id: LadderRungId;
@@ -45,11 +45,11 @@ function quote(priceChf: number, podCost: number) {
   return { priceChf, podCostChf: podCost, netChf: fees.netChf, marginPct: fees.marginPct };
 }
 
-function podPrice(niche: Niche, preset: PodPreset) {
+function podPrice(niche: Niche, preset: PodPreset, cost: number) {
   const band = NICHES[niche].priceBand.pod;
   return suggestPrice({
     targetMarginPct: LADDER_MARGIN_PCT,
-    podCostChf: podCostChf(preset),
+    podCostChf: cost,
     offsiteAds: true,
     minChf: band[0] || undefined,
     maxChf: band[1] || undefined,
@@ -63,19 +63,24 @@ function podPrice(niche: Niche, preset: PodPreset) {
  * then poster, mug, tee, and sweatshirt. POD prices include Etsy fees, VAT, Printify cost,
  * and 15% offsite ads, and stay at about 30% net.
  */
-export function quoteLadder(niche: Niche): LadderRung[] {
+export function quoteLadder(niche: Niche, enabled: readonly PodPreset[] = DEFAULT_POD_PRESETS, quotedCosts: Partial<Record<PodPreset, number | null>> = {}): LadderRung[] {
   const entry = quote(digitalEntryPrice(niche), 0);
   const mid = quote(digitalMidPrice(niche), 0);
-  const poster = quote(podPrice(niche, "posterA3"), podCostChf("posterA3"));
-  const mug = quote(podPrice(niche, "mug"), podCostChf("mug"));
-  const tee = quote(podPrice(niche, "tshirt"), podCostChf("tshirt"));
-  const sweat = quote(podPrice(niche, "sweatshirt"), podCostChf("sweatshirt"));
+  const podRungs: LadderRung[] = [...new Set(enabled)].flatMap((preset) => {
+    const cost = Object.hasOwn(quotedCosts, preset) ? quotedCosts[preset] : podCostChf(preset);
+    if (cost == null || !Number.isFinite(cost) || cost < 0) return [];
+    const label = preset === "posterA3" ? "A3 poster" : preset === "tshirt" ? "Tee" : preset === "sweatshirt" ? "Sweatshirt" : preset === "mug" ? "Mug" : POD_PRESETS[preset].label;
+    return [{
+      id: preset === "posterA3" ? "poster" : preset === "tshirt" ? "tee" : preset,
+      label,
+      deliverable: `One made-to-order ${label.toLowerCase()}`,
+      product: { type: "pod", pod: preset },
+      ...quote(podPrice(niche, preset, cost), cost),
+    }];
+  });
   return [
     { id: "digital-entry", label: "Digital download", deliverable: "One PNG, instant download", product: { type: "digital" }, ...entry },
     { id: "digital-mid", label: "Large digital print", deliverable: "One larger PNG, instant download", product: { type: "digital" }, ...mid },
-    { id: "poster", label: "A3 poster", deliverable: "One made-to-order poster", product: { type: "pod", pod: "posterA3" }, ...poster },
-    { id: "mug", label: "Mug", deliverable: "One made-to-order mug", product: { type: "pod", pod: "mug" }, ...mug },
-    { id: "tee", label: "Tee", deliverable: "One made-to-order tee", product: { type: "pod", pod: "tshirt" }, ...tee },
-    { id: "sweatshirt", label: "Sweatshirt", deliverable: "One made-to-order sweatshirt", product: { type: "pod", pod: "sweatshirt" }, ...sweat },
+    ...podRungs,
   ];
 }

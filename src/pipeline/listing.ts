@@ -1,11 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
+import { getSuppliers } from "@/adapters/supplier";
+import { quoteEnabledProducts } from "@/adapters/supplier/catalog";
+import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
-import { calculateFees, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
+import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { quoteLadder, type LadderRung } from "@/lib/pricing-ladder";
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
@@ -30,18 +33,26 @@ export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?:
   return { type: mix[0].type, pod: mix[0].pod };
 }
 
-/** When the keyword names a mug, poster, tee, or sweatshirt, the brief uses that variant. */
-export function productForPhrase(niche: Niche, phrase: string, random: number): { type: ProductType; pod?: PodPreset } {
+/** Enabled product nouns override the niche mix without changing the default mix. */
+export function productForPhrase(niche: Niche, phrase: string, random: number, enabled?: readonly PodPreset[]): { type: ProductType; pod?: PodPreset } {
+  const extra: [PodPreset, RegExp][] = [
+    ["tote", /\btote(?: bags?)?\b/i], ["phoneCase", /\bphone cases?\b/i],
+    ["canvas", /\b(?:canvas|canvases)\b/i], ["sticker", /\bstickers?\b/i],
+    ["blanket", /\bblankets?\b/i], ["hoodie", /\bhoodies?\b/i], ["ornament", /\bornaments?\b/i],
+  ];
+  const named = extra.find(([preset, pattern]) => enabled?.includes(preset) && pattern.test(phrase));
+  if (named) return { type: "pod", pod: named[0] };
   const wantsSweat = /\bsweatshirts?\b/i.test(phrase);
   const wantsMug = /\bmugs?\b/i.test(phrase);
   const wantsPoster = /\bposters?\b/i.test(phrase);
   const wantsShirt = !wantsSweat && /\b(?:t-?shirts?|tees?)\b/i.test(phrase);
   const preferred = wantsMug ? "mug" : wantsPoster ? "posterA3" : wantsSweat ? "sweatshirt" : wantsShirt ? "tshirt" : null;
-  if (preferred) {
+  if (preferred && (!enabled || enabled.includes(preferred))) {
     const match = NICHES[niche].productMix.find((item) => item.pod === preferred);
     if (match) return { type: match.type, pod: match.pod };
   }
-  return pickProduct(niche, random);
+  const fallback = pickProduct(niche, random);
+  return fallback.pod && enabled && !enabled.includes(fallback.pod) ? { type: "digital" } : fallback;
 }
 
 export async function draftListing(opts: {
@@ -58,6 +69,7 @@ export async function draftListing(opts: {
   competitorChf?: number;
   /** Ladder price. When set, fees include the 15% offsite-ads line so the stored net matches that price. */
   priceChf?: number;
+  podCostChf?: number;
   llm?: LLMProvider;
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
@@ -79,7 +91,8 @@ export async function draftListing(opts: {
   const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
   const tags = copy.tags.filter((tag) => !styleClaims.test(tag));
   const preset = opts.product.pod ?? "posterA3";
-  const pod = opts.product.type === "pod" ? podCostChf(preset) : 0;
+  const pod = opts.product.type === "pod" ? (opts.podCostChf ?? podCostChf(preset)) : 0;
+  if (pod == null) throw new Error(`Unverified supplier cost for ${preset}; pricing unavailable.`);
   const band = NICHES[opts.niche].priceBand[opts.product.type];
   const targetMarginPct =
     opts.product.type === "pod" ? resolveTargetMargin("pod", opts.podTargetMarginPct) : resolveTargetMargin("digital", opts.digitalTargetMarginPct);
@@ -126,7 +139,11 @@ async function listRung(
   automation: { podTargetMarginPct?: number; digitalTargetMarginPct?: number; assumeOffsiteAds: boolean },
   llm: LLMProvider,
   siblingTitles: string[],
+  supplierId = "printify",
+  supplierProduct?: SupplierProduct,
 ) {
+  const podProvider = rung.product.type === "pod" && rung.product.pod ? `${supplierId}:${rung.product.pod}` : null;
+  const dryRunOnly = rung.product.type === "pod" && (supplierId !== "printify" || !DEFAULT_POD_PRESETS.includes(rung.product.pod!));
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
     keyword: keywordForRung(phrase, rung),
@@ -136,6 +153,7 @@ async function listRung(
     digitalTargetMarginPct: automation.digitalTargetMarginPct,
     assumeOffsiteAds: automation.assumeOffsiteAds,
     priceChf: rung.priceChf,
+    podCostChf: rung.podCostChf,
     llm,
     artDirection: design.prompt,
     siblingTitles,
@@ -155,13 +173,17 @@ async function listRung(
     description: draft.description,
     priceChf: draft.priceChf,
     productType: rung.product.type,
-    podProvider: rung.product.type === "pod" && rung.product.pod ? `printify:${rung.product.pod}` : null,
+    podProvider,
     imageUrl: image.url,
     artworkUrl,
     printWidth: design.imageWidth,
     printHeight: design.imageHeight,
     colorVariance: design.colorVariance,
   });
+  if (dryRunOnly) {
+    gate.pass = false;
+    gate.reasons.push({ field: "description", code: "supplier_dry_run", severity: "error", message: "This supplier/product type is dry-run only; live fulfillment is not enabled." });
+  }
   const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
   await ctx.db.insert(listings).values({
     shopId: ctx.shopId,
@@ -169,7 +191,9 @@ async function listRung(
     keywordId: design.keywordId,
     niche: design.niche,
     productType: rung.product.type,
-    podProvider: rung.product.type === "pod" && rung.product.pod ? `printify:${rung.product.pod}` : null,
+    podProvider,
+    supplier: rung.product.type === "pod" ? supplierId : null,
+    supplierProductId: supplierProduct?.uid ?? null,
     title: draft.title,
     tags: draft.tags,
     description: draft.description,
@@ -217,6 +241,11 @@ export const runListing: StageFn = async (ctx) => {
     .limit(10);
   if (pending.length === 0) return "No new designs waiting for listings.";
   const llm = getLLMProvider({ demo: ctx.demo });
+  const podSettings = await getSetting(db, "podProducts");
+  const additional = podSettings.enabledPresets.filter((preset) => !DEFAULT_POD_PRESETS.includes(preset) || podSettings.suppliers[preset] === "gelato");
+  const quoted = additional.length
+    ? await quoteEnabledProducts(db, { ...podSettings, enabledPresets: additional }, getSuppliers(), (message) => log(message, "warn"))
+    : { costs: {}, products: {} };
   log(`Listing writer: ${llm.name}${llm.name === "mock-template" ? " (DEMO template copy)" : ""}`);
 
   let created = 0;
@@ -247,9 +276,11 @@ export const runListing: StageFn = async (ctx) => {
     }
     let listed = 0;
     const siblingTitles: string[] = [];
-    for (const rung of quoteLadder(design.niche)) {
+    for (const rung of quoteLadder(design.niche, podSettings.enabledPresets, quoted.costs)) {
       try {
-        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm, siblingTitles);
+        const preset = rung.product.pod;
+        const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm, siblingTitles,
+          preset ? podSettings.suppliers[preset] ?? "printify" : "printify", preset ? quoted.products[preset] : undefined);
         if (made.fixes.length) log(`Auto-fixed design #${design.id} ${rung.label} before the quality gate: ${made.fixes.join("; ")}`);
         if (made.errors.length) {
           invalid++;

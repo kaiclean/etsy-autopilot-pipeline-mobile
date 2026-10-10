@@ -203,6 +203,8 @@ export const listings = pgTable("listings", {
   niche: text("niche").$type<Niche>().notNull(),
   productType: text("product_type").$type<ProductType>().notNull(),
   podProvider: text("pod_provider"),
+  supplier: text("supplier"),
+  supplierProductId: text("supplier_product_id"),
   title: text("title").notNull(),
   tags: jsonb("tags").$type<string[]>().notNull(),
   description: text("description").notNull(),
@@ -243,6 +245,22 @@ export const listings = pgTable("listings", {
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   publishedAt: timestamp("published_at", { withTimezone: true }),
 });
+
+export const supplierProducts = pgTable(
+  "supplier_products",
+  {
+    id: serial("id").primaryKey(),
+    supplier: text("supplier").notNull(),
+    preset: text("preset").notNull(),
+    externalProductUid: text("external_product_uid").notNull(),
+    title: text("title"),
+    baseCostUsd: doublePrecision("base_cost_usd"),
+    currency: text("currency"),
+    sourceUrl: text("source_url"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [unique("supplier_products_supplier_preset_external_product_uid_key").on(t.supplier, t.preset, t.externalProductUid)],
+);
 
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
@@ -457,6 +475,7 @@ export type ShopConnection = typeof shopConnections.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
 export type Design = typeof designs.$inferSelect;
 export type Listing = typeof listings.$inferSelect;
+export type SupplierProduct = typeof supplierProducts.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type AppEvent = typeof events.$inferSelect;

@@ -1,5 +1,6 @@
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { loadArtworkImage } from "@/lib/artwork-source";
+import { isPodPreset } from "@/lib/fees";
 import { decodePng, placeholderPng, podMockupPng, previewPng, type RgbImage } from "@/lib/png";
 
 async function artworkFor(src: string | null): Promise<RgbImage | null> {
@@ -9,16 +10,9 @@ async function artworkFor(src: string | null): Promise<RgbImage | null> {
   return loadArtworkImage(src);
 }
 
-const PRESETS = ["posterA3", "mug", "tshirt", "sweatshirt"] as const;
-type Preset = (typeof PRESETS)[number];
-
-function isPreset(value: string): value is Preset {
-  return (PRESETS as readonly string[]).includes(value);
-}
-
 export async function GET(req: Request, ctx: { params: Promise<{ preset: string }> }) {
   const { preset } = await ctx.params;
-  if (!isPreset(preset)) return new Response("Unknown product", { status: 404 });
+  if (!isPodPreset(preset)) return new Response("Unknown product", { status: 404 });
   const url = new URL(req.url);
   const niche = url.searchParams.get("niche") ?? "alpine";
   const artwork = await artworkFor(url.searchParams.get("src"));

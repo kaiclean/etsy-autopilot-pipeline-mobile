@@ -109,9 +109,11 @@ describe("suggestPrice", () => {
 
 function shopPrice(preset: PodPreset, niche: Niche, offsiteAds = false) {
   const band = NICHES[niche].priceBand.pod;
+  const cost = podCostChf(preset);
+  if (cost == null) throw new Error(`Unverified cost: ${preset}`);
   return suggestPrice({
     targetMarginPct: resolveTargetMargin("pod", MARGIN_TARGETS.podDefault),
-    podCostChf: podCostChf(preset),
+    podCostChf: cost,
     offsiteAds,
     minChf: band[0] || undefined,
     maxChf: band[1] || undefined,

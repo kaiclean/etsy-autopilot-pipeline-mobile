@@ -7,9 +7,9 @@ import { refresh, revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { keywords, listings, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
-import { config, isDemoMode } from "@/lib/config";
+import { config, hasGelatoCredentials, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
-import { calculateFees, MARGIN_TARGETS } from "@/lib/fees";
+import { calculateFees, DEFAULT_POD_PRESETS, isPodPreset, MARGIN_TARGETS } from "@/lib/fees";
 import { artRegenerationBlocker } from "@/lib/art-queue";
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { planBulkStatus } from "@/lib/catalog-filters";
@@ -20,7 +20,7 @@ import { requireAuth } from "@/lib/session";
 import { resolveActiveShop } from "@/lib/shops";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import { PUSH_PREF_KEYS, type PushPrefs } from "@/lib/push-prefs";
-import { DEFAULT_CATALOG_DRAFT, getSetting, setSetting, type AutomationSettings } from "@/lib/settings";
+import { DEFAULT_CATALOG_DRAFT, getSetting, normalizePodProductSettings, setSetting, type AutomationSettings } from "@/lib/settings";
 import {
   activateDigitalListing,
   markDeliveryVerified,
@@ -65,11 +65,20 @@ function revalidateAll() {
 
 export type ListingEdit = { title: string; tags: string[]; priceChf: number; description?: string };
 
+const DRY_RUN_ONLY_APPROVAL_ERROR = "This supplier/product type is dry-run only; live fulfillment is not enabled.";
+
+function isDryRunOnlyPodProduct(listing: { supplier: string | null; podProvider: string | null }) {
+  const preset = listing.podProvider?.split(":")[1];
+  return listing.supplier === "gelato" || listing.podProvider?.startsWith("gelato:") ||
+    Boolean(preset && !DEFAULT_POD_PRESETS.some((enabled) => enabled === preset));
+}
+
 export async function updateListing(id: number, edit: ListingEdit, approve = false) {
   await requireAuth();
   const db = await getDb();
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
+  if (approve && isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
   const next = { ...l, ...edit, description: edit.description ?? l.description };
   const { valid, issues } = validateListing(next);
   const automation = await getSetting(db, "automation");
@@ -100,6 +109,7 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
   if (status === "approved") {
+    if (isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
     const { valid, issues } = validateListing(l);
     if (!valid) {
       await db.update(listings).set({ validation: issues }).where(eq(listings.id, id));
@@ -140,8 +150,10 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
     return row ? [row] : [];
   });
   const missing = unique.filter((id) => !byId.has(id)).map((id) => ({ id, title: `#${id}`, error: "Listing not found" }));
+  const held = status === "approved" ? known.filter(isDryRunOnlyPodProduct) : [];
+  const heldIds = new Set(held.map((row) => row.id));
   const plan = planBulkStatus(
-    known.map((row) => ({
+    known.filter((row) => !heldIds.has(row.id)).map((row) => ({
       id: row.id,
       title: row.title,
       hasErrors: status === "approved" && !validateListing(row).valid,
@@ -179,7 +191,9 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
   return {
     ok: true as const,
     changed: plan.changed,
-    skipped: [...plan.skipped, ...missing].map((row) => ({ ...row, title: row.title.slice(0, 80) })),
+    skipped: [...plan.skipped, ...missing, ...held.map((row) => ({
+      id: row.id, title: row.title, error: DRY_RUN_ONLY_APPROVAL_ERROR,
+    }))].map((row) => ({ ...row, title: row.title.slice(0, 80) })),
   };
 }
 
@@ -328,6 +342,30 @@ export async function publishPodListing(id: number) {
   const result = await publishPodListingToEtsy(db, id);
   revalidateAll();
   return result;
+}
+
+export async function savePodProducts(value: unknown) {
+  await requireAuth();
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false as const, error: "Invalid POD product settings." };
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    !Array.isArray(input.enabledPresets) ||
+    input.enabledPresets.some((preset) => typeof preset !== "string" || !isPodPreset(preset)) ||
+    !input.suppliers || typeof input.suppliers !== "object" || Array.isArray(input.suppliers) ||
+    Object.entries(input.suppliers).some(([preset, supplier]) => !isPodPreset(preset) || (supplier !== "printify" && supplier !== "gelato"))
+  ) {
+    return { ok: false as const, error: "Choose valid POD presets and suppliers." };
+  }
+  const podProducts = normalizePodProductSettings(input);
+  if (!hasGelatoCredentials() && Object.values(podProducts.suppliers).includes("gelato")) {
+    return { ok: false as const, error: "Set GELATO_API_KEY before selecting Gelato." };
+  }
+  const db = await getDb();
+  await setSetting(db, "podProducts", podProducts);
+  revalidatePath("/settings");
+  return { ok: true as const, podProducts };
 }
 
 export async function saveAutomation(patch: Partial<AutomationSettings>) {
