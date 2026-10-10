@@ -59,7 +59,7 @@ describe("image provider last error", () => {
   it("replaces Ready with the latest design-run failure", () => {
     process.env.IMAGE_PROVIDER = "openai";
     process.env.OPENAI_API_KEY = "sk-test";
-    process.env.OPENAI_BASE_URL = "https://ollama.com/v1";
+    process.env.OPENAI_BASE_URL = "https://api.openai.com/v1";
     process.env.OPENAI_IMAGE_MODEL = "gpt-image-1";
     const run = {
       status: "failed",

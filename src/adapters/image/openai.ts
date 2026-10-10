@@ -69,8 +69,12 @@ export class OpenAIImageProvider implements ImageProvider {
       statuses.push(res.status);
       if (!res.ok) {
         const text = (await res.text()).slice(0, 300);
-        errors.push(`${path} ${res.status}: ${text}`);
-        if (res.status === 402 || isProviderCreditsError(text)) break;
+        const error = `${path} ${res.status}: ${text}`;
+        if (res.status === 402 || isProviderCreditsError(text)) {
+          errors.unshift(error);
+          break;
+        }
+        errors.push(error);
         continue;
       }
       const json = (await res.json()) as {

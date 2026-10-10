@@ -180,7 +180,7 @@ describe("image endpoint fallbacks", () => {
     for (const detail of [health?.detail, integration?.detail, probes.image.detail]) {
       expect(detail).toContain("OMNIROUTE_BASE_URL");
       expect(detail).not.toMatch(/\bIMAGE_(BASE_URL|API_KEY|MODEL)\b|OPENAI_BASE_URL/);
-      if (baseUrl.includes("ollama.com")) {
+      if (baseUrl === "https://ollama.com/v1") {
         expect(detail).toContain("OMNIROUTE_API_KEY");
         expect(detail).toContain("OMNIROUTE_IMAGE_MODEL");
       }
@@ -208,6 +208,29 @@ describe("image endpoint fallbacks", () => {
           .toEqual(current);
       }
     }
+  });
+
+  it("keeps a terminal credit failure visible after a long OpenRouter route error", async () => {
+    process.env.IMAGE_PROVIDER = "openai";
+    process.env.IMAGE_API_KEY = "image-test-key";
+    process.env.IMAGE_BASE_URL = "https://openrouter.ai/api/v1";
+    process.env.IMAGE_MODEL = "painter";
+    const calls = installFetch((index) => index === 0
+      ? jsonResponse(404, "route missing ".repeat(30))
+      : jsonResponse(402, "Insufficient credits"));
+    const error = await getImageProvider().generate({ prompt: "alpine poster", niche: "alpine", seed: 1 })
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ImageProviderConfigurationError);
+    const summary = (error as Error).message;
+    expect(summary).toMatch(/^OpenAI images failed: \/images\/generations 402: Insufficient credits/);
+    expect(summary).toContain("/images 404");
+    expect(connectionHealth({
+      etsyConnected: false,
+      providerCredits: "failed",
+      imageRun: { status: "failed", summary },
+    }).find((row) => row.id === "images")).toMatchObject({ level: "red", label: "Out of credits" });
+    expect(calls).toHaveLength(2);
   });
 
   it("uses OPENAI_* when IMAGE_* is unset", () => {
