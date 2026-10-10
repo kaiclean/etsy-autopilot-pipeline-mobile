@@ -102,11 +102,12 @@ export const runPublish: StageFn = async (ctx) => {
     }
     const [claimed] = await db
       .update(listings)
-      .set({ status: "publishing", publishAttemptedAt: ctx.now, updatedAt: ctx.now })
+      .set({ status: "publishing", publishAttemptedAt: ctx.now, publishAttemptCount: l.publishAttemptCount + 1, publishError: null, updatedAt: ctx.now })
       .where(
         and(
           eq(listings.id, l.id),
           eq(listings.status, l.status),
+          eq(listings.publishAttemptCount, l.publishAttemptCount),
           l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
         ),
       )

@@ -199,6 +199,7 @@ export const listings = pgTable("listings", {
   publishError: text("publish_error"),
   /** Last time publish actually called Etsy or Printify. Same-error retries wait 24h from here. */
   publishAttemptedAt: timestamp("publish_attempted_at", { withTimezone: true }),
+  publishAttemptCount: integer("publish_attempt_count").notNull().default(0),
   /** Set once, when a POD row has waited >24h for an Etsy id, so the alert does not repeat. */
   etsyIdWaitAlertedAt: timestamp("etsy_id_wait_alerted_at", { withTimezone: true }),
   views: integer("views").notNull().default(0),

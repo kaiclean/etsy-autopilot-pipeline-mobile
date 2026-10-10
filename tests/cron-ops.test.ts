@@ -173,15 +173,20 @@ describe("publish retry and dashboard", () => {
       expect(failed.publishError).not.toContain(token);
       expect(failed.publishError).toContain("[redacted]");
       expect(failed.publishAttemptedAt).toEqual(firstNow);
+      expect(failed.publishAttemptCount).toBe(1);
 
       const second = await runStage("publish", "cron", { db, now: new Date(firstNow.getTime() + 60 * 60_000), random: () => 0 });
       expect(second.status).toBe("success");
       expect(second.summary).toMatch(/skipped 1 \(same error within 24h\)/);
       expect(createAndPublish).toHaveBeenCalledTimes(1);
+      const [notRetried] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(notRetried.publishAttemptCount).toBe(1);
 
       const third = await runStage("publish", "cron", { db, now: new Date(firstNow.getTime() + PUBLISH_RETRY_MS), random: () => 0 });
       expect(third.status).toBe("failed");
       expect(createAndPublish).toHaveBeenCalledTimes(2);
+      const [retried] = await db.select().from(listings).where(eq(listings.id, row.id));
+      expect(retried.publishAttemptCount).toBe(2);
     } finally {
       spy.mockRestore();
     }

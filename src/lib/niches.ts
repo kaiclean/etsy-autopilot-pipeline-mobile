@@ -155,6 +155,16 @@ export function normalizeEtsyVolume(volume: number) {
   return Math.round(Math.min(1, Math.max(0, score)) * 100) / 100;
 }
 
+// Conservative initial heuristic: ignore tiny samples, ramp to full influence at 100 views,
+// and cap the conversion/favorite adjustment so outcomes cannot overwhelm demand signals.
+const MIN_PERFORMANCE_VIEWS = 20;
+const FULL_CONFIDENCE_VIEWS = 100;
+const BASELINE_CONVERSION_RATE = 0.02;
+const CONVERSION_LIFT_SCALE = 2;
+const MAX_CONVERSION_LIFT = 0.08;
+const MAX_FAVORITE_LIFT = 0.02;
+const FAVORITE_LIFT_SCALE = 0.1;
+
 export function scoreKeyword(k: {
   demand: number;
   competition: number;
@@ -170,12 +180,15 @@ export function scoreKeyword(k: {
   const base = 0.45 * demand + 0.3 * (1 - k.competition) + 0.25 * k.seasonality;
   const performance = k.performance;
   let lift = 0;
-  if (performance && performance.views >= 20) {
-    const confidence = Math.min(1, performance.views / 100);
+  if (performance && performance.views >= MIN_PERFORMANCE_VIEWS) {
+    const confidence = Math.min(1, performance.views / FULL_CONFIDENCE_VIEWS);
     const conversionRate = performance.sales / performance.views;
     const favoriteRate = performance.favorites / performance.views;
-    const conversionLift = Math.max(-0.08, Math.min(0.08, (conversionRate - 0.02) * 2));
-    lift = (conversionLift + Math.min(0.02, favoriteRate * 0.1)) * confidence;
+    const conversionLift = Math.max(
+      -MAX_CONVERSION_LIFT,
+      Math.min(MAX_CONVERSION_LIFT, (conversionRate - BASELINE_CONVERSION_RATE) * CONVERSION_LIFT_SCALE),
+    );
+    lift = (conversionLift + Math.min(MAX_FAVORITE_LIFT, favoriteRate * FAVORITE_LIFT_SCALE)) * confidence;
   }
   return Math.round(Math.max(0, Math.min(1, base + lift)) * 100) / 100;
 }
