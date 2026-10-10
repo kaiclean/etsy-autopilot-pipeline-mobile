@@ -203,6 +203,35 @@ describe("supplier HTTP safety", () => {
       await vi.runAllTimersAsync();
       expect(await pending).toMatchObject({ baseCostUsd: 12.5, shippingUsd: null, inStock: isAvailable ?? null });
     });
+
+    it("keeps valid provider candidates when another variants or shipping read fails", async () => {
+      vi.stubEnv("PRINTIFY_API_TOKEN", "fixture-token");
+      vi.stubEnv("PRINTIFY_SHOP_ID", "1");
+      vi.useFakeTimers();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(Response.json([{ id: 101, title: "Cotton Tote Bag" }]))
+        .mockResolvedValueOnce(Response.json([{ id: 200, title: "Unavailable" }, { id: 201, title: "No shipping" }, { id: 202, title: "Available" }]))
+        .mockResolvedValueOnce(new Response("", { status: 503 }))
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: "One size" }] }))
+        .mockResolvedValueOnce(new Response("", { status: 503 }))
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 302, title: "One size" }] }))
+        .mockResolvedValueOnce(Response.json({ profiles: [] }));
+      const pending = new PrintifySupplier(fetchImpl).listProducts("tote");
+      await vi.runAllTimersAsync();
+      expect((await pending).map((row) => row.uid)).toEqual(["101:201:301", "101:202:302"]);
+    });
+
+    it("retains cost and stock with unknown shipping when one quote read fails", async () => {
+      vi.stubEnv("PRINTIFY_API_TOKEN", "fixture-token");
+      vi.stubEnv("PRINTIFY_SHOP_ID", "1");
+      vi.useFakeTimers();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(Response.json({ variants: [{ id: 301, title: "One size", cost: 1250, is_available: true }] }))
+        .mockResolvedValueOnce(new Response("", { status: 503 }));
+      const pending = new PrintifySupplier(fetchImpl).quote(printifyProduct, "CH");
+      await vi.runAllTimersAsync();
+      expect(await pending).toMatchObject({ baseCostUsd: 12.5, inStock: true, shippingUsd: null, productionDays: null });
+    });
   });
 
   it("honors rate-limit cooldown without retrying requests", async () => {
@@ -278,14 +307,62 @@ describe("supplier HTTP safety", () => {
       const fetchImpl = vi.fn()
         .mockResolvedValueOnce(Response.json([{ productUid: gelatoProduct.uid, country: "CH", quantity: 1, price: 10, currency: "USD" }]))
         .mockResolvedValueOnce(Response.json({ shipmentMethods: [] }))
+        .mockResolvedValueOnce(Response.json({ productsAvailability: [] }))
         .mockResolvedValueOnce(Response.json([{ productUid: gelatoProduct.uid, country: "CH", quantity: 1, price: 12, currency: "USD" }]))
-        .mockResolvedValueOnce(Response.json({ shipmentMethods: [] }));
+        .mockResolvedValueOnce(Response.json({ shipmentMethods: [] }))
+        .mockResolvedValueOnce(Response.json({ productsAvailability: [] }));
       const supplier = new GelatoSupplier(fetchImpl);
-      expect((await supplier.quote(gelatoProduct, "CH")).baseCostUsd).toBe(10);
+      const first = supplier.quote(gelatoProduct, "CH");
+      await vi.runAllTimersAsync();
+      expect((await first).baseCostUsd).toBe(10);
       const second = supplier.quote(gelatoProduct, "CH");
       await vi.runAllTimersAsync();
       expect((await second).baseCostUsd).toBe(12);
-      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(fetchImpl).toHaveBeenCalledTimes(6);
+    });
+
+    it.each([
+      { country: "CH", stockRegion: "EU", status: "in-stock", expected: true },
+      { country: "DE", stockRegion: "EU", status: "out-of-stock", expected: false },
+      { country: "US", stockRegion: "US-CA", status: "in-stock", expected: true },
+      { country: "CA", stockRegion: "US-CA", status: "out-of-stock-replenishable", expected: false },
+      { country: "GB", stockRegion: "UK", status: "out-of-stock", expected: false },
+      { country: "CH", stockRegion: "EU", status: "non-stockable", expected: null },
+      { country: "CH", stockRegion: "EU", status: "not-supported", expected: null },
+      { country: "CH", stockRegion: "EU", status: "unknown", expected: null },
+      { country: "CH", stockRegion: "US-CA", status: "in-stock", expected: null },
+      { country: "JP", stockRegion: "EU", status: "in-stock", expected: null },
+    ])("uses only explicit $stockRegion regional stock $status for $country", async ({ country, stockRegion, status, expected }) => {
+      vi.stubEnv("GELATO_API_KEY", "fixture-gelato-key");
+      vi.useFakeTimers();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(Response.json([{ productUid: gelatoProduct.uid, country, quantity: 1, price: 10, currency: "USD" }]))
+        .mockResolvedValueOnce(Response.json({ shipmentMethods: [] }))
+        .mockResolvedValueOnce(Response.json({ productsAvailability: [{ productUid: gelatoProduct.uid, availability: [{ stockRegionUid: stockRegion, status }] }] }));
+      const pending = new GelatoSupplier(fetchImpl).quote(gelatoProduct, country);
+      await vi.runAllTimersAsync();
+      expect(await pending).toMatchObject({ baseCostUsd: 10, shippingUsd: null, inStock: expected, productionDays: null });
+      expect(fetchImpl.mock.calls[2]).toMatchObject([
+        "https://product.gelatoapis.com/v3/stock/region-availability",
+        { method: "POST", body: JSON.stringify({ products: [gelatoProduct.uid] }), cache: "no-store" },
+      ]);
+    });
+
+    it.each([
+      { productsAvailability: [] },
+      { productsAvailability: [{ productUid: "different-product", availability: [{ stockRegionUid: "EU", status: "in-stock" }] }] },
+      { productsAvailability: [{ productUid: gelatoProduct.uid, availability: [] }] },
+      { productsAvailability: "malformed" },
+    ])("does not invent stock for missing or malformed product evidence", async (stock) => {
+      vi.stubEnv("GELATO_API_KEY", "fixture-gelato-key");
+      vi.useFakeTimers();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(Response.json([{ productUid: gelatoProduct.uid, country: "CH", quantity: 1, price: 10, currency: "USD" }]))
+        .mockResolvedValueOnce(Response.json({ shipmentMethods: [] }))
+        .mockResolvedValueOnce(Response.json(stock));
+      const pending = new GelatoSupplier(fetchImpl).quote(gelatoProduct, "CH");
+      await vi.runAllTimersAsync();
+      expect(await pending).toMatchObject({ baseCostUsd: 10, shippingUsd: null, inStock: null, productionDays: null });
     });
   });
 });

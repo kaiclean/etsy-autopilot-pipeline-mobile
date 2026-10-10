@@ -45,6 +45,7 @@ type FetchOptions = {
   now: Date;
   force?: boolean;
   country?: string;
+  candidates?: SupplierProduct[];
   log: (message: string, level?: "info" | "warn" | "error") => void;
 };
 
@@ -64,7 +65,9 @@ export async function fetchQuotes(db: DB, preset: PodPreset, region: SourcingReg
     }
     let products: SupplierProduct[];
     try {
-      products = await supplier.listProducts(preset);
+      products = opts.candidates
+        ? opts.candidates.filter((product) => product.supplier === supplier.id)
+        : await supplier.listProducts(preset);
     } catch {
       opts.log(`${supplier.id}:${preset} catalog unavailable; stock and cost remain —`, "warn");
       products = [];
@@ -159,8 +162,36 @@ export async function recheckOrderSourcing(
   input: { preset: PodPreset; region: SourcingRegion; country: string; current: SourcingChoice },
   suppliers = getSuppliers(),
 ) {
+  // Order ingestion must not rediscover hundreds of catalog variants synchronously.
+  // Use the current SKU plus the cheapest previously observed SKU per supplier.
+  const known = await latestQuotes(ctx.db, input.preset, input.region);
+  const candidates: SupplierProduct[] = [];
+  for (const supplier of suppliers) {
+    const ranked = known.filter((quote) => quote.supplier === supplier.id && quote.providerRef)
+      .sort((a, b) => (a.baseCostUsd ?? Infinity) + (a.shippingUsd ?? Infinity) -
+        ((b.baseCostUsd ?? Infinity) + (b.shippingUsd ?? Infinity)));
+    const refs = new Set<string>();
+    if (input.current.supplier === supplier.id && input.current.providerRef?.split(":").length !== 2) {
+      if (input.current.providerRef) refs.add(input.current.providerRef);
+    }
+    const currentQuotes = ranked.filter((quote) => input.current.supplier === supplier.id &&
+      (quote.providerRef === input.current.providerRef || quote.providerRef?.startsWith(`${input.current.providerRef}:`)));
+    currentQuotes.forEach((quote) => refs.add(quote.providerRef!));
+    const alternative = ranked.find((quote) => !refs.has(quote.providerRef!));
+    if (alternative?.providerRef) refs.add(alternative.providerRef);
+    for (const ref of refs) {
+      const parts = ref.split(":").map(Number);
+      candidates.push({
+        supplier: supplier.id, preset: input.preset, uid: ref, title: input.preset,
+        baseCostUsd: null, currency: null, fetchedAt: ctx.now,
+        sourceUrl: ranked.find((quote) => quote.providerRef === ref)?.sourceUrl ??
+          (supplier.id === "printify" ? "https://api.printify.com/v1/catalog/blueprints.json" : "https://product.gelatoapis.com/v3/catalogs"),
+        ...(supplier.id === "printify" && parts.length === 3 ? { blueprintId: parts[0], printProviderId: parts[1], variantId: parts[2] } : {}),
+      });
+    }
+  }
   const quotes = await fetchQuotes(ctx.db, input.preset, input.region, {
-    suppliers, now: ctx.now, log: ctx.log, force: true, country: input.country,
+    suppliers, now: ctx.now, log: ctx.log, force: true, country: input.country, candidates,
   });
   const checkedAt = completedAt(ctx.now);
   // Older listings store a blueprint/provider pair, rather than the full variant UID.

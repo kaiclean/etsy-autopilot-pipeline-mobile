@@ -101,7 +101,22 @@ export async function saveReceipts(
       continue;
     }
     const offsite = opts.offsite(r);
-    const recheck = await opts.sourcingRecheck?.(l, r);
+    let recheck: Awaited<ReturnType<typeof recheckOrderSourcing>> | null | undefined;
+    if (opts.sourcingRecheck) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        recheck = await Promise.race([
+          opts.sourcingRecheck(l, r),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Sourcing recheck timed out")), 60_000);
+          }),
+        ]);
+      } catch {
+        log(`Receipt ${r.receiptId}: sourcing unavailable; preserving listing cost and saving the receipt. No supplier order was placed or moved.`, "warn");
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }
     // Fallbacks are recommendations only. A live receipt's actual fulfillment cost is not rewritten to a simulated alternative.
     const sourcedCost = recheck && !recheck.alert && (!recheck.switched || isDemo) ? recheck.choice?.landedCostChf : null;
     const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: sourcedCost ?? l.podCostChf, offsiteAds: offsite });

@@ -7,6 +7,10 @@ import type { SupplierProduct, SupplierQuote } from "./types";
 const PRODUCTS = "https://product.gelatoapis.com/v3";
 const ORDERS = "https://order.gelatoapis.com/v4";
 const SHIPMENTS = "https://shipment.gelatoapis.com/v1";
+const EUROPE_COUNTRIES = new Set(["AT", "BE", "BG", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "NO", "PL", "PT", "RO", "SE", "SI", "SK"]);
+type StockAvailability = {
+  productsAvailability?: { productUid?: string; availability?: { stockRegionUid?: string; status?: string }[] }[];
+};
 const CATALOG_TITLES: Record<PodPreset, RegExp> = {
   posterA3: /\bposters?\b/i, mug: /\bmugs?\b/i, tshirt: /t-?shirts?|\btees?\b/i,
   sweatshirt: /sweatshirts?|crewneck/i, tote: /\btote\b/i, phoneCase: /phone cases?/i,
@@ -79,8 +83,17 @@ export class GelatoSupplier extends GelatoDryRunSupplier {
     // This read lists carrier methods, not product shipping prices or stock.
     // Even a successful response cannot establish shipping for a region alone.
     await this.shipmentsHttp.request(`/shipment-methods?country=${region}`).catch(() => null);
+    // Source: https://dashboard.gelato.com/docs/products/stock/region-availability/
+    // Regional stock is distinct from carrier availability or country support.
+    const stockPath = "/stock/region-availability";
+    const stock = await this.productsHttp.request<StockAvailability>(stockPath, { products: [product.uid] }).catch(() => null);
+    const stockRegion = region === "US" || region === "CA" ? "US-CA" : region === "GB" ? "UK" : EUROPE_COUNTRIES.has(region) ? "EU" : null;
+    const productsAvailability = Array.isArray(stock?.productsAvailability) ? stock.productsAvailability : [];
+    const availability = productsAvailability.find((row) => row?.productUid === product.uid)?.availability;
+    const status = Array.isArray(availability) ? availability.find((row) => row?.stockRegionUid === stockRegion)?.status : undefined;
+    const inStock = status === "in-stock" ? true : status === "out-of-stock" || status === "out-of-stock-replenishable" ? false : null;
     // v4 orders:quote needs a real recipient and artwork; never fabricate either.
-    return { baseCostUsd: price?.price ?? null, shippingUsd: null, inStock: null, productionDays: null, currency: "USD", sourceUrl: `${PRODUCTS}${path}`, fetchedAt: new Date() };
+    return { baseCostUsd: price?.price ?? null, shippingUsd: null, inStock, productionDays: null, currency: "USD", sourceUrl: `${PRODUCTS}${inStock == null ? path : stockPath}`, fetchedAt: new Date() };
   }
 
   // Source: https://dashboard.gelato.com/docs/orders/v4/get/

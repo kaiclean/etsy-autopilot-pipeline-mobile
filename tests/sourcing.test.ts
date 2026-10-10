@@ -6,7 +6,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { eq, sql } from "drizzle-orm";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Supplier, SupplierProduct } from "@/adapters/supplier/types";
 import { SourcingTable } from "@/components/products/sourcing-table";
 import type { DB } from "@/db";
@@ -22,6 +22,11 @@ import { saveReceipts } from "@/pipeline/orders";
 import { fetchQuotes, recheckOrderSourcing, refreshSourcing, sourcedListingCosts, sourcingAvailable } from "@/pipeline/sourcing";
 
 const now = new Date("2026-10-10T12:00:00Z");
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(now);
+});
+afterEach(() => vi.useRealTimers());
 const quote = (overrides: Partial<SourcingQuote> = {}): SourcingQuote => ({
   supplier: "printify", preset: "mug", region: "CH", providerRef: "1:2:3",
   inStock: true, baseCostUsd: 5, shippingUsd: 3, productionDays: 3,
@@ -165,6 +170,7 @@ describe("sourcing persistence and dry-run order decisions", () => {
       supplier: "gelato", preset: "mug", uid: "g", title: "Mug", baseCostUsd: null,
       currency: null, sourceUrl: "https://product.gelatoapis.com/v3/catalogs", fetchedAt: now,
     }]), quote: vi.fn(async () => quote({ supplier: "gelato", providerRef: "g" })) };
+    await fetchQuotes(db, "mug", "EU", { suppliers: [alternative], now, log: ctx.log });
     const decision = await recheckOrderSourcing(ctx, { preset: "mug", region: "EU", country: "FR", current }, [supplier, alternative]);
     expect(decision).toMatchObject({ switched: true, dryRun: true, choice: { supplier: "gelato" } });
     expect(supplier.quote).toHaveBeenLastCalledWith(expect.anything(), "FR");
@@ -173,6 +179,7 @@ describe("sourcing persistence and dry-run order decisions", () => {
     expect(destinationQuotes.every((row) => row.region === "EU")).toBe(true);
     expect(supplier.createProduct).not.toHaveBeenCalled();
     expect(alternative.createProduct).not.toHaveBeenCalled();
+    expect(alternative.listProducts).toHaveBeenCalledTimes(1);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining("No supplier order was placed or moved"), "info");
     expect((await db.select().from(schema.sourcingChoices))).toHaveLength(0);
     const [listing] = await db.insert(schema.listings).values({
@@ -192,6 +199,15 @@ describe("sourcing persistence and dry-run order decisions", () => {
     }], new Map([["123", listing]]), { offsite: () => false, isDemo: false, sourcingRecheck: async () => decision });
     const [live] = await db.select().from(schema.orders).where(eq(schema.orders.etsyReceiptId, "live-sourcing-test"));
     expect(live.podCostChf).toBe(10);
+    const log = vi.fn();
+    await saveReceipts(db, [{
+      receiptId: "dry-sourcing-failed", etsyListingId: "123", totalChf: 30, quantity: 1, buyerCountry: "FR", createdAt: now,
+    }], new Map([["123", listing]]), {
+      offsite: () => false, isDemo: true, log, sourcingRecheck: async () => { throw new Error("Quote failed"); },
+    });
+    const [failed] = await db.select().from(schema.orders).where(eq(schema.orders.etsyReceiptId, "dry-sourcing-failed"));
+    expect(failed.podCostChf).toBe(10);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("saving the receipt"), "warn");
   }));
 
   it("matches a legacy blueprint/provider only when one variant qualifies", async () => withDb(async (db, client) => {
@@ -199,6 +215,7 @@ describe("sourcing persistence and dry-run order decisions", () => {
     const [shop] = await db.select().from(schema.shops).limit(1);
     const supplier = supplierFixture();
     const ctx = { db, now, shopId: shop.id, demo: true, log: vi.fn() };
+    await fetchQuotes(db, "mug", "CH", { suppliers: [supplier], now, log: ctx.log });
     const result = await recheckOrderSourcing(ctx, {
       preset: "mug", region: "CH", country: "CH", current: { ...current, providerRef: "1:2" },
     }, [supplier]);

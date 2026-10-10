@@ -38,7 +38,8 @@ describe("listing supplier selection", () => {
         supplier.quote = async () => ({ baseCostUsd: 10, shippingUsd: 4, inStock: true, productionDays: 3, currency: "USD", sourceUrl: "https://product.gelatoapis.com/v3/catalogs", fetchedAt: new Date() });
         vi.mocked(getSuppliers).mockReturnValue([supplier]);
         await client.exec(readFileSync(path.join(process.cwd(), "drizzle/0015_sourcing.sql"), "utf8"));
-        await refreshSourcing({ db, now: new Date(), log: () => {}, shopId: "demo", demo: true }, [supplier]);
+        await refreshSourcing({ db, now: new Date(), log: () => {}, shopId: "demo", demo: true });
+        expect(getSuppliers).toHaveBeenCalledOnce();
       }
       await runStage("listing", "manual", { db });
       const rows = await db.select().from(schema.listings);
@@ -48,6 +49,7 @@ describe("listing supplier selection", () => {
         expect(pods.map((row) => row.podProvider)).toEqual(DEFAULT_POD_PRESETS.map((preset) => `printify:${preset}`));
         expect(getSuppliers).not.toHaveBeenCalled();
       } else if (caseName === "quoted") {
+        expect(getSuppliers).toHaveBeenCalledOnce();
         expect(pods[0]).toMatchObject({ podProvider: "gelato:tote", supplier: "gelato", supplierProductId: "listing-fixture-tote", status: "quality_failed" });
         expect(pods[0].validation.some((reason) => reason.code === "supplier_dry_run")).toBe(true);
         expect(await db.select().from(schema.supplierProducts)).toHaveLength(1);
