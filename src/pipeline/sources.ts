@@ -96,18 +96,17 @@ export const KEYWORD_SOURCES: KeywordSource[] = [seedListSource, longTailSource,
  * Google Trends relative interest (0-1) for the last 90 days, US.
  * Unofficial endpoint: frequently rate-limited, so failures return null and the caller falls back.
  */
-export async function googleTrendScore(phrase: string, timeoutMs = 6000): Promise<number | null> {
+export function parseGoogleTrendScore(raw: string): number | null {
   try {
-    type GT = { interestOverTime(opts: { keyword: string; startTime: Date; geo: string }): Promise<string> };
-    const mod = (await import("google-trends-api")) as { default?: GT } & GT;
-    const gt: GT = mod.default ?? mod;
-    const raw: string = await Promise.race([
-      gt.interestOverTime({ keyword: phrase, startTime: new Date(Date.now() - 90 * 864e5), geo: "US" }),
-      new Promise<string>((_, rej) => setTimeout(() => rej(new Error("timeout")), timeoutMs)),
-    ]);
-    const data = JSON.parse(raw) as { default?: { timelineData?: { value?: number[] }[] } };
-    const values = (data.default?.timelineData ?? []).map((d) => Number(d.value?.[0] ?? 0));
-    if (values.length < 4) return null;
+    const data = JSON.parse(raw) as { default?: { timelineData?: { value?: unknown[] }[] } };
+    const timeline = data?.default?.timelineData;
+    if (!Array.isArray(timeline) || timeline.length < 4) return null;
+    const values: number[] = [];
+    for (const row of timeline) {
+      if (!row || !Array.isArray(row.value) || !row.value.length) return null;
+      if (row.value.some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100)) return null;
+      values.push(row.value[0] as number);
+    }
     const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
     const recent = avg(values.slice(-4));
     const overall = avg(values) || 1;
@@ -115,5 +114,23 @@ export async function googleTrendScore(phrase: string, timeoutMs = 6000): Promis
     return Math.round((0.6 * (recent / 100) + 0.4 * momentum) * 100) / 100;
   } catch {
     return null;
+  }
+}
+
+export async function googleTrendScore(phrase: string, timeoutMs = 6000, agent?: import("node:https").Agent): Promise<number | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    type GT = { interestOverTime(opts: { keyword: string; startTime: Date; geo: string; agent?: import("node:https").Agent }): Promise<string> };
+    const mod = (await import("google-trends-api")) as { default?: GT } & GT;
+    const gt: GT = mod.default ?? mod;
+    const raw: string = await Promise.race([
+      gt.interestOverTime({ keyword: phrase, startTime: new Date(Date.now() - 90 * 864e5), geo: "US", ...(agent ? { agent } : {}) }),
+      new Promise<string>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), timeoutMs); }),
+    ]);
+    return parseGoogleTrendScore(raw);
+  } catch {
+    return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

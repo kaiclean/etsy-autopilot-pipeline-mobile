@@ -12,11 +12,14 @@ export function parsePinterestTrends(body: unknown, now: Date): HotSignal[] {
     const row = object(raw);
     if (typeof row.keyword !== "string" || !row.keyword.trim()) return [];
     const phrase = row.keyword.trim();
+    const source = new URL("https://trends.pinterest.com/");
+    source.searchParams.set("region", "US");
+    source.searchParams.set("term", phrase);
     return [{
       provider: "pinterest", category: null, title: phrase, phrase: phrase.toLowerCase(),
       rank: null, badge: null, label_text: null,
       metric: typeof row.pct_growth_wow === "number" && Number.isFinite(row.pct_growth_wow) ? row.pct_growth_wow : null,
-      source_url: PINTEREST_GROWING_URL, fetched_at: now,
+      source_url: source.toString(), fetched_at: now,
     }];
   });
 }

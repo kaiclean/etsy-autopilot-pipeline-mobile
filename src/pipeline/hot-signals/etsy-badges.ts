@@ -39,7 +39,7 @@ export function parseEtsyHtml(html: string, now: Date): HotSignal[] {
         || node.attrs["data-bestseller"] === "true";
     }).map(htmlText);
     const badge = labels.find((label) => /^(?:bestseller|best seller|etsy'?s pick)$/i.test(label)) ?? null;
-    const salesLabel = htmlNodes(card, (node) => !titleNodes.has(node) && ["span", "p", "div"].includes(node.tag) && node.children.every((child) => typeof child === "string")).map(htmlText).find((label) => /^(?:\d[\d,]*\s+(?:people\s+)?(?:bought|purchased)\s+(?:this\s+)?in\s+the\s+last\s+24\s+hours|\d[\d,]*\s+sales\s+in\s+the\s+last\s+24\s+hours)$/i.test(label));
+    const salesLabel = htmlNodes(card, (node) => !titleNodes.has(node) && ["span", "p", "div"].includes(node.tag) && node.children.every((child) => typeof child === "string")).map(htmlText).find((label) => /^(?:\d[\d,]*\s+(?:people\s+)?(?:bought|purchased|sold)\s+(?:this\s+)?in\s+(?:the\s+)?last\s+24\s+hours|\d[\d,]*\s+sales\s+in\s+(?:the\s+)?last\s+24\s+hours)$/i.test(label));
     return [{
       provider: "etsy", category: null, title: title.trim(), phrase: title.trim().toLowerCase(),
       rank: null, badge, label_text: salesLabel ?? badge, metric: null,

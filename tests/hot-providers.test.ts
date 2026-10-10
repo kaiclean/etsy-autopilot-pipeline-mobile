@@ -7,6 +7,7 @@ import { createGoogleTrendsSource, googleTrendsSource, rotatedGoogleSeeds } from
 import { decodeHtml, productUrl } from "@/pipeline/hot-signals/html";
 import { createPinterestTrendsSource, parsePinterestTrends, pinterestTrendsSource, PINTEREST_GROWING_URL } from "@/pipeline/hot-signals/pinterest-trends";
 import { observedScore } from "@/pipeline/hot-signals/types";
+import { parseGoogleTrendScore } from "@/pipeline/sources";
 
 const now = new Date("2026-10-10T12:00:00Z");
 const options = () => ({ now, demo: false, log: vi.fn() });
@@ -195,7 +196,10 @@ describe("official Pinterest trends", () => {
     ] }, now);
     expect(signals.map((signal) => signal.metric)).toEqual([42, null, null, -12]);
     expect(signals.every((signal) => signal.rank === null && signal.badge === null)).toBe(true);
-    expect(signals.every((signal) => signal.source_url === PINTEREST_GROWING_URL)).toBe(true);
+    expect(signals.every((signal) => new URL(signal.source_url).origin === "https://trends.pinterest.com")).toBe(true);
+    expect(signals.map((signal) => new URL(signal.source_url).searchParams.get("term"))).toEqual(["Alpine Poster", "Gothic Floral", "Christmas Mug", "Winter Gift"]);
+    expect(signals.every((signal) => new URL(signal.source_url).searchParams.get("region") === "US")).toBe(true);
+    expect(new Set(signals.map((signal) => signal.source_url)).size).toBe(4);
     expect(signals.every((signal) => signal.fetched_at === now)).toBe(true);
     expect(parsePinterestTrends({ keywords: [{ keyword: "wrong shape", pct_growth_wow: 50 }] }, now)).toEqual([]);
     expect(parsePinterestTrends({ trends: [{ keyword: "" }, { keyword: 12 }] }, now)).toEqual([]);
@@ -209,6 +213,18 @@ describe("official Pinterest trends", () => {
     expect(url.toString()).toBe(PINTEREST_GROWING_URL);
     expect(new Headers(init.headers).get("authorization")).toBe(["Bearer", "fixture-pinterest"].join(" "));
     expect(init.redirect).toBe("manual");
+  });
+
+  it("retains multiple keyword observations with distinct official human-readable URLs", async () => {
+    const fixture = fixtureFetcher([JSON.stringify({ trends: [
+      { keyword: "swiss mountain poster", pct_growth_wow: 35 },
+      { keyword: "cozy christmas mug", pct_growth_wow: 60 },
+    ] })]);
+    const signals = await createPinterestTrendsSource({ fetcher: fixture.fetcher, accessToken: () => "fixture-pinterest" }).collectSignals(options());
+    expect(signals).toHaveLength(2);
+    expect(new Set(signals.map((signal) => signal.source_url)).size).toBe(2);
+    expect(signals.map((signal) => new URL(signal.source_url).searchParams.get("term"))).toEqual(["swiss mountain poster", "cozy christmas mug"]);
+    expect(signals.map((signal) => signal.rank)).toEqual([null, null]);
   });
 });
 
@@ -428,6 +444,31 @@ describe("provider controls and failure propagation", () => {
 });
 
 describe("Google Trends budget", () => {
+  it("scores genuine numeric Google timeline observations without defaulting absent values to zero", () => {
+    const raw = JSON.stringify({ default: { timelineData: [25, 50, 75, 100].map((value) => ({ value: [value] })) } });
+    expect(parseGoogleTrendScore(raw)).toBe(0.57);
+    expect(parseGoogleTrendScore(JSON.stringify({ default: { timelineData: Array.from({ length: 4 }, () => ({ value: [0] })) } }))).toBe(0);
+  });
+
+  it.each([undefined, null, "50", -1, 101, {}, []])("rejects absent or nonnumeric Google observation %s", (value) => {
+    const timelineData = [{ value: [25] }, { value: [50] }, { value: [75] }, { value: [value] }];
+    expect(parseGoogleTrendScore(JSON.stringify({ default: { timelineData } }))).toBeNull();
+  });
+
+  it("rejects missing arrays, short timelines, malformed JSON and invalid additional numeric fields", () => {
+    for (const timelineData of [
+      [{ value: [25] }, { value: [50] }, { value: [75] }, {}],
+      [{ value: [25] }, { value: [50] }, { value: [75] }, { value: [] }],
+      [{ value: [25] }, { value: [50] }, { value: [75] }],
+      [{ value: [25] }, { value: [50] }, { value: [75] }, { value: [50, "invalid"] }],
+    ]) {
+      expect(parseGoogleTrendScore(JSON.stringify({ default: { timelineData } }))).toBeNull();
+    }
+    expect(parseGoogleTrendScore("not json")).toBeNull();
+    expect(parseGoogleTrendScore("null")).toBeNull();
+    expect(parseGoogleTrendScore("{}")).toBeNull();
+  });
+
   it("rotates five active seed phrases by UTC day and excludes paused niches", () => {
     const seeds = rotatedGoogleSeeds(now);
     const active = new Set(activeNiches().flatMap((niche) => niche.seeds.map((seed) => seed.phrase)));

@@ -116,9 +116,26 @@ export function createHotFetcher(deps: FetchDeps = {}) {
         throw new Error(`Hot signals: ${url.hostname} HTTP ${response.status}`);
       }
       if (Number(response.headers.get("content-length")) > 2_000_000) throw new Error("response too large");
-      const text = await response.text();
-      if (text.length > 2_000_000) throw new Error("response too large");
-      return text;
+      const reader = response.body?.getReader();
+      if (!reader) return "";
+      const decoder = new TextDecoder();
+      let text = "";
+      let bytes = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > 2_000_000) {
+            await reader.cancel();
+            throw new Error("response too large");
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        return text + decoder.decode();
+      } finally {
+        reader.releaseLock();
+      }
     } catch (error) {
       const status = error instanceof Error ? error.message.match(/HTTP (\d{3})$/)?.[1] : undefined;
       const message = `Hot signals: ${url.hostname} ${status ? `HTTP ${status}` : "request failed"}`;

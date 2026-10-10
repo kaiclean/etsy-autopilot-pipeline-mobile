@@ -117,7 +117,7 @@ export function createAmazonSource(deps: { settings?: () => AmazonSettings; fetc
         out.push(...parseAmazonApi(response, opts.now));
       }
     }
-    if (settings.scrapeEnabled) {
+    if (settings.scrapeEnabled && !(settings.amazonAccessKey && settings.amazonSecretKey && settings.amazonPartnerTag)) {
       for (const page of AMAZON_POD_PAGES) {
         const html = await fetcher.html(`https://www.amazon.com${page.path}`, { scrapeEnabled: true, log: opts.log });
         if (html != null) out.push(...parseAmazonHtml(html, { now: opts.now, category: page.category }));

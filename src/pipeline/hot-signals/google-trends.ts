@@ -2,6 +2,7 @@ import { config } from "@/lib/config";
 import { activeNiches } from "@/lib/niches";
 import { googleTrendScore } from "../sources";
 import { hotFetcher } from "./fetch";
+import { createHotGoogleAgent } from "./google-agent";
 import { hotKeywordSource, type HotSignal } from "./types";
 
 export const GOOGLE_HOT_BUDGET = 5;
@@ -38,7 +39,16 @@ export function createGoogleTrendsSource(deps: {
       await (deps.waitForHost ?? hotFetcher.waitForHost)("trends.google.com");
       let metric: number | null;
       try {
-        metric = await (deps.score ?? googleTrendScore)(phrase);
+        if (deps.score) {
+          metric = await deps.score(phrase);
+        } else {
+          const transport = createHotGoogleAgent(deps.waitForHost);
+          try {
+            metric = await googleTrendScore(phrase, 12_000, transport.agent);
+          } finally {
+            transport.stop();
+          }
+        }
       } catch {
         metric = null;
       }
