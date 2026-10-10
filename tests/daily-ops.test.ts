@@ -214,8 +214,9 @@ describe("weekly health report", () => {
       isDemo: true,
       createdAt: new Date("2026-10-03T12:00:00.000Z"),
     });
-    await db.insert(schema.costs).values({ shopId: shop.id, kind: "ads", amountChf: 3.5, note: "real ads", isDemo: false, createdAt: new Date("2026-10-04T00:00:00.000Z") });
-    await db.insert(schema.costs).values({ shopId: shop.id, kind: "ads", amountChf: 9, note: "demo ads", isDemo: true, createdAt: new Date("2026-10-04T00:00:00.000Z") });
+    await db.insert(schema.costs).values({ shopId: shop.id, kind: "ads_estimate", amountChf: 3.5, note: "estimated ads", isDemo: false, createdAt: new Date("2026-10-04T00:00:00.000Z") });
+    await db.insert(schema.costs).values({ shopId: shop.id, kind: "ads_actual", amountChf: 1.5, note: "actual ads", isDemo: false, createdAt: new Date("2026-10-04T00:00:00.000Z") });
+    await db.insert(schema.costs).values({ shopId: shop.id, kind: "ads_estimate", amountChf: 9, note: "demo ads", isDemo: true, createdAt: new Date("2026-10-04T00:00:00.000Z") });
     await db.insert(schema.dailyStats).values({ date: "2026-10-03", views: 11, favorites: 2, isDemo: false });
     await db.insert(schema.dailyStats).values({ date: "2026-10-03", views: 99, favorites: 9, isDemo: true });
 
@@ -225,7 +226,9 @@ describe("weekly health report", () => {
     expect(report.profitChf).toBe(8.5);
     expect(report.vatChf).toBe(fees.vatOnFeesChf);
     expect(report.podCostChf).toBe(12);
-    expect(report.adsChf).toBe(3.5);
+    expect(report.adsChf).toBe(5);
+    expect(report.adsEstimateChf).toBe(3.5);
+    expect(report.adsActualChf).toBe(1.5);
     expect(report.views).toBe(11);
     expect(report.favorites).toBe(2);
     expect(report.suggestions.map((item) => item.action)).toContain("refresh");

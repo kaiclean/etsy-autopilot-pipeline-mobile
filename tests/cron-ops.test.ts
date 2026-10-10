@@ -197,6 +197,46 @@ describe("publish retry and dashboard", () => {
     expect(publishRetryBlocked({ status: "approved", publishError: "same", publishAttemptedAt: recent }, now)).toBe(false);
   });
 
+  it("does not retry an interrupted external publish without operator reconciliation", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    const attemptedAt = new Date("2026-10-07T06:00:00.000Z");
+    const [row] = await db
+      .insert(listings)
+      .values({
+        shopId: shop.id,
+        niche: "alpine",
+        productType: "pod",
+        podProvider: "printify:posterA3",
+        title: "Swiss Alps wall art poster",
+        tags: TAGS,
+        description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
+        imageUrl: "/api/mockup/posterA3?niche=alpine",
+        priceChf: 24.9,
+        podCostChf: 8,
+        netChf: 5,
+        marginPct: 20,
+        validation: [],
+        status: "publishing",
+        publishAttemptedAt: attemptedAt,
+        isDemo: true,
+      })
+      .returning();
+    adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish: vi.fn() });
+
+    const result = await runStage("publish", "cron", {
+      db,
+      now: new Date(attemptedAt.getTime() + 16 * 60_000),
+      random: () => 0,
+    });
+    const [recovered] = await db.select().from(listings).where(eq(listings.id, row.id));
+
+    expect(recovered.status).toBe("failed");
+    expect(recovered.publishError).toMatch(/check Etsy or Printify/i);
+    expect(result.summary).toMatch(/skipped 1 \(same error within 24h\)/);
+  });
+
   it("shows the publish error on the products page and the alert rail", () => {
     const alerts = buildCockpitAlerts({
       cronRuns: [],
