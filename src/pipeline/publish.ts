@@ -32,24 +32,27 @@ export function absoluteUrl(url: string) {
 
 /** Same stored error is not sent again until this long after the last attempt. */
 export const PUBLISH_RETRY_MS = 24 * 60 * 60 * 1000;
+export const PUBLISH_STALE_MS = 15 * 60 * 1000;
+export const AMBIGUOUS_PUBLISH_ERROR_PREFIX = "Publish attempt ended without a recorded provider result.";
+export const AMBIGUOUS_PUBLISH_ERROR = `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} Check Etsy or Printify before retrying.`;
 
 export function publishRetryBlocked(
   row: { status: string; publishError: string | null; publishAttemptedAt: Date | null },
   now: Date,
 ) {
   if (row.status !== "failed" || !row.publishError || !row.publishAttemptedAt) return false;
-  if (row.publishError.startsWith("Publish attempt ended without a recorded provider result.")) return true;
+  if (row.publishError.startsWith(AMBIGUOUS_PUBLISH_ERROR_PREFIX)) return true;
   return now.getTime() - new Date(row.publishAttemptedAt).getTime() < PUBLISH_RETRY_MS;
 }
 
 export const runPublish: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const staleAttemptCutoff = new Date(ctx.now.getTime() - 15 * 60 * 1000);
+  const staleAttemptCutoff = new Date(ctx.now.getTime() - PUBLISH_STALE_MS);
   const stale = await db
     .update(listings)
     .set({
       status: "failed",
-      publishError: "Publish attempt ended without a recorded provider result. Check Etsy or Printify before retrying.",
+      publishError: AMBIGUOUS_PUBLISH_ERROR,
       updatedAt: ctx.now,
     })
     .where(
@@ -88,7 +91,7 @@ export const runPublish: StageFn = async (ctx) => {
   let held = 0;
   for (const l of approved) {
     if (publishRetryBlocked(l, ctx.now)) {
-      if (l.publishError?.startsWith("Publish attempt ended without a recorded provider result.")) {
+      if (l.publishError?.startsWith(AMBIGUOUS_PUBLISH_ERROR_PREFIX)) {
         held++;
         log(`#${l.id} held for operator reconciliation: ${l.publishError}`, "warn");
       } else {
@@ -100,7 +103,13 @@ export const runPublish: StageFn = async (ctx) => {
     const [claimed] = await db
       .update(listings)
       .set({ status: "publishing", publishAttemptedAt: ctx.now, updatedAt: ctx.now })
-      .where(and(eq(listings.id, l.id), inArray(listings.status, ["approved", "failed"])))
+      .where(
+        and(
+          eq(listings.id, l.id),
+          eq(listings.status, l.status),
+          l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
+        ),
+      )
       .returning({ id: listings.id });
     if (!claimed) {
       skipped++;

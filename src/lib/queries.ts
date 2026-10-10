@@ -21,6 +21,7 @@ import { resolveRequestShop } from "./shops";
 import { getSetting } from "./settings";
 
 const DAY = 864e5;
+export const ANALYTICS_FRESHNESS_HOURS = 36;
 
 function lastNDays(n: number, now = new Date()) {
   return Array.from({ length: n }, (_, i) => dayKey(new Date(now.getTime() - (n - 1 - i) * DAY)));
@@ -380,7 +381,7 @@ export async function getAnalytics() {
       !listing.etsyListingId.startsWith("dry-") &&
       !listing.etsyListingId.startsWith("demo-"),
   );
-  const analyticsFreshCutoff = Date.now() - 36 * 60 * 60 * 1000;
+  const analyticsFreshCutoff = Date.now() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
   const freshAnalyticsListings = publishedListings.filter(
     (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,
   );

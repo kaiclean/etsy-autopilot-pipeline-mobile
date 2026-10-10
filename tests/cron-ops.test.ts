@@ -16,7 +16,7 @@ import { jobRuns, listings, shops, type Listing } from "@/db/schema";
 import { buildCockpitAlerts } from "@/lib/alerts";
 import { withDisclosures } from "@/lib/disclosures";
 import { draftListing } from "@/pipeline/listing";
-import { PUBLISH_RETRY_MS, publishRetryBlocked } from "@/pipeline/publish";
+import { PUBLISH_RETRY_MS, PUBLISH_STALE_MS, publishRetryBlocked } from "@/pipeline/publish";
 import { runStage } from "@/pipeline/runner";
 import { maskSecrets } from "@/pipeline/stage-log";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
@@ -233,7 +233,7 @@ describe("publish retry and dashboard", () => {
 
     const result = await runStage("publish", "cron", {
       db,
-      now: new Date(attemptedAt.getTime() + 16 * 60_000),
+      now: new Date(attemptedAt.getTime() + PUBLISH_STALE_MS + 60_000),
       random: () => 0,
     });
     const [recovered] = await db.select().from(listings).where(eq(listings.id, row.id));

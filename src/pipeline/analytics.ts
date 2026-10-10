@@ -1,4 +1,4 @@
-import { and, eq, like, sql } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
@@ -24,14 +24,21 @@ export const runAnalytics: StageFn = async (ctx) => {
   );
   let dViews = 0;
   let dFavs = 0;
+  const checkedIds: number[] = [];
   for (const l of published) {
     const s = stats[l.etsyListingId!];
     if (!s) continue;
+    checkedIds.push(l.id);
     const dv = Math.max(0, s.views - l.views);
     const df = Math.max(0, s.favorites - l.favorites);
-    await db.update(listings).set({ views: s.views, favorites: s.favorites, analyticsCheckedAt: ctx.now }).where(eq(listings.id, l.id));
+    if (s.views !== l.views || s.favorites !== l.favorites) {
+      await db.update(listings).set({ views: s.views, favorites: s.favorites }).where(eq(listings.id, l.id));
+    }
     dViews += dv;
     dFavs += df;
+  }
+  if (checkedIds.length) {
+    await db.update(listings).set({ analyticsCheckedAt: ctx.now }).where(inArray(listings.id, checkedIds));
   }
 
   const today = dayKey(ctx.now);

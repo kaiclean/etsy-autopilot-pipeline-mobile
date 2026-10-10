@@ -158,7 +158,7 @@ export async function publishHealthReport(db: DB, shopId: string, now: Date) {
       {
         type: "health.report",
         title: "Weekly shop health",
-        body: `${payload.views} views · ${payload.favorites} favorites · ${payload.sales} sales · profit CHF ${payload.profitChf.toFixed(2)} after fees. VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${payload.adsEstimateChf.toFixed(2)}, actual ads CHF ${payload.adsActualChf.toFixed(2)}. ${refresh} to refresh, ${retire} to retire.`,
+        body: `${payload.views} views · ${payload.favorites} favorites · ${payload.sales} sales · profit CHF ${payload.profitChf.toFixed(2)} after fees. VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${(payload.adsEstimateChf ?? payload.adsChf).toFixed(2)}, actual ads CHF ${(payload.adsActualChf ?? 0).toFixed(2)}. ${refresh} to refresh, ${retire} to retire.`,
         severity: "info",
         href: "/",
         shopId,

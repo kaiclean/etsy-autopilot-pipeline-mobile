@@ -282,8 +282,9 @@ export type HealthReportPayload = {
   vatChf: number;
   podCostChf: number;
   adsChf: number;
-  adsEstimateChf: number;
-  adsActualChf: number;
+  /** Optional for health reports saved before ad estimates and actuals were split. */
+  adsEstimateChf?: number;
+  adsActualChf?: number;
   suggestions: HealthSuggestion[];
 };
 
