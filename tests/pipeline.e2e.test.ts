@@ -103,6 +103,8 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
 
     const a = await runStage("analytics", "manual", { db, random });
     expect(a.status).toBe("success");
+    const [syncedListing] = await db.select().from(listings).where(eq(listings.id, target.id));
+    expect(syncedListing.analyticsCheckedAt).toBeInstanceOf(Date);
     const after = await getAnalytics();
     expect(after.totals.orders).toBeGreaterThan(before.totals.orders);
     expect(after.totals.revenue).toBeGreaterThan(before.totals.revenue);

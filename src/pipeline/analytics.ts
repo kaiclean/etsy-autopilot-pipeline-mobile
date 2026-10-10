@@ -32,7 +32,6 @@ export const runAnalytics: StageFn = async (ctx) => {
     await db.update(listings).set({ views: s.views, favorites: s.favorites, analyticsCheckedAt: ctx.now }).where(eq(listings.id, l.id));
     dViews += dv;
     dFavs += df;
-    }
   }
 
   const today = dayKey(ctx.now);

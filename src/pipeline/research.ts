@@ -70,7 +70,17 @@ export const runResearch: StageFn = async (ctx) => {
       sales: sql<number>`count(${orders.id})::int`,
     })
     .from(listings)
-    .innerJoin(orders, and(eq(orders.listingId, listings.id), eq(orders.isDemo, false), gte(orders.createdAt, new Date(ctx.now.getTime() - 90 * 864e5)), lte(orders.createdAt, ctx.now)))
+    .innerJoin(
+      orders,
+      and(
+        eq(orders.listingId, listings.id),
+        eq(orders.shopId, ctx.shopId),
+        eq(orders.matchStatus, "matched"),
+        eq(orders.isDemo, false),
+        gte(orders.createdAt, new Date(ctx.now.getTime() - 90 * 864e5)),
+        lte(orders.createdAt, ctx.now),
+      ),
+    )
     .where(and(realListing, sql`${listings.keywordId} is not null`, notLike(orders.etsyReceiptId, "dry-%"), notLike(orders.etsyReceiptId, "demo-%")))
     .groupBy(listings.keywordId);
   const performance = new Map<number, { views: number; favorites: number; sales: number }>();

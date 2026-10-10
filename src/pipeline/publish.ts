@@ -11,7 +11,7 @@ import { buildFileManifest, manifestIsComplete } from "@/lib/file-manifest";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import { maskSecrets } from "./stage-log";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 
 export function podPreset(provider: string | null): PodPreset | undefined {
   const name = provider?.startsWith("printify:") ? provider.slice("printify:".length) : undefined;
@@ -38,6 +38,7 @@ export function publishRetryBlocked(
   now: Date,
 ) {
   if (row.status !== "failed" || !row.publishError || !row.publishAttemptedAt) return false;
+  if (row.publishError.startsWith("Publish attempt ended without a recorded provider result.")) return true;
   return now.getTime() - new Date(row.publishAttemptedAt).getTime() < PUBLISH_RETRY_MS;
 }
 
@@ -54,6 +55,7 @@ export const runPublish: StageFn = async (ctx) => {
     .where(
       and(
         eq(listings.status, "publishing"),
+        eq(listings.shopId, ctx.shopId),
         isNull(listings.podPublishedAt),
         isNotNull(listings.publishAttemptedAt),
         lt(listings.publishAttemptedAt, staleAttemptCutoff),
@@ -83,10 +85,16 @@ export const runPublish: StageFn = async (ctx) => {
   let ok = 0;
   let failed = 0;
   let skipped = 0;
+  let held = 0;
   for (const l of approved) {
     if (publishRetryBlocked(l, ctx.now)) {
-      skipped++;
-      log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
+      if (l.publishError?.startsWith("Publish attempt ended without a recorded provider result.")) {
+        held++;
+        log(`#${l.id} held for operator reconciliation: ${l.publishError}`, "warn");
+      } else {
+        skipped++;
+        log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
+      }
       continue;
     }
     const [claimed] = await db
@@ -233,7 +241,8 @@ export const runPublish: StageFn = async (ctx) => {
   if (failed) {
     await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" }, ctx.demo);
   }
-  const summary = `Published ${ok}, failed ${failed}${skipped ? `, skipped ${skipped} (same error within 24h)` : ""} (${etsy.mode})`;
+  const summary = `Published ${ok}, failed ${failed}${skipped ? `, skipped ${skipped} (same error within 24h)` : ""}${held ? `, held ${held} for operator reconciliation` : ""} (${etsy.mode})`;
   if (failed > 0) throw new Error(summary);
+  if (held > 0) return stageResult(summary, "warning");
   return summary;
 };

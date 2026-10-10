@@ -213,6 +213,9 @@ export function analyticsListingsQuery(db: DB) {
       niche: listings.niche,
       views: listings.views,
       analyticsCheckedAt: listings.analyticsCheckedAt,
+      publishMode: listings.publishMode,
+      isDemo: listings.isDemo,
+      etsyListingId: listings.etsyListingId,
       title: listings.title,
       imageUrl: displayImageUrlSql(listings.imageUrl, listings.niche),
     })
@@ -368,7 +371,15 @@ export async function getAnalytics() {
   const views = series.reduce((s, x) => s + x.views, 0);
   const favorites = stats.filter((s) => idx.has(s.date)).reduce((s, x) => s + x.favorites, 0);
   const operatingCosts = costByKind.ai_image + costByKind.ai_text + costByKind.ads_actual + costByKind.other;
-  const publishedListings = allListings.filter((listing) => listing.status === "published");
+  const publishedListings = allListings.filter(
+    (listing) =>
+      listing.status === "published" &&
+      listing.publishMode === "live" &&
+      !listing.isDemo &&
+      listing.etsyListingId &&
+      !listing.etsyListingId.startsWith("dry-") &&
+      !listing.etsyListingId.startsWith("demo-"),
+  );
   const analyticsFreshCutoff = Date.now() - 36 * 60 * 60 * 1000;
   const freshAnalyticsListings = publishedListings.filter(
     (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,

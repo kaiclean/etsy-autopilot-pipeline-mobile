@@ -195,6 +195,12 @@ describe("publish retry and dashboard", () => {
     expect(publishRetryBlocked({ status: "failed", publishError: "same", publishAttemptedAt: due }, now)).toBe(false);
     expect(publishRetryBlocked({ status: "failed", publishError: null, publishAttemptedAt: recent }, now)).toBe(false);
     expect(publishRetryBlocked({ status: "approved", publishError: "same", publishAttemptedAt: recent }, now)).toBe(false);
+    expect(
+      publishRetryBlocked(
+        { status: "failed", publishError: "Publish attempt ended without a recorded provider result. Check Etsy.", publishAttemptedAt: due },
+        new Date(now.getTime() + 10 * PUBLISH_RETRY_MS),
+      ),
+    ).toBe(true);
   });
 
   it("does not retry an interrupted external publish without operator reconciliation", async () => {
@@ -232,9 +238,10 @@ describe("publish retry and dashboard", () => {
     });
     const [recovered] = await db.select().from(listings).where(eq(listings.id, row.id));
 
+    expect(result.status).toBe("warning");
     expect(recovered.status).toBe("failed");
     expect(recovered.publishError).toMatch(/check Etsy or Printify/i);
-    expect(result.summary).toMatch(/skipped 1 \(same error within 24h\)/);
+    expect(result.summary).toMatch(/held 1 for operator reconciliation/);
   });
 
   it("shows the publish error on the products page and the alert rail", () => {
