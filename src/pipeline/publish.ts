@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, like, lt, notLike, or } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
@@ -69,19 +69,37 @@ export const runPublish: StageFn = async (ctx) => {
     )
     .returning({ id: listings.id });
   if (stale.length) log(`Marked ${stale.length} interrupted publish attempt(s) for operator reconciliation`, "warn");
+  const [{ held }] = await db
+    .select({ held: count() })
+    .from(listings)
+    .where(and(
+      eq(listings.shopId, ctx.shopId),
+      eq(listings.status, "failed"),
+      like(listings.publishError, `${AMBIGUOUS_PUBLISH_ERROR_PREFIX}%`),
+      ctx.demo ? undefined : eq(listings.isDemo, false),
+    ));
+  if (held) log(`${held} listing(s) held for operator reconciliation`, "warn");
   const approved = await db
     .select()
     .from(listings)
     .where(
       and(
         eq(listings.shopId, ctx.shopId),
-        inArray(listings.status, ["approved", "failed"]),
+        or(
+          eq(listings.status, "approved"),
+          and(
+            eq(listings.status, "failed"),
+            or(isNull(listings.publishError), notLike(listings.publishError, `${AMBIGUOUS_PUBLISH_ERROR_PREFIX}%`)),
+          ),
+        ),
         // Seeded demo rows never reach a live Etsy or Printify shop.
         ctx.demo ? undefined : eq(listings.isDemo, false),
       ),
     )
     .limit(10);
-  if (approved.length === 0) return "Nothing approved to publish.";
+  if (approved.length === 0) {
+    return held ? stageResult(`Nothing approved to publish; held ${held} for operator reconciliation`, "warning") : "Nothing approved to publish.";
+  }
 
   const etsy = await getEtsyAdapter(db, ctx.random);
   const printify = await getPrintifyAdapter({ db, random: ctx.random });
@@ -90,16 +108,10 @@ export const runPublish: StageFn = async (ctx) => {
   let ok = 0;
   let failed = 0;
   let skipped = 0;
-  let held = 0;
   for (const l of approved) {
     if (publishRetryBlocked(l, ctx.now)) {
-      if (l.publishError?.startsWith(AMBIGUOUS_PUBLISH_ERROR_PREFIX)) {
-        held++;
-        log(`#${l.id} held for operator reconciliation: ${l.publishError}`, "warn");
-      } else {
-        skipped++;
-        log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
-      }
+      skipped++;
+      log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
       continue;
     }
     const check = validateListing(l);
@@ -138,12 +150,18 @@ export const runPublish: StageFn = async (ctx) => {
           l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
         ),
       )
-      .returning({ id: listings.id });
+      .returning({ id: listings.id, publishAttemptCount: listings.publishAttemptCount });
     if (!claimed) {
       skipped++;
       log(`#${l.id} skipped: another publish run claimed it`, "warn");
       continue;
     }
+    const claimWhere = and(
+      eq(listings.id, claimed.id),
+      eq(listings.status, "publishing"),
+      eq(listings.publishAttemptCount, claimed.publishAttemptCount),
+      eq(listings.publishAttemptedAt, ctx.now),
+    );
     try {
       let etsyListingId: string | null = null;
       let printifyProductId: string | null = null;
@@ -217,7 +235,7 @@ export const runPublish: StageFn = async (ctx) => {
         log(`#${l.id} → Printify product ${result.productId} created, not published to Etsy (${printify.mode})`);
       }
       const mode = l.productType === "digital" ? etsy.mode : printify.mode;
-      await db
+      const [completed] = await db
         .update(listings)
         .set({
           status: nextStatus,
@@ -231,7 +249,13 @@ export const runPublish: StageFn = async (ctx) => {
           publishedAt: nextStatus === "published" ? ctx.now : null,
           updatedAt: ctx.now,
         })
-        .where(eq(listings.id, l.id));
+        .where(claimWhere)
+        .returning({ id: listings.id });
+      if (!completed) {
+        skipped++;
+        log(`#${l.id} skipped: publish claim changed before completion`, "warn");
+        continue;
+      }
       await db.insert(costs).values({
         shopId: ctx.shopId,
         kind: "listing_fee",
@@ -242,7 +266,7 @@ export const runPublish: StageFn = async (ctx) => {
       ok++;
     } catch (e) {
       const msg = maskSecrets(e instanceof Error ? e.message : String(e));
-      await db
+      const [completed] = await db
         .update(listings)
         .set({
           status: "failed",
@@ -251,7 +275,13 @@ export const runPublish: StageFn = async (ctx) => {
           ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
           updatedAt: ctx.now,
         })
-        .where(eq(listings.id, l.id));
+        .where(claimWhere)
+        .returning({ id: listings.id });
+      if (!completed) {
+        skipped++;
+        log(`#${l.id} skipped: publish claim changed before recording failure`, "warn");
+        continue;
+      }
       log(`#${l.id} publish failed: ${msg}`, "error");
       failed++;
     }

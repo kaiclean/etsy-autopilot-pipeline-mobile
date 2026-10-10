@@ -106,7 +106,7 @@ export async function getHomeData() {
   }
   for (const x of c) {
     const b = byDay.get(dayKey(x.createdAt));
-    if (b && x.kind !== "listing_fee") b.costs += x.amountChf;
+    if (b && x.kind !== "listing_fee" && x.kind !== "ads_estimate") b.costs += x.amountChf;
   }
   for (const s of stats) {
     const b = byDay.get(s.date);
