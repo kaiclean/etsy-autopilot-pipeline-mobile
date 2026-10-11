@@ -8,11 +8,14 @@ import { isPlaceholderUrl } from "@/lib/art-quality";
 import { maskSecrets } from "@/pipeline/stage-log";
 
 export function sanitizeReassessmentError(error: unknown) {
+  if (error instanceof Error && ("query" in error || /^Failed query:/i.test(error.message))) {
+    return "Database query failed; query details withheld";
+  }
   return maskSecrets((error instanceof Error ? error.message : "Unknown error")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[URL redacted]")
     .replace(/data:[^\s"'<>]+/gi, "[image data redacted]")
     .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(/\b(?:token|secret|password|api[_-]?key)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "[credential redacted]"))
+    .replace(/\b(?:(?:(?:access|refresh|id)[_-]?)?token|(?:client[_-]?)?secret|password|api[_-]?key)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "[credential redacted]"))
     .replace(/\s+/g, " ").trim().slice(0, 300) || "Unknown error";
 }
 

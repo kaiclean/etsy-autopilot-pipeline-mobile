@@ -139,6 +139,18 @@ describe("live visual gate", () => {
     expect(sanitizeReassessmentError(new Error("x".repeat(400)))).toHaveLength(300);
   });
 
+  it("withholds database query parameters and masks persisted camelCase credentials", () => {
+    const credentials = JSON.stringify({ accessToken: "private-access", refreshToken: "private-refresh", clientSecret: "private-secret" });
+    const safe = sanitizeReassessmentError(new Error(credentials));
+    for (const value of ["private-access", "private-refresh", "private-secret"]) expect(safe).not.toContain(value);
+    expect(sanitizeReassessmentError(new Error(`Failed query: INSERT INTO settings VALUES ('${credentials}')\nparams: private-access`))).toBe(
+      "Database query failed; query details withheld",
+    );
+    expect(sanitizeReassessmentError(Object.assign(new Error("params: private-access"), { query: "INSERT INTO settings" }))).toBe(
+      "Database query failed; query details withheld",
+    );
+  });
+
   it("explicitly re-assesses unscored rejected designs without approving listings", async () => {
     const client = new PGlite("memory://");
     try {

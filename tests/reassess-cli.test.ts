@@ -38,13 +38,16 @@ it.each([
   expect(JSON.parse(log.mock.calls[0][0])).toEqual({ applied: options.apply, assessments: [] });
 });
 
-it("prints a sanitized top-level failure without a stack or database URL", async () => {
+it.each([
+  ["Database unavailable https://db.example/?token=private-url-value test-private-credential", "Database unavailable [URL redacted] [redacted]"],
+  ['Failed query: INSERT INTO settings\nparams: {"accessToken":"private-access","refreshToken":"private-refresh"}', "Database query failed; query details withheld"],
+])("prints a sanitized top-level failure without a stack or credentials", async (message, safe) => {
   process.argv = ["node", "reassess-designs.ts", "68"];
   vi.stubEnv("OLLAMA_API_KEY", "test-private-credential");
-  mocks.getDb.mockRejectedValue(new Error("Database unavailable https://db.example/?token=private-url-value test-private-credential"));
+  mocks.getDb.mockRejectedValue(new Error(message));
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
   await import("@/db/reassess-designs");
   await vi.waitFor(() => expect(log).toHaveBeenCalled());
-  expect(log).toHaveBeenCalledWith("Design re-assessment failed: Database unavailable [URL redacted] [redacted]. No listings were approved.");
+  expect(log).toHaveBeenCalledWith(`Design re-assessment failed: ${safe}. No listings were approved.`);
   expect(process.exitCode).toBe(1);
 });
