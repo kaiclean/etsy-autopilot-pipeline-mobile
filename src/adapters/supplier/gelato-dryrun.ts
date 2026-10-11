@@ -13,7 +13,7 @@ export class GelatoDryRunSupplier implements Supplier {
 
   async quote(product: SupplierProduct, region: string): Promise<SupplierQuote> {
     if (product.supplier !== this.id || !/^[A-Z]{2}$/.test(region)) throw new Error("Invalid Gelato quote input");
-    return { baseCostUsd: null, shippingUsd: null, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() };
+    return { baseCostUsd: null, shippingUsd: null, inStock: null, productionDays: null, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() };
   }
 
   async createProduct(input: SupplierProductInput) {

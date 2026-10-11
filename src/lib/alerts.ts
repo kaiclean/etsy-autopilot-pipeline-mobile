@@ -1,12 +1,29 @@
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import type { DB } from "@/db";
-import { jobRuns, listings } from "@/db/schema";
+import { events, jobRuns, listings } from "@/db/schema";
 import { listingNeedsEtsyId } from "@/lib/catalog-filters";
 import { visible } from "@/lib/events";
 import { isProviderCreditsError } from "@/lib/provider-errors";
 import type { EtsyTokens } from "@/lib/settings";
+import { emit } from "@/lib/events";
 
 export type AlertSeverity = "blocker" | "watch" | "info";
+
+export async function raiseSourcingAlert(db: DB, input: {
+  preset: string; region: string; reason: string; shopId: string; demo: boolean; switched?: boolean;
+}) {
+  const type = input.switched ? "sourcing.fallback" : "sourcing.unavailable";
+  const title = `${input.switched ? "Sourcing fallback (dry-run)" : "Sourcing needs review"} · ${input.preset}/${input.region}`;
+  const [recent] = await db.select({ id: events.id }).from(events).where(and(
+    eq(events.shopId, input.shopId), eq(events.isDemo, input.demo), eq(events.type, type), eq(events.title, title),
+    gte(events.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000)),
+  )).limit(1);
+  if (recent) return;
+  await emit(db, {
+    type, title,
+    body: input.reason, severity: "warning", href: "/products/sourcing", shopId: input.shopId,
+  }, input.demo, { push: false });
+}
 
 export type CockpitAlert = {
   id: string;

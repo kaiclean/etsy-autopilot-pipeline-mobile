@@ -33,9 +33,9 @@ describe("supplier catalog persistence", () => {
     const settings = { enabledPresets: ["tote" as const], suppliers: { tote: "gelato" as const } };
     expect((await quoteEnabledProducts(db, settings, [supplier], (text) => notes.push(text))).costs.tote).toBeNull();
     expect(notes.join(" ")).toContain("unverified");
-    supplier.quote = async () => ({ baseCostUsd: 12, shippingUsd: 4, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() });
+    supplier.quote = async () => ({ baseCostUsd: 12, shippingUsd: 4, inStock: true, productionDays: 3, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() });
     expect((await quoteEnabledProducts(db, settings, [supplier], () => {})).costs.tote).toBe(round2(usdToChf(16)));
-    supplier.quote = async () => ({ baseCostUsd: NaN, shippingUsd: 4, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() });
+    supplier.quote = async () => ({ baseCostUsd: NaN, shippingUsd: 4, inStock: true, productionDays: 3, currency: "USD", sourceUrl: product.sourceUrl, fetchedAt: new Date() });
     expect((await quoteEnabledProducts(db, settings, [supplier], () => {})).costs.tote).toBeNull();
     expect((await quoteEnabledProducts(db, settings, [], () => {})).costs.tote).toBeNull();
   });

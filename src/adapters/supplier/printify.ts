@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { PrintifyLiveClient } from "@/adapters/printify/client";
 import { PrintifyDryRunAdapter } from "@/adapters/printify/dryrun";
-import { blueprintRows, pickBlueprint, pickProvider, pickVariantIds, providerRows, variantRows } from "@/adapters/printify/catalog";
+import { blueprintRows, pickBlueprint, pickVariantIds, providerRows, variantRows } from "@/adapters/printify/catalog";
 import type { PrintifyAdapter } from "@/adapters/printify/types";
 import { config, hasPrintifyCredentials } from "@/lib/config";
 import { isPodPreset, POD_PRESETS, type PodPreset } from "@/lib/fees";
@@ -9,6 +9,15 @@ import { SupplierHttp } from "./http";
 import type { Supplier, SupplierProduct, SupplierProductInput, SupplierQuote } from "./types";
 
 const API = "https://api.printify.com/v1";
+type QuoteVariant = { id: number; cost?: number; currency?: string; is_available?: boolean };
+type Shipping = {
+  handling_time?: { value?: number; unit?: string };
+  profiles?: { variant_ids?: number[]; countries?: string[]; first_item?: { cost?: number; currency?: string } }[];
+};
+
+function usdCost(cents: unknown, currency: string = "USD"): number | null {
+  return currency === "USD" && typeof cents === "number" && Number.isFinite(cents) && cents >= 0 ? cents / 100 : null;
+}
 
 /** Existing Printify adapter stays intact. This issue exposes only dry-run creation. */
 export class PrintifySupplier implements Supplier {
@@ -18,8 +27,6 @@ export class PrintifySupplier implements Supplier {
   private http: SupplierHttp;
   private catalog = new Map<PodPreset, Promise<SupplierProduct[]>>();
   private blueprints?: ReturnType<SupplierHttp["request"]>;
-  private costs = new Map<string, number>();
-  private shopProducts?: Promise<{ id: string; blueprint_id: number; print_provider_id: number }[]>;
 
   constructor(fetchImpl: typeof fetch = fetch) {
     this.adapter = new PrintifyDryRunAdapter(() => 1);
@@ -41,45 +48,62 @@ export class PrintifySupplier implements Supplier {
     this.blueprints ??= this.http.request("/catalog/blueprints.json").catch((error) => { this.blueprints = undefined; throw error; });
     const blueprint = pickBlueprint(preset, blueprintRows(await this.blueprints));
     if (!blueprint) return [];
-    const provider = pickProvider(providerRows(await this.http.request(`/catalog/blueprints/${blueprint.id}/print_providers.json`)));
-    if (!provider) return [];
-    const variantsUrl = `${API}/catalog/blueprints/${blueprint.id}/print_providers/${provider.id}/variants.json`;
-    const variants = variantRows(await this.http.request(variantsUrl.slice(API.length)));
-    const variantId = pickVariantIds(preset, variants)[0];
-    if (variantId == null) return [];
-    const shippingUrl = `${API}/catalog/blueprints/${blueprint.id}/print_providers/${provider.id}/shipping.json`;
-    const shipping = await this.http.request<{ profiles?: { variant_ids?: number[]; countries?: string[]; first_item?: { cost?: number; currency?: string } }[] }>(shippingUrl.slice(API.length));
-    for (const profile of shipping.profiles ?? []) {
-      if (!profile.variant_ids?.includes(variantId) || profile.first_item?.currency !== "USD") continue;
-      const cents = profile.first_item.cost;
-      if (typeof cents !== "number" || !Number.isFinite(cents) || cents < 0) continue;
-      for (const country of profile.countries ?? []) this.costs.set(`${blueprint.id}:${provider.id}:${variantId}:${country}`, cents / 100);
+    const providers = providerRows(await this.http.request(`/catalog/blueprints/${blueprint.id}/print_providers.json`));
+    const out: SupplierProduct[] = [];
+    for (const provider of providers) {
+      const path = `/catalog/blueprints/${blueprint.id}/print_providers/${provider.id}`;
+      const variants = variantRows(await this.http.request(`${path}/variants.json?show-out-of-stock=1`).catch(() => null));
+      const variantId = pickVariantIds(preset, variants)[0];
+      if (variantId == null) continue;
+      // Keep each provider candidate, including unknown or unavailable variants.
+      // Only a fresh quote can establish stock and landed cost for selection.
+      out.push({
+        supplier: this.id, preset, uid: `${blueprint.id}:${provider.id}:${variantId}`, title: `${blueprint.title} · ${provider.title}`,
+        baseCostUsd: null, currency: null, sourceUrl: `${API}${path}/variants.json?show-out-of-stock=1`, fetchedAt: new Date(),
+        blueprintId: blueprint.id, printProviderId: provider.id, variantId,
+      });
     }
-    // Catalog variants do not establish a landed cost. A missing quote remains unknown.
-    return [{
-      supplier: this.id, preset, uid: `${blueprint.id}:${provider.id}:${variantId}`, title: blueprint.title,
-      baseCostUsd: null, currency: null, sourceUrl: shippingUrl, fetchedAt: new Date(),
-      blueprintId: blueprint.id, printProviderId: provider.id, variantId,
-    }];
+    return out;
   }
 
   async quote(product: SupplierProduct, region: string): Promise<SupplierQuote> {
     if (product.supplier !== this.id || !/^[A-Z]{2}$/.test(region)) throw new Error("Invalid Printify quote input");
     let baseCostUsd: number | null = null;
+    let shippingUsd: number | null = null;
+    let inStock: boolean | null = null;
+    let productionDays: number | null = null;
     let sourceUrl = product.sourceUrl;
     if (hasPrintifyCredentials() && product.blueprintId != null && product.printProviderId != null && product.variantId != null) {
-      this.shopProducts ??= this.readShopProducts().catch((error) => { this.shopProducts = undefined; throw error; });
-      const existing = (await this.shopProducts).find((row) => row.blueprint_id === product.blueprintId && row.print_provider_id === product.printProviderId);
-      if (existing) {
-        sourceUrl = `${API}/shops/${encodeURIComponent(config.printify.shopId!)}/products/${encodeURIComponent(existing.id)}.json`;
-        // Source: https://developers.printify.com/#products — cost is USD cents;
-        // price is the seller's retail price and must never be used as production cost.
-        const payload = await this.http.request<{ variants?: { id: number; cost?: number; is_available?: boolean }[] }>(sourceUrl.slice(API.length));
-        const variant = payload.variants?.find((row) => row.id === product.variantId && row.is_available === true);
-        if (typeof variant?.cost === "number" && Number.isFinite(variant.cost) && variant.cost >= 0) baseCostUsd = variant.cost / 100;
+      const path = `/catalog/blueprints/${product.blueprintId}/print_providers/${product.printProviderId}`;
+      sourceUrl = `${API}${path}/variants.json?show-out-of-stock=1`;
+      const variants = variantRows(await this.http.request(`${path}/variants.json?show-out-of-stock=1`).catch(() => null)) as QuoteVariant[];
+      const variant = variants.find((row) => row.id === product.variantId);
+      baseCostUsd = usdCost(variant?.cost, variant?.currency);
+      inStock = typeof variant?.is_available === "boolean" ? variant.is_available : null;
+      const shipping = await this.http.request<Shipping>(`${path}/shipping.json`).catch(() => null);
+      const handling = shipping?.handling_time;
+      if ((handling?.unit === "day" || handling?.unit === "days") && typeof handling.value === "number" && Number.isInteger(handling.value) && handling.value >= 0) {
+        productionDays = handling.value;
+      }
+      const profiles = (shipping?.profiles ?? []).filter((row) => row.variant_ids?.includes(product.variantId!));
+      const profile = profiles.find((row) => row.countries?.includes(region))
+        ?? profiles.find((row) => row.countries?.includes("REST_OF_THE_WORLD"));
+      shippingUsd = profile?.first_item?.currency === "USD" ? usdCost(profile.first_item.cost) : null;
+      if (baseCostUsd == null || inStock == null) {
+        const existing = (await this.readShopProducts().catch(() => [])).find((row) => row.blueprint_id === product.blueprintId && row.print_provider_id === product.printProviderId);
+        if (existing) {
+          const url = `${API}/shops/${encodeURIComponent(config.printify.shopId!)}/products/${encodeURIComponent(existing.id)}.json`;
+          // Source: https://developers.printify.com/#products — cost is USD cents;
+          // price is the seller's retail price, never a production cost.
+          const payload = await this.http.request<{ variants?: QuoteVariant[] }>(url.slice(API.length)).catch(() => null);
+          const shopVariant = payload?.variants?.find((row) => row.id === product.variantId);
+          const cost = usdCost(shopVariant?.cost, shopVariant?.currency);
+          if (baseCostUsd == null && cost != null) { baseCostUsd = cost; sourceUrl = url; }
+          if (inStock == null && typeof shopVariant?.is_available === "boolean") { inStock = shopVariant.is_available; sourceUrl = url; }
+        }
       }
     }
-    return { baseCostUsd, shippingUsd: this.costs.get(`${product.uid}:${region}`) ?? this.costs.get(`${product.uid}:REST_OF_THE_WORLD`) ?? null, currency: "USD", sourceUrl, fetchedAt: new Date() };
+    return { baseCostUsd, shippingUsd, inStock, productionDays, currency: "USD", sourceUrl, fetchedAt: new Date() };
   }
 
   private async readShopProducts() {

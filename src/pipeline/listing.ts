@@ -1,7 +1,5 @@
 import { and, eq } from "drizzle-orm";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
-import { getSuppliers } from "@/adapters/supplier";
-import { quoteEnabledProducts } from "@/adapters/supplier/catalog";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
@@ -22,6 +20,7 @@ import { listingImageForProduct } from "./mockup";
 import { buildProductTitle, productKeyword } from "@/lib/product-title";
 import { MIN_DESIGN_SCORE } from "@/lib/design-quality";
 import { stageResult, type StageContext, type StageFn } from "./types";
+import { sourcedListingCosts } from "./sourcing";
 
 export function pickProduct(niche: Niche, r: number): { type: ProductType; pod?: PodPreset } {
   const mix = NICHES[niche].productMix;
@@ -185,6 +184,9 @@ async function listRung(
     gate.reasons.push({ field: "description", code: "supplier_dry_run", severity: "error", message: "This supplier/product type is dry-run only; live fulfillment is not enabled." });
   }
   const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
+  if (rung.costIsEstimate) {
+    validation.push({ field: "price", code: "sourcing_estimate", severity: "warning", message: "POD cost is a preset estimate; no fresh verified sourcing quote." });
+  }
   await ctx.db.insert(listings).values({
     shopId: ctx.shopId,
     designId: design.id,
@@ -194,6 +196,8 @@ async function listRung(
     podProvider,
     supplier: rung.product.type === "pod" ? supplierId : null,
     supplierProductId: supplierProduct?.uid ?? null,
+    podBlueprintId: supplierProduct?.blueprintId ?? null,
+    podPrintProviderId: supplierProduct?.printProviderId ?? null,
     title: draft.title,
     tags: draft.tags,
     description: draft.description,
@@ -242,10 +246,7 @@ export const runListing: StageFn = async (ctx) => {
   if (pending.length === 0) return "No new designs waiting for listings.";
   const llm = getLLMProvider({ demo: ctx.demo });
   const podSettings = await getSetting(db, "podProducts");
-  const additional = podSettings.enabledPresets.filter((preset) => !DEFAULT_POD_PRESETS.includes(preset) || podSettings.suppliers[preset] === "gelato");
-  const quoted = additional.length
-    ? await quoteEnabledProducts(db, { ...podSettings, enabledPresets: additional }, getSuppliers(), (message) => log(message, "warn"))
-    : { costs: {}, products: {} };
+  const quoted = await sourcedListingCosts(db, podSettings.enabledPresets, ctx.now);
   log(`Listing writer: ${llm.name}${llm.name === "mock-template" ? " (DEMO template copy)" : ""}`);
 
   let created = 0;
@@ -276,11 +277,11 @@ export const runListing: StageFn = async (ctx) => {
     }
     let listed = 0;
     const siblingTitles: string[] = [];
-    for (const rung of quoteLadder(design.niche, podSettings.enabledPresets, quoted.costs)) {
+    for (const rung of quoteLadder(design.niche, podSettings.enabledPresets, quoted.costs, quoted.estimates)) {
       try {
         const preset = rung.product.pod;
         const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm, siblingTitles,
-          preset ? podSettings.suppliers[preset] ?? "printify" : "printify", preset ? quoted.products[preset] : undefined);
+          preset ? quoted.suppliers[preset] ?? podSettings.suppliers[preset] ?? "printify" : "printify", preset ? quoted.products[preset] : undefined);
         if (made.fixes.length) log(`Auto-fixed design #${design.id} ${rung.label} before the quality gate: ${made.fixes.join("; ")}`);
         if (made.errors.length) {
           invalid++;

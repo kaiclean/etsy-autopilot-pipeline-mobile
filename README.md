@@ -94,6 +94,18 @@ Before this change a global 55% target, with Offsite Ads on, solved near CHF 54 
 
 Digital publish uploads **one PNG**. Listing copy says that. It does not promise a 300 DPI pack in 2:3, 3:4, 4:5, 11x14, and ISO A, or an editable template. Those exports are not generated yet. POD queue images use a template mockup at `/api/mockup/{preset}`; the print file stays the design artwork.
 
+### Supplier sourcing (dry-run)
+
+Apply `drizzle/0016_sourcing.sql` explicitly with your Postgres SQL console (or `psql "$DATABASE_URL" -f drizzle/0016_sourcing.sql`). It is intentionally **not** in the auto-migration journal. Until applied, sourcing is disabled and existing preset costs remain estimates.
+
+When generating future Drizzle migrations, preserve the manual sourcing tables with idempotent SQL rather than recreating them. `orders.sourcing_recheck` is accessed with explicit SQL so existing order queries still work before this manual column is installed.
+
+Products → **Compare suppliers** shows each enabled product across CH, EU (Germany representative), and US. The existing daily Maintenance cron refreshes quotes from every connected Printify provider and Gelato. Quotes are reused for at most 24 hours. Only explicit in-stock quotes with complete USD base and shipping costs qualify; the cheapest landed CHF cost wins, with production days breaking ties. Unknown stock, cost, or production time displays `—`. No qualifying quote preserves the current choice and records an alert.
+
+`SOURCING_DEFAULT_REGION` defaults to `CH`; the persisted `sourcing.defaultRegion` setting can override it. `SOURCING_SWITCH_THRESHOLD_PCT` defaults to `10`. Listing prices and margins use fresh chosen costs, otherwise preset costs carry a `sourcing_estimate` warning. Products without verified preset or sourced costs are skipped. Default Printify presets retain their existing listing eligibility and demo status; Gelato and non-default presets stay dry-run-only. Sourcing never changes publish mode or bypasses publish gates.
+
+New POD receipts force fresh reads for the actual buyer country, recorded separately in `supplier_quotes.destination_country` so they do not overwrite representative region comparisons. Rechecks use the current SKU and the cheapest previously observed alternative per supplier instead of rediscovering large catalogs during receipt ingestion. Stock failures or cost increases above the threshold record a fallback recommendation in `orders.sourcing_recheck` and an event. This never places or moves a supplier order or changes publish mode. Live receipt profit is not recalculated using a simulated fallback. Printify base cost must come from an actual cost field, never retail price. Gelato catalog pricing alone does not prove stock or region-only shipping; unavailable API facts remain unknown. Optional Printful is not connected.
+
 ### Listing validator
 
 `src/lib/listing-validator.ts` checks:

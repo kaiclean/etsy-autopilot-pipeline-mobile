@@ -17,6 +17,7 @@ export type LadderRung = {
   podCostChf: number;
   netChf: number;
   marginPct: number;
+  costIsEstimate?: boolean;
 };
 
 function snap90(value: number) {
@@ -63,7 +64,7 @@ function podPrice(niche: Niche, preset: PodPreset, cost: number) {
  * then poster, mug, tee, and sweatshirt. POD prices include Etsy fees, VAT, Printify cost,
  * and 15% offsite ads, and stay at about 30% net.
  */
-export function quoteLadder(niche: Niche, enabled: readonly PodPreset[] = DEFAULT_POD_PRESETS, quotedCosts: Partial<Record<PodPreset, number | null>> = {}): LadderRung[] {
+export function quoteLadder(niche: Niche, enabled: readonly PodPreset[] = DEFAULT_POD_PRESETS, quotedCosts: Partial<Record<PodPreset, number | null>> = {}, estimates: Partial<Record<PodPreset, boolean>> = {}): LadderRung[] {
   const entry = quote(digitalEntryPrice(niche), 0);
   const mid = quote(digitalMidPrice(niche), 0);
   const podRungs: LadderRung[] = [...new Set(enabled)].flatMap((preset) => {
@@ -76,6 +77,7 @@ export function quoteLadder(niche: Niche, enabled: readonly PodPreset[] = DEFAUL
       deliverable: `One made-to-order ${label.toLowerCase()}`,
       product: { type: "pod", pod: preset },
       ...quote(podPrice(niche, preset, cost), cost),
+      costIsEstimate: estimates[preset] ?? !Object.hasOwn(quotedCosts, preset),
     }];
   });
   return [
