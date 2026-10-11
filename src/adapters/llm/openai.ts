@@ -38,7 +38,7 @@ export class OpenAILLMProvider implements LLMProvider {
         model,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: "Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), defects (short strings listing only concrete problems; empty array when none), notes (informational strengths or commentary, never defects), text (true for any letters, fake signature, stamp or watermark), empty (true only for large blank/solid regions with no design intent; intentional negative space in minimalist art is NOT empty), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels or murky contrast). Use JSON booleans for flags. Be strict; do not assume defects are absent." },
+          { role: "system", content: 'Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), defects (short strings listing only concrete problems; empty array when none), notes (informational strengths or commentary, never defects; "notes": ["..."] is an array of strings), text (true for any letters, fake signature, stamp or watermark), empty (true only for large blank/solid regions with no design intent; intentional negative space in minimalist art is NOT empty), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels or murky contrast). Use JSON booleans for flags. Be strict; do not assume defects are absent.' },
           { role: "user", content: [{ type: "text", text: "Assess this image for sale as printed art." }, { type: "image_url", image_url: { url } }] },
         ],
       }),
@@ -50,11 +50,15 @@ export class OpenAILLMProvider implements LLMProvider {
     const score = typeof parsed.score === "string" && /^(?:[1-9]|10)$/.test(parsed.score) ? Number(parsed.score) : parsed.score;
     const flag = (value: unknown) => value === "true" ? true : value === "false" ? false : value;
     const flags = { text: flag(parsed.text), empty: flag(parsed.empty), frameOnly: flag(parsed.frameOnly), artifacts: flag(parsed.artifacts) };
-    const strings = (value: unknown) => Array.isArray(value) && value.every((s) => typeof s === "string");
+    const normalize = (value: unknown, split = false) => value === null ? [] : typeof value === "string"
+      ? (split ? value.split(/[;\r\n]+/) : [value]).map((s) => s.trim()).filter(Boolean)
+      : value;
+    const defects = normalize(parsed.defects);
+    const notes = normalize(parsed.notes ?? [], true);
+    const strengths = normalize(parsed.strengths ?? [], true);
+    const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((s) => typeof s === "string");
     if (!Number.isInteger(score) || Number(score) < 1 || Number(score) > 10 ||
-        !strings(parsed.defects) ||
-        (parsed.notes !== undefined && !strings(parsed.notes)) ||
-        (parsed.strengths !== undefined && !strings(parsed.strengths)) ||
+        !strings(defects) || !strings(notes) || !strings(strengths) ||
         Object.values(flags).some((value) => typeof value !== "boolean")) {
       throw new Error("Vision LLM returned an invalid assessment");
     }
@@ -63,8 +67,8 @@ export class OpenAILLMProvider implements LLMProvider {
     const bounded = (values: string[]) => values.slice(0, 5).map((value) => value.slice(0, 200));
     return {
       score: score as number, ...flags as Pick<VisionAssessment, "text" | "empty" | "frameOnly" | "artifacts">,
-      defects: bounded(parsed.defects as string[]),
-      notes: bounded([...(parsed.notes as string[] ?? []), ...(parsed.strengths as string[] ?? [])]),
+      defects: bounded(defects),
+      notes: bounded([...notes, ...strengths]),
       costChf,
     };
   }
