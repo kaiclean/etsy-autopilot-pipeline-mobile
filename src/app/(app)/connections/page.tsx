@@ -1,4 +1,4 @@
-import { PageHeader } from "@/components/common";
+import { PageHeader, Panel, SectionTitle } from "@/components/common";
 import { AlertRail } from "@/components/alert-rail";
 import { ConnectionsPanel } from "@/components/connections-panel";
 import { CronOpsPanel } from "@/components/cron-ops-panel";
@@ -29,6 +29,20 @@ export default async function ConnectionsPage() {
       <DeployPinBadge sha={railwayDeploySha()} />
       <GoLiveControl mode={data.publishMode} envMode={data.envPublishMode} />
       <ConnectionsPanel checks={data.checks} etsyConnected={data.etsyConnected} canConnectEtsy={data.canConnectEtsy} />
+      <section>
+        <SectionTitle>Planned marketplaces</SectionTitle>
+        <Panel className="px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Shopify</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
+              Planned / not connected
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Blocked until Etsy shows traction. Payload previews only; no live Shopify writes or order sync.
+          </p>
+        </Panel>
+      </section>
       <PrintifyWebhookCard
         origin={publicAppOrigin()}
         secretSet={data.webhookSecretSet}
