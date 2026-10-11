@@ -15,7 +15,7 @@ describe("optional marketplace listing storage", () => {
       await migrate(db, { migrationsFolder });
       expect((await client.query("SELECT to_regclass('public.marketplace_listings') AS table_name")).rows)
         .toEqual([{ table_name: null }]);
-      const sql = await readFile(path.join(migrationsFolder, "0016_marketplace_listings.sql"), "utf8");
+      const sql = await readFile(path.join(migrationsFolder, "0017_marketplace_listings.sql"), "utf8");
       await client.exec(sql);
       await client.exec(sql);
       const [listing] = await db.insert(schema.listings).values({

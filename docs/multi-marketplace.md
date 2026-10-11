@@ -90,10 +90,10 @@ The CSV is an operator worksheet, **not** an Amazon bulk-import format or API pa
 
 ## Optional storage and deployment
 
-`drizzle/0016_marketplace_listings.sql` is additive and **intentionally unjournaled**, independent of `0016_sourcing.sql`. The app does auto-run journaled Drizzle migrations, but **will not apply this migration**. No schema/query integration requires the table; startup and the adapters work without it. Apply explicitly in the database SQL console or with:
+`drizzle/0017_marketplace_listings.sql` is additive and **intentionally unjournaled**, independent of `0016_sourcing.sql`. The app does auto-run journaled Drizzle migrations, but **will not apply this migration**. No schema/query integration requires the table; startup and the adapters work without it. Apply explicitly in the database SQL console or with:
 
 ```sh
-psql "$DATABASE_URL" -f drizzle/0016_marketplace_listings.sql
+psql "$DATABASE_URL" -f drizzle/0017_marketplace_listings.sql
 ```
 
 ```sql
