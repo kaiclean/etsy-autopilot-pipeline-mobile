@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3Icon,
   CalendarClock,
+  Flame,
   Lightbulb,
   Megaphone,
   Paintbrush,
@@ -16,6 +17,7 @@ import { NICHES } from "@/lib/niches";
 import { cn } from "@/lib/utils";
 
 export const STAGE_ICONS: Record<StageName, LucideIcon> = {
+  hot: Flame,
   research: Lightbulb,
   design: Paintbrush,
   listing: PenLine,

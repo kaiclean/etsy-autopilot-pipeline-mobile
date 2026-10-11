@@ -3,12 +3,14 @@ import {
   boolean,
   doublePrecision,
   integer,
+  index,
   jsonb,
   pgTable,
   serial,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -48,6 +50,7 @@ export type FulfillmentStatus =
   | "delivered";
 export type StageName =
   | "research"
+  | "hot"
   | "design"
   | "listing"
   | "publish"
@@ -138,6 +141,33 @@ export const keywords = pgTable("keywords", {
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const hotSignals = pgTable("hot_signals", {
+  id: serial("id").primaryKey(),
+  shopId: uuid("shop_id").references(() => shops.id),
+  provider: text("provider").notNull(),
+  category: text("category"),
+  title: text("title").notNull(),
+  phrase: text("phrase").notNull(),
+  niche: text("niche").$type<Niche>(),
+  rank: integer("rank"),
+  badge: text("badge"),
+  labelText: text("label_text"),
+  metric: doublePrecision("metric"),
+  score: doublePrecision("score"),
+  sourceUrl: text("source_url").notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("hot_signals_fetched_idx").on(table.fetchedAt.desc()),
+  uniqueIndex("hot_signals_dedupe").on(table.provider, table.sourceUrl, sql`((${table.fetchedAt} AT TIME ZONE 'UTC')::date)`),
+]);
+
+/** Cache successful empty scans too, without fabricating an observation. Market signals are shared across shops. */
+export const hotSignalFetches = pgTable("hot_signal_fetches", {
+  provider: text("provider").primaryKey(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
 
 export const designs = pgTable("designs", {

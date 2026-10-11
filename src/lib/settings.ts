@@ -93,6 +93,7 @@ export const DEFAULT_AUTOMATION: AutomationSettings = {
 
 /** Must match vercel.json cron entries (UTC). Daily cadence fits the Vercel Hobby plan. */
 export const DEFAULT_STAGES: StageSettings = {
+  hot: { paused: false, cron: "40 4 * * *" },
   research: { paused: false, cron: "0 5 * * 1" },
   design: { paused: false, cron: "0 6 * * *" },
   listing: { paused: false, cron: "30 6 * * *" },

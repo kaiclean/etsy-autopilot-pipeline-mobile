@@ -302,10 +302,11 @@ describe("POD settings persistence and action", () => {
 });
 
 describe("0014 additive supplier migration", () => {
+  const supplierIndex = journal.entries.findIndex((entry) => entry.tag === "0014_suppliers");
   it("registers next journal entry and includes the requested SQL with statement breakpoints", () => {
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 12, tag: "0014_suppliers", breakpoints: true });
-    expect(journal.entries.at(-1)!.when).toBeGreaterThan(journal.entries.at(-2)!.when);
-    expect(journal.entries.at(-1)!.when).toBeLessThanOrEqual(Date.now());
+    expect(journal.entries[supplierIndex]).toMatchObject({ idx: 12, tag: "0014_suppliers", breakpoints: true });
+    expect(journal.entries[supplierIndex].when).toBeGreaterThan(journal.entries[supplierIndex - 1].when);
+    expect(journal.entries[supplierIndex].when).toBeLessThanOrEqual(Date.now());
     expect(supplierSql.split("--> statement-breakpoint")).toHaveLength(3);
     expect(supplierSql).toContain("ALTER TABLE listings ADD COLUMN IF NOT EXISTS supplier text;");
     expect(supplierSql).toContain("ALTER TABLE listings ADD COLUMN IF NOT EXISTS supplier_product_id text;");
@@ -316,7 +317,7 @@ describe("0014 additive supplier migration", () => {
   it("retries a partial migration twice and leaves existing listing publish data unchanged", async () => {
     const client = new PGlite("memory://");
     try {
-      for (const entry of journal.entries.slice(0, -1)) {
+      for (const entry of journal.entries.slice(0, supplierIndex)) {
         for (const statement of readFileSync(path.join(drizzleDir, `${entry.tag}.sql`), "utf8").split("--> statement-breakpoint")) {
           if (statement.trim()) await client.exec(statement);
         }

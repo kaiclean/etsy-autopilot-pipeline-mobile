@@ -6,11 +6,12 @@ import { Panel, SectionTitle, STAGE_ICONS, Thumb } from "@/components/common";
 import { HeroKpis } from "@/components/home/hero-kpis";
 import { NextActions } from "@/components/home/next-actions";
 import { OpsCards } from "@/components/home/ops-cards";
+import { HotTodayCard } from "@/components/hot-today-card";
 import { RunPipelineButton } from "@/components/run-button";
 import { chf, relTime, TZ } from "@/lib/format";
 import { buildNextActions, toStageSnapshots } from "@/lib/next-actions";
 import { AlertRail } from "@/components/alert-rail";
-import { getCockpitAlerts, getConnectionsData, getDashboardOps, getHomeData } from "@/lib/queries";
+import { getCockpitAlerts, getConnectionsData, getDashboardOps, getHomeData, getHotSignalsToday } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 
@@ -20,11 +21,12 @@ function greeting() {
 }
 
 export default async function HomePage() {
-  const [data, connections, alerts, ops] = await Promise.all([
+  const [data, connections, alerts, ops, hotToday] = await Promise.all([
     getHomeData(),
     getConnectionsData(),
     getCockpitAlerts(),
     getDashboardOps(),
+    getHotSignalsToday(),
   ]);
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: TZ });
   const failing = data.lastRuns.filter((s) => s.run?.status === "failed").length;
@@ -175,13 +177,16 @@ export default async function HomePage() {
           <RunPipelineButton className="w-full md:hidden" disabled={data.killSwitch} />
         </div>
 
-        <div>
-          <SectionTitle action={<span className="text-[11px] text-muted-foreground">{data.liveListings} published · {chf(data.kpis["30d"].cur.profit, { compact: true })} 30d</span>}>
-            Live activity
-          </SectionTitle>
-          <Panel className="overflow-hidden">
-            <ActivityFeed events={data.feed} />
-          </Panel>
+        <div className="space-y-6">
+          <HotTodayCard {...hotToday} />
+          <div>
+            <SectionTitle action={<span className="text-[11px] text-muted-foreground">{data.liveListings} published · {chf(data.kpis["30d"].cur.profit, { compact: true })} 30d</span>}>
+              Live activity
+            </SectionTitle>
+            <Panel className="overflow-hidden">
+              <ActivityFeed events={data.feed} />
+            </Panel>
+          </div>
         </div>
       </div>
     </div>
