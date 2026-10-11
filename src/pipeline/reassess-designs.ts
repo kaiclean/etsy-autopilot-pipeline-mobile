@@ -5,16 +5,26 @@ import type { LLMProvider } from "@/adapters/llm/types";
 import { assessArtwork } from "@/lib/design-quality";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { isPlaceholderUrl } from "@/lib/art-quality";
+import { maskSecrets } from "@/pipeline/stage-log";
+
+export function sanitizeReassessmentError(error: unknown) {
+  return maskSecrets((error instanceof Error ? error.message : "Unknown error")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[URL redacted]")
+    .replace(/data:[^\s"'<>]+/gi, "[image data redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/\b(?:token|secret|password|api[_-]?key)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "[credential redacted]"))
+    .replace(/\s+/g, " ").trim().slice(0, 300) || "Unknown error";
+}
 
 /** Explicit operator recovery only: never approves listings or touches publishing. */
-export async function reassessDesigns(db: DB, ids: number[], vision: LLMProvider, apply = false) {
+export async function reassessDesigns(db: DB, ids: number[], vision: LLMProvider, { apply = false, rescore = false } = {}) {
   if (!ids.length || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Provide positive design IDs");
   if (!vision.assessImage) throw new Error("Vision model is unavailable");
   const pending = await db.select().from(designs).where(and(
-    inArray(designs.id, ids), eq(designs.isDemo, false), isNull(designs.qualityScore),
+    inArray(designs.id, ids), eq(designs.isDemo, false), rescore ? undefined : isNull(designs.qualityScore),
     inArray(designs.status, ["generated", "rejected", "needs_review"]),
   ));
-  const report: Array<{ id: number; status: string; reasons: string[] }> = [];
+  const report: Array<{ id: number; score: number | null; status: string; reasons: string[] }> = [];
   for (const design of pending) {
     let score: number | null = null;
     let status: typeof designs.$inferSelect.status = "needs_review";
@@ -36,14 +46,18 @@ export async function reassessDesigns(db: DB, ids: number[], vision: LLMProvider
         shopId: design.shopId, kind: "ai_text", amountChf: assessment.costChf,
         note: `${vision.name}: re-assessment design #${design.id}`, isDemo: false,
       });
-    } catch {
+    } catch (error) {
       // Keep unassessed art off Listing even if the provider cannot inspect it.
+      score = null;
+      status = "needs_review";
+      reasons = [`Vision assessment unavailable: ${sanitizeReassessmentError(error)}`];
+      console.error(`Design #${design.id}: ${reasons[0]}`);
     }
     if (apply) await db.update(designs).set({
       qualityScore: score, qualityReasons: reasons, status,
       imageWidth: prepared.width, imageHeight: prepared.height, colorVariance: prepared.variance,
-    }).where(and(eq(designs.id, design.id), isNull(designs.qualityScore), inArray(designs.status, ["generated", "rejected", "needs_review"])));
-    report.push({ id: design.id, status, reasons });
+    }).where(and(eq(designs.id, design.id), rescore ? undefined : isNull(designs.qualityScore), inArray(designs.status, ["generated", "rejected", "needs_review"])));
+    report.push({ id: design.id, score, status, reasons });
   }
   return report;
 }

@@ -90,11 +90,7 @@ The CSV is an operator worksheet, **not** an Amazon bulk-import format or API pa
 
 ## Optional storage and deployment
 
-`drizzle/0017_marketplace_listings.sql` is additive and **intentionally unjournaled**, independent of `0016_sourcing.sql`. The app does auto-run journaled Drizzle migrations, but **will not apply this migration**. No schema/query integration requires the table; startup and the adapters work without it. Apply explicitly in the database SQL console or with:
-
-```sh
-psql "$DATABASE_URL" -f drizzle/0017_marketplace_listings.sql
-```
+`drizzle/0017_marketplace_listings.sql` is additive and journaled after `0016_sourcing.sql`. The app applies it automatically on database connection. Its `IF NOT EXISTS` statement safely supports databases where it was already applied manually. The dry-run adapters do not write to this table.
 
 ```sql
 CREATE TABLE IF NOT EXISTS marketplace_listings (
@@ -109,7 +105,7 @@ CREATE TABLE IF NOT EXISTS marketplace_listings (
 );
 ```
 
-Future persistence must verify availability, enforce listing/shop ownership, upsert by `(listing_id, marketplace)`, update `updated_at` explicitly, and distinguish a preview from confirmed remote state. Never mark the existing listing published on the strength of a Shopify preview. Preserve this manually installed table during future migration generation.
+Future persistence must verify availability, enforce listing/shop ownership, upsert by `(listing_id, marketplace)`, update `updated_at` explicitly, and distinguish a preview from confirmed remote state. Never mark the existing listing published on the strength of a Shopify preview. Preserve this table during future migration generation.
 
 `SHOPIFY_STORE_DOMAIN` and `SHOPIFY_ADMIN_ACCESS_TOKEN` are **documented future configuration only**. They are not required, read, validated, or displayed by this implementation. Do not set them to test dry-run. If enabled later, keep tokens server-side, use least-privilege official Admin API scopes, and validate the store domain before sending credentials.
 
