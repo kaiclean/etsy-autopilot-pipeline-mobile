@@ -34,33 +34,42 @@ describe("M1 shop registry", () => {
   it("backfills exactly one OmniShop CH shop from ETSY_SHOP_ID and stamps listings", async () => {
     await syncShopRegistry(db);
     const rows = await db.select().from(shops);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    const etsy = rows.find((row) => row.slug === "omnishop-ch");
+    const pin = rows.find((row) => row.slug === "pinterest");
+    expect(rows).toHaveLength(2);
+    expect(etsy).toMatchObject({
       slug: "omnishop-ch",
       displayName: "OmniShop CH",
       etsyShopName: "OmniShopByKaiArt",
       etsyShopId: "68255203",
+      kind: "etsy",
       currency: "CHF",
       locale: "en",
       marketLocale: "de-CH",
       publishMode: "dry-run",
       killSwitch: false,
     });
-
-    expect(rows[0].status).not.toBe("live");
+    expect(etsy?.status).not.toBe("live");
+    expect(pin).toMatchObject({
+      kind: "pinterest",
+      parentId: etsy?.id,
+      publishMode: "dry-run",
+      status: "dry-run",
+      killSwitch: false,
+    });
 
     const stamped = await db.select({ shopId: listings.shopId }).from(listings);
     expect(stamped.length).toBeGreaterThan(0);
-    expect(stamped.every((row) => row.shopId === rows[0].id)).toBe(true);
+    expect(stamped.every((row) => row.shopId === etsy?.id)).toBe(true);
 
     const active = await resolveActiveShop(db, null);
-    expect(active.id).toBe(rows[0].id);
+    expect(active.id).toBe(etsy?.id);
     const ignoredCookie = await resolveActiveShop(db, "00000000-0000-0000-0000-000000000000");
-    expect(ignoredCookie.id).toBe(rows[0].id);
+    expect(ignoredCookie.id).toBe(etsy?.id);
   });
 
   it("uses the registry Etsy shop ID for credentials and connection status without mirroring the global kill switch", async () => {
-    const [shop] = await db.select().from(shops);
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
     const previousShopPublishMode = shop.publishMode;
     const saved = {
       apiKey: process.env.ETSY_API_KEY,
@@ -101,7 +110,7 @@ describe("M1 shop registry", () => {
   });
 
   it("dual-reads Etsy tokens from shop_connections, then settings.etsyTokens", async () => {
-    const [shop] = await db.select().from(shops);
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
     await setSetting(db, "etsyTokens", { accessToken: "legacy-token", refreshToken: "legacy-refresh", expiresAt: 1 });
     await db.update(shopConnections).set({ tokens: null }).where(eq(shopConnections.shopId, shop.id));
     expect((await readEtsyTokens(db, shop.id))?.accessToken).toBe("legacy-token");
@@ -119,7 +128,9 @@ describe("M1 shop registry", () => {
     const pubs = await listShopsPublic(db);
     expect(JSON.stringify(pubs)).not.toContain("shop-token");
     expect(JSON.stringify(pubs)).not.toContain("shop-refresh");
-    expect(pubs[0].connections.map((row) => row.provider).sort()).toEqual(["etsy", "openrouter", "printify", "s3"]);
+    const home = pubs.find((row) => row.slug === "omnishop-ch");
+    expect(home?.kind).toBe("etsy");
+    expect(home?.connections.map((row) => row.provider).sort()).toEqual(["etsy", "openrouter", "printify", "s3"]);
 
     const stale = { accessToken: "shop-token", refreshToken: "shop-refresh", expiresAt: 2 };
     const rotated = { accessToken: "rotated-token", refreshToken: "rotated-refresh", expiresAt: 3 };

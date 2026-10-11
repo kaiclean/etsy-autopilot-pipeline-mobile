@@ -1,23 +1,19 @@
-import { and, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
+import { adapterStageFn } from "@/businesses";
 import { getDb, type DB } from "@/db";
-import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema";
+import { jobRuns, shops, type JobRun, type LogLine, type StageName } from "@/db/schema";
+import { businessesForCron } from "@/lib/businesses";
 import { isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { isProviderCreditsError } from "@/lib/provider-errors";
 import { utcDayKey } from "@/lib/utc-day";
 import { getSetting, setSetting } from "@/lib/settings";
-import { resolveActiveShop } from "@/lib/shops";
-import { runAnalytics } from "./analytics";
+import { resolveRequestShop } from "@/lib/shops";
 import { stageSucceededToday } from "./chain-day";
-import { runDesign } from "./design";
 import { publishHealthReport } from "./health-report";
 import { runHot } from "./hot-signals";
-import { runListing } from "./listing";
 import { runMaintenance } from "./maintenance";
-import { runOrders } from "./orders";
-import { runPublish } from "./publish";
-import { runResearch } from "./research";
 import { writeStageLog } from "./stage-log";
 import { STAGES, asStageResult, stageResult, type StageContext, type StageFn, type StageStatus } from "./types";
 
@@ -43,7 +39,7 @@ async function runDailyChain(ctx: StageContext) {
       ctx.log(`${stage} already completed today`);
       continue;
     }
-    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force });
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force, shopId: ctx.shopId });
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
@@ -68,20 +64,21 @@ const runHealth: StageFn = async (ctx) => {
   return `Week of ${payload.weekStart}: ${payload.views} views, ${payload.favorites} favorites, ${payload.sales} sales, profit CHF ${payload.profitChf.toFixed(2)} (${note})`;
 };
 
-const STAGE_FNS: Record<StageName, StageFn> = {
+/** Stages that stay on the Etsy business and are not part of the adapter map. */
+const ETSY_ORCHESTRATORS: Partial<Record<StageName, StageFn>> = {
   hot: runHot,
-  research: runResearch,
-  design: runDesign,
-  listing: runListing,
-  publish: runPublish,
-  orders: runOrders,
-  analytics: runAnalytics,
   maintenance: runMaintenance,
   daily: runDailyChain,
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; shopId?: string };
+
+async function loadShop(db: DB, id: string) {
+  const [shop] = await db.select().from(shops).where(eq(shops.id, id));
+  if (!shop) throw new Error("Unknown business");
+  return shop;
+}
 
 async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string, demo: boolean) {
   const [run] = await db
@@ -93,7 +90,7 @@ async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigg
 
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
   const db = opts.db ?? (await getDb());
-  const shop = await resolveActiveShop(db);
+  const shop = opts.shopId ? await loadShop(db, opts.shopId) : await resolveRequestShop(db);
   const demo = isDemoMode(shop.etsyShopId ?? undefined);
   const automation = await getSetting(db, "automation");
   // Global settings.killSwitch pauses every shop. shops.kill_switch pauses this shop only.
@@ -108,8 +105,11 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
   const [running] = await db
     .select({ id: jobRuns.id })
     .from(jobRuns)
-    .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
+    .where(and(eq(jobRuns.shopId, shop.id), eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
   if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
+
+  const stageFn = adapterStageFn(shop.kind || "etsy", stage, ETSY_ORCHESTRATORS);
+  if (!stageFn) return recordSkip(db, stage, trigger, `${shop.displayName} does not run ${stage}`, shop.id, demo);
 
   const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();
   const logs: LogLine[] = [];
@@ -130,7 +130,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
   const afterOrders = async () => {
     if (stage !== "orders" || trigger !== "cron") return;
     try {
-      const maintenance = await runStage("maintenance", "cron", opts);
+      const maintenance = await runStage("maintenance", "cron", { db, random: opts.random, now: opts.now, force: opts.force, shopId: ctx.shopId });
       ctx.log(`maintenance ${maintenance.status}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "maintenance failed";
@@ -138,7 +138,7 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
     }
   };
   try {
-    const result = asStageResult(await STAGE_FNS[stage](ctx));
+    const result = asStageResult(await stageFn(ctx));
     await afterOrders();
     const [done] = await db
       .update(jobRuns)
@@ -207,4 +207,38 @@ export async function runFullPipeline(trigger: StageContext["trigger"] = "manual
     if (r.status === "skipped" && r.summary?.startsWith("Kill switch")) break;
   }
   return results;
+}
+
+export type CronStageResult = {
+  status: "success" | "warning" | "failed" | "skipped";
+  summary: string;
+  runs: { slug: string; status: string; summary: string | null }[];
+  unknown: boolean;
+};
+
+/** `business` limits the run to one slug. Omit it to run every enabled business. */
+export async function runCronStage(stage: StageName, opts: RunOptions & { business?: string | null } = {}): Promise<CronStageResult> {
+  const db = opts.db ?? (await getDb());
+  const slug = opts.business?.trim() || null;
+  const rows = await db.select().from(shops).orderBy(asc(shops.createdAt));
+  const targets = businessesForCron(rows, slug);
+  if (slug && targets.length === 0) {
+    return { status: "failed", summary: `Unknown business ${slug}`, runs: [], unknown: true };
+  }
+  const runs: CronStageResult["runs"] = [];
+  for (const shop of targets) {
+    const run = await runStage(stage, "cron", { db, random: opts.random, now: opts.now, force: opts.force, shopId: shop.id });
+    runs.push({ slug: shop.slug, status: run.status, summary: run.summary });
+  }
+  const status = runs.some((run) => run.status === "failed")
+    ? "failed"
+    : runs.some((run) => run.status === "warning")
+      ? "warning"
+      : runs.some((run) => run.status === "success")
+        ? "success"
+        : "skipped";
+  const summary = runs.length === 1
+    ? (runs[0].summary ?? runs[0].status)
+    : runs.map((run) => `${run.slug}: ${run.summary ?? run.status}`).join(" · ") || "No enabled businesses";
+  return { status, summary, runs, unknown: false };
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { parseMaintenanceSummary } from "@/pipeline/maintenance";
-import { runStage } from "@/pipeline/runner";
+import { runCronStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,7 @@ export const maxDuration = 300;
  * `health` runs the Monday report. Neither route publishes or changes go-live.
  * `hot` scans observed demand and merges keywords; it never estimates sales.
  * `?force=1` reruns the daily chain after a success already recorded today.
+ * `?business=<slug>` runs one business. Omit it to run every enabled business.
  * A failed stage returns this same JSON with HTTP 500 so the workflow goes red.
  */
 export async function GET(req: Request, ctx: { params: Promise<{ stage: string }> }) {
@@ -23,8 +24,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ stage: string }
   }
   const { stage } = await ctx.params;
   if (!isStage(stage)) return NextResponse.json({ error: "unknown stage" }, { status: 404 });
-  const force = new URL(req.url).searchParams.get("force") === "1";
-  const run = await runStage(stage, "cron", { force });
+  const url = new URL(req.url);
+  const force = url.searchParams.get("force") === "1";
+  const business = url.searchParams.get("business");
+  const run = await runCronStage(stage, { force, business });
+  if (run.unknown) return NextResponse.json({ error: "unknown business", business }, { status: 404 });
   const summary = stage === "maintenance" ? parseMaintenanceSummary(run.summary) : run.summary;
-  return NextResponse.json({ stage, status: run.status, summary }, { status: run.status === "failed" ? 500 : 200 });
+  return NextResponse.json(
+    { stage, status: run.status, summary, businesses: run.runs },
+    { status: run.status === "failed" ? 500 : 200 },
+  );
 }

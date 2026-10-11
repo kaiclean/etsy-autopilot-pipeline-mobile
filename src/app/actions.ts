@@ -1,11 +1,11 @@
 "use server";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh, revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { keywords, listings, type StageName } from "@/db/schema";
+import { approvalItems, keywords, listings, shops, type StageName } from "@/db/schema";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
 import { config, hasGelatoCredentials, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
@@ -17,7 +17,8 @@ import { validateListing } from "@/lib/listing-validator";
 import { probeConnections } from "@/lib/provider-probe";
 import { getLastRuns } from "@/lib/queries";
 import { requireAuth } from "@/lib/session";
-import { resolveActiveShop } from "@/lib/shops";
+import { applyBusinessKillSwitch, applyBusinessPublishMode, applyBusinessSpendCap } from "@/lib/businesses";
+import { ACTIVE_SHOP_COOKIE, resolveActiveShop } from "@/lib/shops";
 import { goLiveDecision, type PublishMode } from "@/lib/publish-mode";
 import { PUSH_PREF_KEYS, type PushPrefs } from "@/lib/push-prefs";
 import { DEFAULT_CATALOG_DRAFT, getSetting, normalizePodProductSettings, setSetting, type AutomationSettings } from "@/lib/settings";
@@ -404,4 +405,88 @@ export async function setCatalogDraftReviewed(reviewed: boolean) {
   });
   revalidateAll();
   return { ok: true as const, reviewed };
+}
+
+export async function setActiveBusiness(id: string) {
+  await requireAuth();
+  const db = await getDb();
+  const [shop] = await db.select({ id: shops.id, displayName: shops.displayName }).from(shops).where(eq(shops.id, id));
+  if (!shop) return { ok: false as const, error: "Unknown business." };
+  const jar = await cookies();
+  jar.set(ACTIVE_SHOP_COOKIE, shop.id, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+  });
+  revalidateAll();
+  return { ok: true as const, id: shop.id, displayName: shop.displayName };
+}
+
+export async function setBusinessKillSwitch(id: string, on: boolean) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await applyBusinessKillSwitch(db, id, on);
+  if (!result.ok) return result;
+  await emit(db, {
+    type: "killswitch",
+    title: on ? "Business kill switch ON" : "Business kill switch off",
+    severity: on ? "error" : "success",
+    href: "/businesses",
+  });
+  revalidateAll();
+  return result;
+}
+
+export async function setBusinessSpendCap(id: string, cap: number | null) {
+  await requireAuth();
+  const db = await getDb();
+  const result = await applyBusinessSpendCap(db, id, cap);
+  if (!result.ok) return result;
+  revalidateAll();
+  return result;
+}
+
+export async function setBusinessPublishMode(id: string, mode: "dry-run" | "live", confirmation = "") {
+  await requireAuth();
+  const db = await getDb();
+  const before = await getSetting(db, "automation");
+  const result = await applyBusinessPublishMode(db, id, mode, confirmation);
+  const after = await getSetting(db, "automation");
+  if (after.publishMode !== before.publishMode) {
+    await setSetting(db, "automation", before);
+  }
+  if (!result.ok) return result;
+  await emit(db, {
+    type: "publish.mode",
+    title: result.publishMode === "live" ? "Business confirmed live" : "Business returned to dry-run",
+    body: "Etsy publishing was not changed.",
+    severity: result.publishMode === "live" ? "warning" : "success",
+    href: "/businesses",
+  });
+  revalidateAll();
+  return result;
+}
+
+export async function draftBusinessPins(businessId: string) {
+  await requireAuth();
+  const db = await getDb();
+  const [shop] = await db.select().from(shops).where(eq(shops.id, businessId));
+  if (!shop || shop.kind !== "pinterest") return { ok: false as const, error: "Not a Pinterest business." };
+  const run = await runStage("listing", "manual", { db, shopId: shop.id });
+  revalidateAll();
+  return { ok: true as const, status: run.status, summary: run.summary };
+}
+
+export async function decidePinApproval(formData: FormData) {
+  await requireAuth();
+  const id = Number(formData.get("id"));
+  const status = formData.get("status") === "rejected" ? "rejected" : "approved";
+  if (!Number.isInteger(id)) return;
+  const db = await getDb();
+  await db
+    .update(approvalItems)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(approvalItems.id, id), eq(approvalItems.status, "pending_approval")));
+  revalidateAll();
 }

@@ -99,6 +99,13 @@
       "when": 1791674400000,
       "tag": "0015_hot_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791682000000,
+      "tag": "0018_business_registry",
+      "breakpoints": true
     }
   ]
 }

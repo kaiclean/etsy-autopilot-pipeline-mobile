@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { approvalItems, costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, shops, type JobRun, type StageName } from "@/db/schema";
 import type { HotTodayItem } from "@/components/hot-today-card";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
@@ -102,8 +102,9 @@ function lastNDays(n: number, now = new Date()) {
 
 export async function getShellData() {
   const db = await getDb();
-  const [pending, automation, shop] = await Promise.all([
+  const [pending, pinPending, automation, shop] = await Promise.all([
     db.select({ id: listings.id }).from(listings).where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo))),
+    db.select({ id: approvalItems.id }).from(approvalItems).where(eq(approvalItems.status, "pending_approval")),
     getSetting(db, "automation"),
     resolveRequestShop(db).catch(() => null),
   ]);
@@ -111,7 +112,7 @@ export async function getShellData() {
   const publishMode = effectivePublishMode(automation.publishMode);
   const killSwitch = automation.killSwitch || Boolean(shop?.killSwitch);
   return {
-    pendingCount: pending.length,
+    pendingCount: pending.length + pinPending.length,
     demo,
     killSwitch,
     publishMode,
@@ -367,6 +368,55 @@ export async function getQueue() {
     .from(listings)
     .where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo)))
     .orderBy(asc(listings.createdAt));
+}
+
+export type PinQueueItem = {
+  id: number;
+  businessId: string;
+  businessName: string;
+  action: string;
+  title: string;
+  description: string;
+  altText: string;
+  board: string;
+  imageUrl: string | null;
+  destinationLink: string;
+  access: string;
+  quality: string[];
+};
+
+export async function getPinQueue(): Promise<PinQueueItem[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: approvalItems.id,
+      shopId: approvalItems.shopId,
+      action: approvalItems.action,
+      payload: approvalItems.payload,
+      businessName: shops.displayName,
+    })
+    .from(approvalItems)
+    .innerJoin(shops, eq(shops.id, approvalItems.shopId))
+    .where(eq(approvalItems.status, "pending_approval"))
+    .orderBy(asc(approvalItems.createdAt));
+  return rows.map((row) => {
+    const payload = row.payload ?? {};
+    const quality = Array.isArray(payload.quality) ? payload.quality.filter((item): item is string => typeof item === "string") : [];
+    return {
+      id: row.id,
+      businessId: row.shopId,
+      businessName: row.businessName,
+      action: row.action,
+      title: typeof payload.title === "string" ? payload.title : "Pin",
+      description: typeof payload.description === "string" ? payload.description : "",
+      altText: typeof payload.altText === "string" ? payload.altText : "",
+      board: typeof payload.board === "string" ? payload.board : "",
+      imageUrl: typeof payload.imageUrl === "string" ? payload.imageUrl : null,
+      destinationLink: typeof payload.destinationLink === "string" ? payload.destinationLink : "",
+      access: typeof payload.access === "string" ? payload.access : "trial",
+      quality,
+    };
+  });
 }
 
 export async function getListings() {
