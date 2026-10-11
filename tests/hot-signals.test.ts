@@ -87,9 +87,9 @@ describe("hot scan persistence and keyword integration", () => {
       for (const statement of migration.split("--> statement-breakpoint")) await db.execute(sql.raw(statement));
     }
     const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
-    expect(journal.entries.at(-2)).toMatchObject({ idx: 12, tag: "0014_suppliers", when: 1791671460000 });
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 13, tag: "0015_hot_signals" });
-    expect(journal.entries.at(-1).when).toBeGreaterThan(journal.entries.at(-2).when);
+    expect(journal.entries[12]).toMatchObject({ idx: 12, tag: "0014_suppliers", when: 1791671460000 });
+    expect(journal.entries[13]).toMatchObject({ idx: 13, tag: "0015_hot_signals" });
+    expect(journal.entries[13].when).toBeGreaterThan(journal.entries[12].when);
     const collect = vi.fn(async () => [signal({ rank: 1 }), signal({ rank: 1 })]);
     await scanHotSignals(ctx, [source("amazon", collect)]);
     expect(await db.select().from(hotSignals)).toHaveLength(1);

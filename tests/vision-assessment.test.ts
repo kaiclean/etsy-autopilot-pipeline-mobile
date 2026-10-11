@@ -40,6 +40,26 @@ describe("vision assessments", () => {
     const prompt = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).messages[0].content;
     expect(prompt).toMatch(/intentional negative space/i);
     expect(prompt).toMatch(/empty array when none/i);
+    expect(prompt).toContain('"notes": ["..."]');
+  });
+
+  it.each([
+    [{ notes: " Warm contrast; \n Cozy atmosphere;; " }, ["Warm contrast", "Cozy atmosphere"], []],
+    [{ notes: [], strengths: " Strong composition;\n Intentional negative space " }, ["Strong composition", "Intentional negative space"], []],
+    [{ defects: " Broken edges; muddy contrast " }, clean.notes, ["Broken edges; muddy contrast"]],
+    [{ notes: null, strengths: null, defects: null }, [], []],
+    [{ notes: "", strengths: " ;\n ", defects: " " }, [], []],
+  ])("normalizes soft fields %j", async (change, notes, defects) => {
+    const { provider } = providerResponse({ ...clean, ...change });
+    await expect(provider.assessImage("https://bucket.example/art.png")).resolves.toMatchObject({ notes, defects });
+  });
+
+  it.each([
+    { score: 0 }, { score: 11 }, { score: 8.5 }, { score: "8.5" }, { score: null },
+    { defects: undefined }, { defects: [false] }, { notes: 1 }, { strengths: ["Good", null] },
+  ])("still rejects invalid assessment fields %j", async (change) => {
+    const { provider } = providerResponse({ ...clean, ...change });
+    await expect(provider.assessImage("https://bucket.example/art.png")).rejects.toThrow("invalid assessment");
   });
 
   it("stores only concrete defects alongside computed failure reasons", async () => {

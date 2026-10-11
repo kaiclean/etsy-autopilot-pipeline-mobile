@@ -15,7 +15,7 @@ import {
 } from "@/lib/sourcing";
 import type { StageContext } from "./types";
 
-/** 0016 is deliberately manual, not journaled. Existing installations continue using estimates. */
+/** Keep preset estimates available if the sourcing schema is not installed. */
 export async function sourcingAvailable(db: DB) {
   const result = await db.execute(sql`select
     to_regclass('public.supplier_quotes') is not null and
