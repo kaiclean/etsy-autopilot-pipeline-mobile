@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   doublePrecision,
   integer,
@@ -66,6 +67,16 @@ export type ShopStatus = "draft" | "connecting" | "dry-run" | "live" | "paused" 
 export type ShopPublishMode = "dry-run" | "live";
 export type ShopProvider = "etsy" | "printify" | "s3" | "openrouter";
 export type ShopConnectionStatus = "connected" | "configured" | "missing" | "error";
+export type BusinessKind = "etsy" | "pinterest" | "kdp" | "storefront" | "promo";
+export type ApprovalAction = "publish" | "upload-packet" | "pin";
+export type ApprovalStatus = "pending_approval" | "approved" | "rejected" | "published";
+
+/** Per-business settings. Secrets never belong here. */
+export type BusinessConfig = {
+  businessNumber?: number;
+  dailyAiCapChf?: number;
+  board?: string;
+};
 
 /** Default for rows created before a request passes an explicit shop id. */
 const omnishopId = sql`current_omnishop_id()`;
@@ -82,6 +93,9 @@ export const shops = pgTable("shops", {
   status: text("status").$type<ShopStatus>().notNull().default("dry-run"),
   publishMode: text("publish_mode").$type<ShopPublishMode>().notNull().default("dry-run"),
   killSwitch: boolean("kill_switch").notNull().default(false),
+  kind: text("kind").$type<BusinessKind | string>().notNull().default("etsy"),
+  parentId: uuid("parent_id").references((): AnyPgColumn => shops.id),
+  config: jsonb("config").$type<BusinessConfig>().notNull().default({}),
   brandBriefRef: text("brand_brief_ref"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -462,6 +476,24 @@ export const podSamples = pgTable(
   (t) => [unique("pod_samples_blueprint_provider").on(t.blueprintId, t.providerId)],
 );
 
+/** Approval queue rows for actions that are not an Etsy listing draft. Pins use action `pin`. */
+export const approvalItems = pgTable(
+  "approval_items",
+  {
+    id: serial("id").primaryKey(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    listingId: integer("listing_id").references(() => listings.id, { onDelete: "cascade" }),
+    action: text("action").$type<ApprovalAction>().notNull(),
+    status: text("status").$type<ApprovalStatus>().notNull().default("pending_approval"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("approval_items_business_listing_action").on(t.shopId, t.listingId, t.action)],
+);
+
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -499,6 +531,7 @@ export const printifyEvents = pgTable("printify_events", {
 });
 
 export type Shop = typeof shops.$inferSelect;
+export type ApprovalItem = typeof approvalItems.$inferSelect;
 export type ShopConnection = typeof shopConnections.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
 export type Design = typeof designs.$inferSelect;

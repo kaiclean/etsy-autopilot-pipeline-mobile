@@ -1,4 +1,4 @@
-import { ChartColumnBig, ChevronRight, HeartPulse, LogOut, Package, Settings } from "lucide-react";
+import { Building2, ChartColumnBig, ChevronRight, HeartPulse, LogOut, Package, Settings } from "lucide-react";
 import Link from "next/link";
 import { logout } from "@/app/actions";
 import { PageHeader, Panel } from "@/components/common";
@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/products", label: "Products & listings", desc: "Every draft, live and rejected listing", icon: Package },
   { href: "/analytics", label: "Analytics", desc: "Revenue, profit, niches, costs", icon: ChartColumnBig },
   { href: "/connections", label: "Connections", desc: "Neon, Etsy, Printify, and provider health", icon: HeartPulse },
+  { href: "/businesses", label: "Businesses", desc: "Status, spend caps, and the kill switch", icon: Building2 },
   { href: "/settings", label: "Settings", desc: "Keys, budgets, schedules, kill switch", icon: Settings },
 ];
 

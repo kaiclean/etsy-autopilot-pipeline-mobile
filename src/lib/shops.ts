@@ -3,6 +3,7 @@ import type { DB } from "@/db";
 import { settings, shopAutomation, shopConnections, shops, type Shop, type ShopConnectionStatus, type ShopProvider } from "@/db/schema";
 import { config, hasEtsyCredentials, hasPrintifyCredentials, storageBackend } from "@/lib/config";
 import { effectivePublishMode } from "@/lib/publish-mode";
+import { businessDailyAiCap, businessNumberFrom } from "@/lib/spend-cap";
 import { getSetting, setSetting, type EtsyTokens } from "@/lib/settings";
 
 export const OMNISHOP_SLUG = "omnishop-ch";
@@ -148,6 +149,10 @@ export type PublicShop = {
   id: string;
   slug: string;
   displayName: string;
+  kind: string;
+  parentId: string | null;
+  businessNumber: number | null;
+  dailyAiCapChf: number | null;
   etsyShopId: string | null;
   etsyShopName: string | null;
   currency: string;
@@ -171,22 +176,29 @@ export async function listShopsPublic(db: DB): Promise<PublicShop[]> {
       })
       .from(shopConnections),
   ]);
-  return rows.map((shop) => ({
-    id: shop.id,
-    slug: shop.slug,
-    displayName: shop.displayName,
-    etsyShopId: shop.etsyShopId,
-    etsyShopName: shop.etsyShopName,
-    currency: shop.currency,
-    locale: shop.locale,
-    marketLocale: shop.marketLocale,
-    status: shop.status,
-    publishMode: shop.publishMode,
-    killSwitch: shop.killSwitch,
-    connections: connections
-      .filter((row) => row.shopId === shop.id)
-      .map((row) => ({ provider: row.provider, status: row.status, secretsRef: row.secretsRef })),
-  }));
+  return rows.map((shop) => {
+    const hasOwnCap = shop.config && typeof shop.config === "object" && typeof shop.config.dailyAiCapChf === "number";
+    return {
+      id: shop.id,
+      slug: shop.slug,
+      displayName: shop.displayName,
+      kind: shop.kind,
+      parentId: shop.parentId,
+      businessNumber: businessNumberFrom(shop.config),
+      dailyAiCapChf: hasOwnCap ? businessDailyAiCap(shop.config, 0) : null,
+      etsyShopId: shop.etsyShopId,
+      etsyShopName: shop.etsyShopName,
+      currency: shop.currency,
+      locale: shop.locale,
+      marketLocale: shop.marketLocale,
+      status: shop.status,
+      publishMode: shop.publishMode,
+      killSwitch: shop.killSwitch,
+      connections: connections
+        .filter((row) => row.shopId === shop.id)
+        .map((row) => ({ provider: row.provider, status: row.status, secretsRef: row.secretsRef })),
+    };
+  });
 }
 
 /**

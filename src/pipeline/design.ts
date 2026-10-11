@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
-import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
+import { costs, designBriefs, designs, keywords, listings, shops } from "@/db/schema";
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { assessArtwork } from "@/lib/design-quality";
 import { productKeyword } from "@/lib/product-title";
@@ -10,6 +10,7 @@ import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
+import { businessDailyAiCap, spendAllowed } from "@/lib/spend-cap";
 import { getSetting } from "@/lib/settings";
 import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile, type PreparedArt } from "./artwork";
@@ -17,11 +18,11 @@ import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
 import { stageResult, type StageFn } from "./types";
 
-export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
+export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date, shopId?: string) {
   const [row] = await db
     .select({ total: sql<number>`coalesce(sum(${costs.amountChf}), 0)::float` })
     .from(costs)
-    .where(and(gte(costs.createdAt, since), sql`${costs.kind} in ('ai_image','ai_text')`));
+    .where(and(gte(costs.createdAt, since), sql`${costs.kind} in ('ai_image','ai_text')`, shopId ? eq(costs.shopId, shopId) : undefined));
   return Number(row?.total ?? 0);
 }
 
@@ -97,7 +98,10 @@ export const runDesign: StageFn = async (ctx) => {
   const dayStart = new Date(ctx.now);
   dayStart.setUTCHours(0, 0, 0, 0);
   const monthStart = new Date(Date.UTC(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), 1));
+  const [shopRow] = await db.select({ config: shops.config }).from(shops).where(eq(shops.id, ctx.shopId)).limit(1);
+  const businessCap = businessDailyAiCap(shopRow?.config, automation.dailyAiCapChf);
   let spentToday = await aiSpend(db, dayStart);
+  let spentBusinessToday = await aiSpend(db, dayStart, ctx.shopId);
   let spentMonth = await aiSpend(db, monthStart);
 
   let made = 0;
@@ -149,8 +153,15 @@ export const runDesign: StageFn = async (ctx) => {
       let rejected: Candidate | null = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         // Reserve for the vision call as well as image generation before each attempt.
-        if (spentToday + provider.estimatedCostChf + 0.02 > automation.dailyAiCapChf ||
-            spentMonth + provider.estimatedCostChf + 0.02 > automation.monthlyAiBudgetChf) {
+        const nextCost = provider.estimatedCostChf + 0.02;
+        const cap = spendAllowed({
+          spentGlobal: spentToday,
+          spentBusiness: spentBusinessToday,
+          globalCap: automation.dailyAiCapChf,
+          businessCap,
+          nextCost,
+        });
+        if (!cap.ok || spentMonth + nextCost > automation.monthlyAiBudgetChf) {
           log(`Daily AI cap reached or monthly AI budget reached before attempt ${attempt + 1} for “${kw.phrase}”`, "warn");
           budgetStopped = true;
           break;
@@ -164,6 +175,7 @@ export const runDesign: StageFn = async (ctx) => {
           print: brief.brief?.productType === "pod" && brief.brief.podPreset === "posterA3",
         });
         spentToday += img.costChf;
+        spentBusinessToday += img.costChf;
         spentMonth += img.costChf;
         if (img.costChf > 0) await db.insert(costs).values({
           shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf,
@@ -195,6 +207,7 @@ export const runDesign: StageFn = async (ctx) => {
         const visionCost = assessment.costChf ?? 0;
         if (visionCost > 0) {
           spentToday += visionCost;
+          spentBusinessToday += visionCost;
           spentMonth += visionCost;
           await db.insert(costs).values({
             shopId: ctx.shopId, kind: "ai_text", amountChf: visionCost,
