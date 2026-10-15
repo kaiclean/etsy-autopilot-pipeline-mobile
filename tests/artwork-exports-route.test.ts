@@ -57,7 +57,7 @@ beforeEach(() => {
   mocks.requireAuth.mockResolvedValue(undefined);
   mocks.getDb.mockResolvedValue(db);
   mocks.resolveRequestShop.mockResolvedValue({ id: shopId });
-  mocks.getEtsy.mockResolvedValue({ activateListing: mocks.activate });
+  mocks.getEtsy.mockResolvedValue({ mode: "live", activateListing: mocks.activate });
   mocks.read.mockImplementation(async (url: string) => objects.get(url) ?? null);
   mocks.upload.mockImplementation(async (bytes: Buffer) => {
     const url = `https://storage.example/export-${++uploadIndex}.png`;
@@ -256,6 +256,17 @@ describe("complete-pack human verification and publication gates", () => {
     expect((await recordDeliveryManifest(db, listing.id)).ok).toBe(false);
     expect((await row(listing.id)).fileVerifiedAt).toBeNull();
     expect((await row(listing.id)).description).toContain("awaiting human verification");
+  });
+
+  it("never marks a real Etsy draft activated through a dry-run fallback", async () => {
+    const listing = await fixture({ etsyListingId: "12345678" });
+    mocks.getEtsy.mockResolvedValueOnce({ mode: "dry-run", activateListing: mocks.activate });
+    const result = await activateDigitalListing(db, listing.id);
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ error: expect.stringContaining("live writes are disabled") });
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect((await row(listing.id)).activatedAt).toBeNull();
+    expect(mocks.getEtsy).toHaveBeenCalledWith(db, undefined, "write", shopId);
   });
 
   it("validates unknown input safely", () => {

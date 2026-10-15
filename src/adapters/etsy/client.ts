@@ -103,6 +103,10 @@ export class EtsyLiveClient implements EtsyAdapter {
     const taxonomy = await this.request<components["schemas"]["SellerTaxonomyNodes"]>("/seller-taxonomy/nodes");
     const selected = findSellerTaxonomy(taxonomy.results ?? [], taxonomyId);
     if (!selected || selected.children?.length) throw new Error("Select an existing leaf seller taxonomy before creating an Etsy draft");
+    const shop = await this.request<components["schemas"]["Shop"]>(`/shops/${this.shopId}`);
+    if (String(shop.shop_id) !== this.shopId || shop.currency_code !== "CHF") {
+      throw new Error("Live CHF draft pricing requires a verified CHF Etsy shop; automatic foreign-currency pricing is not enabled");
+    }
     const body = new URLSearchParams({
       quantity: String(input.quantity ?? 999),
       title: input.title,
@@ -198,12 +202,14 @@ export class EtsyLiveClient implements EtsyAdapter {
 
   async getReceipt(receiptId: string) {
     const receipt = await this.request<RawReceipt>(`/shops/${this.shopId}/receipts/${numericId(receiptId)}`);
+    if (String(receipt.receipt_id) !== receiptId) throw new Error("Etsy returned a different receipt");
     return this.receiptLines(receipt);
   }
 
   async getListing(listingId: string) {
     const row = await this.request<RawListing>(`/listings/${numericId(listingId)}`);
-    if (String(row.shop_id) !== this.shopId || String(row.listing_id) !== listingId || typeof row.state !== "string") {
+    if (!Number.isSafeInteger(row.shop_id) || !Number.isSafeInteger(row.listing_id) ||
+      String(row.shop_id) !== this.shopId || String(row.listing_id) !== listingId || typeof row.state !== "string") {
       throw new Error("Etsy listing does not belong to this shop");
     }
 

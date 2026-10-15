@@ -94,11 +94,22 @@ describe("validated taxonomy mappings", () => {
     vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "2");
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(json({ results: [{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }] }))
+      .mockResolvedValueOnce(json({ shop_id: 123, currency_code: "CHF" }))
       .mockResolvedValueOnce(json({}));
     vi.stubGlobal("fetch", fetchImpl);
     await expect(client().createDraftListing(input)).rejects.toBeInstanceOf(EtsyAmbiguousWriteError);
-    expect(new URLSearchParams(fetchImpl.mock.calls[1][1].body).get("taxonomy_id")).toBe("2");
+    expect(new URLSearchParams(fetchImpl.mock.calls[2][1].body).get("taxonomy_id")).toBe("2");
     expect(findSellerTaxonomy([{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }], 2)?.id).toBe(2);
+  });
+
+  it("does not submit CHF prices to a foreign-currency shop", async () => {
+    vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "2");
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json({ results: [{ id: 2, parent_id: null }] }))
+      .mockResolvedValueOnce(json({ shop_id: 123, currency_code: "USD" }));
+    vi.stubGlobal("fetch", fetchImpl);
+    await expect(client().createDraftListing(input)).rejects.toThrow("verified CHF");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unsupported properties, invalid values, and inconsistent inventory scales", () => {

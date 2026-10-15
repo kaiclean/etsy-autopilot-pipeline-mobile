@@ -4,7 +4,7 @@ import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
 import { analyticsOrdersWhere, publishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 
 export const runAnalytics: StageFn = async (ctx) => {
   const { db, log } = ctx;
@@ -48,18 +48,15 @@ export const runAnalytics: StageFn = async (ctx) => {
   }
 
   const today = dayKey(ctx.now);
-  const demo = ctx.demo;
-  const [row] = await db
-    .select()
-    .from(dailyStats)
-    .where(and(eq(dailyStats.date, today), eq(dailyStats.isDemo, demo)));
-  if (row) {
-    await db
-      .update(dailyStats)
-      .set({ views: row.views + dViews, favorites: row.favorites + dFavs })
-      .where(eq(dailyStats.id, row.id));
-  } else {
-    await db.insert(dailyStats).values({ date: today, views: dViews, favorites: dFavs, isDemo: demo });
+  if ((unavailable === 0 && published.length > 0) || dViews > 0 || dFavs > 0) {
+    const [row] = await db.select().from(dailyStats)
+      .where(and(eq(dailyStats.date, today), eq(dailyStats.isDemo, ctx.demo)));
+    if (row) {
+      await db.update(dailyStats).set({ views: row.views + dViews, favorites: row.favorites + dFavs })
+        .where(eq(dailyStats.id, row.id));
+    } else {
+      await db.insert(dailyStats).values({ date: today, views: dViews, favorites: dFavs, isDemo: ctx.demo });
+    }
   }
   log(`Views +${dViews}, favorites +${dFavs} across ${published.length} live listings (${etsy.mode})`);
   if (unavailable) log(`${unavailable} listing(s) have unavailable metrics; historical counters preserved and conversion feedback disabled`, "warn");
@@ -72,7 +69,7 @@ export const runAnalytics: StageFn = async (ctx) => {
       .from(costs)
       .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads_estimate"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: ctx.demo });
       log(`Recorded estimated Etsy Ads budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (actual spend is not available from the Etsy Ads API)`);
     }
   }
@@ -86,5 +83,6 @@ export const runAnalytics: StageFn = async (ctx) => {
     })
     .from(orders)
     .where(analyticsOrdersWhere(ctx.shopId, since));
-  return `30d: ${agg.n} orders, revenue CHF ${Number(agg.revenue).toFixed(2)}, profit after fees CHF ${Number(agg.profit).toFixed(2)} · +${dViews} views`;
+  const summary = `30d: ${agg.n} orders, revenue CHF ${Number(agg.revenue).toFixed(2)}, profit after fees CHF ${Number(agg.profit).toFixed(2)} · +${dViews} views`;
+  return unavailable ? stageResult(`${summary} · ${unavailable} listing(s) with unavailable metrics`, "warning") : summary;
 };

@@ -102,6 +102,9 @@ export async function activateDigitalListing(db: DB, listingId: number, now = ne
   });
   if (refusal) return { ok: false as const, error: refusal };
   const etsy = await getEtsyAdapter(db, undefined, "write", l.shopId);
+  if (etsy.mode !== "live" && !l.etsyListingId!.startsWith("dry-")) {
+    return { ok: false as const, error: "Cannot activate a real Etsy draft while live writes are disabled or the shop connection is unavailable." };
+  }
   await etsy.activateListing(l.etsyListingId!);
   await db.update(listings).set({ activatedAt: now, updatedAt: now }).where(eq(listings.id, listingId));
   return { ok: true as const };

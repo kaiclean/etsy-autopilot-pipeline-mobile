@@ -29,6 +29,7 @@ const tags = ["swiss alps art", "mountain wall art", "alpine decor", "minimalist
   "travel poster", "gallery wall", "neutral wall art"];
 const file = (name: string, size: number) => ({
   filename: name, width: size, height: size, bytes: 100, sha256: "a".repeat(64), format: "png" as const,
+  colourSpace: name === "artwork.png" ? "source" as const : "srgb" as const,
 });
 const ctx = (at = now): StageContext => ({ db, shopId, now: at, demo: true, trigger: "manual", random: () => 0, log: () => {} });
 
