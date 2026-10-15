@@ -91,14 +91,19 @@ describe("validated taxonomy mappings", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the reviewed taxonomy and rejects a successful write without a valid provider id", async () => {
+  it.each([
+    ["missing listing id", json({})],
+    ["null JSON", json(null)],
+    ["empty 204 response", new Response(null, { status: 204 })],
+  ])("holds a successful write with %s for reconciliation", async (_name, response) => {
     vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "2");
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(json({ results: [{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }] }))
       .mockResolvedValueOnce(json({ shop_id: 123, currency_code: "CHF" }))
-      .mockResolvedValueOnce(json({}));
+      .mockResolvedValueOnce(response);
     vi.stubGlobal("fetch", fetchImpl);
     await expect(client().createDraftListing(input)).rejects.toBeInstanceOf(EtsyAmbiguousWriteError);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(new URLSearchParams(fetchImpl.mock.calls[2][1].body).get("taxonomy_id")).toBe("2");
     expect(findSellerTaxonomy([{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }], 2)?.id).toBe(2);
   });

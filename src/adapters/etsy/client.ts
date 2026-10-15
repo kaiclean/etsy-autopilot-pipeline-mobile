@@ -120,12 +120,12 @@ export class EtsyLiveClient implements EtsyAdapter {
       is_supply: "false",
     });
     input.tags.forEach((t) => body.append("tags", t));
-    const json = await this.request<{ listing_id: number }>(`/shops/${this.shopId}/listings`, {
+    const json = await this.request<{ listing_id: number } | null>(`/shops/${this.shopId}/listings`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    if (!Number.isSafeInteger(json.listing_id) || json.listing_id <= 0) throw new EtsyAmbiguousWriteError();
+    if (!json || !Number.isSafeInteger(json.listing_id) || json.listing_id <= 0) throw new EtsyAmbiguousWriteError();
     return { listingId: String(json.listing_id) };
   }
 

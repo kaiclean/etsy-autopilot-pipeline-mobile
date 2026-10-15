@@ -305,7 +305,7 @@ export const orders = pgTable("orders", {
     .default(omnishopId)
     .references(() => shops.id),
   etsyReceiptId: text("etsy_receipt_id").notNull().unique(),
-  etsyPaymentStatus: text("etsy_payment_status").$type<"paid" | "canceled" | "refund_pending">().notNull().default("paid"),
+  etsyPaymentStatus: text("etsy_payment_status").$type<"paid" | "unpaid" | "canceled" | "refund_pending">().notNull().default("paid"),
   listingId: integer("listing_id").references(() => listings.id),
   /** Etsy listing id from the receipt when no pipeline row has that id yet. */
   unmatchedEtsyListingId: text("unmatched_etsy_listing_id"),

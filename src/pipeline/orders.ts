@@ -55,7 +55,8 @@ async function saveLiveReceipt(
         when observation.canceled then 'canceled'
         when observation.refund_detected then 'refund_pending'
         when observation.paid then 'paid'
-        else orders.etsy_payment_status end,
+        when orders.etsy_payment_status in ('canceled', 'refund_pending') then orders.etsy_payment_status
+        else 'unpaid' end,
         updated_at = now()
       from accepted_observation observation
       where orders.shop_id = observation.shop_id and orders.etsy_receipt_id = observation.receipt_line_id

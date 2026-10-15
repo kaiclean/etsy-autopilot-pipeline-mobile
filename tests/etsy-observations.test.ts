@@ -214,6 +214,19 @@ describe("redacted receipt observations", () => {
     const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
     expect(snapshot.paid).toBe(false);
   });
+
+  it("marks a previously paid order unpaid when a newer observation is unpaid", async () => {
+    const receiptId = "223456-902";
+    expect((await save([line({ receiptId })])).inserted).toBe(1);
+    await save([line({ receiptId, paid: false, modifiedAt: new Date(now.getTime() + 60_000) })]);
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.etsyPaymentStatus).toBe("unpaid");
+    expect(await db.select().from(orders).where(and(
+      eq(orders.etsyReceiptId, receiptId), analyticsOrdersWhere(shopId, new Date("2026-10-01")),
+    ))).toHaveLength(0);
+    const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
+    expect(snapshot.paid).toBe(false);
+  });
 });
 
 describe("missing analytics is not zero analytics", () => {

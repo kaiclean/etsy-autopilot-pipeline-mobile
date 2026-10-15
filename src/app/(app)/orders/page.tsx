@@ -58,7 +58,11 @@ export default async function OrdersPage() {
                   <ProvenanceBadge kind={orderProvenance(o)} />
                   {o.etsyPaymentStatus !== "paid" && (
                     <span className="inline-flex h-5 items-center rounded-full bg-warning/15 px-2 text-[11px] font-semibold text-warning">
-                      {o.etsyPaymentStatus === "canceled" ? "Canceled · excluded" : "Refund pending · excluded"}
+                      {o.etsyPaymentStatus === "canceled"
+                        ? "Canceled · excluded"
+                        : o.etsyPaymentStatus === "refund_pending"
+                          ? "Refund pending · excluded"
+                          : "Unpaid · excluded"}
                     </span>
                   )}
                   {o.matchStatus === "unmatched" ? (

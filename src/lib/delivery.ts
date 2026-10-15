@@ -7,20 +7,21 @@ import type { Niche, ProductType } from "@/db/schema";
  */
 export const PLANNED_WALL_ART_RATIOS = ["2:3", "3:4", "4:5", "11x14", "ISO A"] as const;
 
-/** Buyer-facing file list. Must match the single PNG `runPublish` uploads for digital listings. */
-export const DIGITAL_FILE_BLURB = [
-  "WHAT YOU GET",
-  "• One PNG of this artwork",
-  "• Instant download after purchase",
-].join("\n");
+/** Buyer-facing file list. Must match the single file `runPublish` uploads for digital listings. */
+export function digitalFileBlurb(format: "png" | "jpeg" | "webp" | null = "png") {
+  const file = format ? `One ${{ png: "PNG", jpeg: "JPEG", webp: "WebP" }[format]} of this artwork` : "One image file of this artwork";
+  return ["WHAT YOU GET", `• ${file}`, "• Instant download after purchase"].join("\n");
+}
+
+export const DIGITAL_FILE_BLURB = digitalFileBlurb();
 
 /** What this pipeline can actually hand a buyer today. */
 export type DeliverableFacts = {
   /** Files the buyer downloads. POD is 0. */
   fileCount: number;
-  /** Physical units in the order. A single mug or a single PNG is 1. */
+  /** Physical units in the order. A single mug or a single image file is 1. */
   itemCount: number;
-  format: "png" | "svg" | "zip" | "pdf";
+  format: "png" | "jpeg" | "webp" | "svg" | "zip" | "pdf" | "unknown";
   transparent: boolean;
   animated: boolean;
   editable: boolean;
@@ -34,11 +35,11 @@ export type DeliverableFacts = {
   includes: Array<"emotes" | "webcam-frame" | "alerts" | "panels">;
 };
 
-export function defaultDeliverable(productType: ProductType): DeliverableFacts {
+export function defaultDeliverable(productType: ProductType, format: "png" | "jpeg" | "webp" | null = "png"): DeliverableFacts {
   return {
     fileCount: productType === "digital" ? 1 : 0,
     itemCount: 1,
-    format: "png",
+    format: productType === "digital" ? format ?? "unknown" : "png",
     transparent: false,
     animated: false,
     editable: false,
@@ -83,6 +84,9 @@ export const PROMISE_RULES: PromiseRule[] = [
   { label: "personalized", pattern: /\bpersonal(?:i[sz]ed|i[sz]ation)\b/i, allowed: (f) => f.personalized },
   { label: "ornament", pattern: /\bornaments?\b/i, allowed: (f) => f.blank === "ornament" },
   { label: "SVG", pattern: /\bsvg\b/i, allowed: (f) => f.format === "svg" },
+  { label: "PNG", pattern: /\bpng\b/i, allowed: (f) => f.format === "png" },
+  { label: "JPEG", pattern: /\b(?:jpe?g)\b/i, allowed: (f) => f.format === "jpeg" },
+  { label: "WebP", pattern: /\bwebp\b/i, allowed: (f) => f.format === "webp" },
   { label: "commercial use", pattern: /\bcommercial use\b/i, allowed: (f) => f.commercialUse },
   { label: "DPI", pattern: /\bdpi\b/i, allowed: (f) => f.dpi != null && f.dpi > 0 },
   {
@@ -123,10 +127,10 @@ export function leadPhrase(phrase: string, niche: Niche, productType: ProductTyp
 
 /**
  * Drop lines that promise files, ratios, or formats the shop does not ship,
- * then state the one PNG digital buyers actually get.
+ * then state the one image file digital buyers actually get.
  */
-export function alignDeliveryCopy(body: string, productType: ProductType) {
-  const facts = defaultDeliverable(productType);
+export function alignDeliveryCopy(body: string, productType: ProductType, format: "png" | "jpeg" | "webp" | null = "png") {
+  const facts = defaultDeliverable(productType, format);
   const withoutPack = productType === "digital" ? body.replace(/\n*WHAT YOU GET[\s\S]*$/i, "") : body;
   const kept = withoutPack
     .split("\n")
@@ -135,5 +139,5 @@ export function alignDeliveryCopy(body: string, productType: ProductType) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (productType !== "digital") return kept;
-  return `${kept}\n\n${DIGITAL_FILE_BLURB}`.trim();
+  return `${kept}\n\n${digitalFileBlurb(format)}`.trim();
 }

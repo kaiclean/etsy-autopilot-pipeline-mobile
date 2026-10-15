@@ -179,7 +179,12 @@ export async function buildFileManifest(
 }
 
 export type ArtworkFileRecord = FileManifest["delivery"] & { format: ArtworkFormat; colourSpace: "srgb" | "source" };
-export type ArtworkManifest = FileManifest & { version: 1; provenance?: ArtworkProvenance };
+export type ArtworkManifest = FileManifest & {
+  version: 1;
+  delivery: ArtworkFileRecord;
+  preview?: ArtworkFileRecord;
+  provenance?: ArtworkProvenance;
+};
 
 /** Hashes the original delivery bytes, not a re-encoded or downscaled substitute. */
 export async function inspectArtworkFile(bytes: Buffer, filename: string): Promise<ArtworkFileRecord | null> {

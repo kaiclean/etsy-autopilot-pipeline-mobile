@@ -385,10 +385,11 @@ export async function getOrders() {
   const rows = await ordersListQuery(db);
   const since = Date.now() - 30 * DAY;
   const recent = rows.filter((r) => r.order.createdAt.getTime() >= since);
+  const eligible = recent.filter((r) => r.order.etsyPaymentStatus === "paid");
   const summary = {
-    count30d: recent.length,
-    revenue30d: recent.reduce((s, r) => s + r.order.totalChf, 0),
-    profit30d: recent.reduce((s, r) => s + r.order.profitChf, 0),
+    count30d: eligible.length,
+    revenue30d: eligible.reduce((s, r) => s + r.order.totalChf, 0),
+    profit30d: eligible.reduce((s, r) => s + r.order.profitChf, 0),
     openPod: rows.filter((r) => r.order.matchStatus !== "unmatched" && ["pending", "in_production", "shipped"].includes(r.order.fulfillmentStatus)).length,
     unmatched: rows.filter((r) => r.order.matchStatus === "unmatched").length,
   };
