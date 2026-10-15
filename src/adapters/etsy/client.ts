@@ -1,4 +1,5 @@
 import { loadArtworkBytes, ownMediaKey, renderArtworkPreview, isPreviewUrl } from "@/lib/artwork-source";
+import { inspectArtwork } from "@/lib/artwork-codec";
 import { config } from "@/lib/config";
 import { describeFetchError } from "@/lib/http-error";
 import { localAssetPng } from "@/lib/png";
@@ -137,7 +138,11 @@ export class EtsyLiveClient implements EtsyAdapter {
       return new Blob([new Uint8Array(preview)], { type: "image/png" });
     }
     const artwork = url.startsWith("data:") || ownMediaKey(url) ? await loadArtworkBytes(url) : null;
-    if (artwork) return new Blob([new Uint8Array(artwork)], { type: "image/png" });
+    if (artwork) {
+      const info = await inspectArtwork(artwork);
+      if (!info) throw new Error("Etsy upload artwork is invalid or unsupported");
+      return new Blob([new Uint8Array(artwork)], { type: `image/${info.format}` });
+    }
     const png = localAssetPng(url);
     if (png) return new Blob([new Uint8Array(png)], { type: "image/png" });
     let res: Response;
@@ -179,7 +184,8 @@ export class EtsyLiveClient implements EtsyAdapter {
     if (!Number.isFinite(since.getTime())) throw new Error("Invalid Etsy receipt cursor");
     const query = new URLSearchParams({
       min_last_modified: String(Math.max(946684800, Math.floor(since.getTime() / 1000))),
-      limit: "100", sort_on: "updated", sort_order: "asc",
+      // Modification time filters eligibility; immutable IDs keep edits from moving receipts between pages.
+      limit: "100", sort_on: "receipt_id", sort_order: "asc",
     });
     const out: EtsyReceipt[] = [];
     const seen = new Set<number | undefined>();

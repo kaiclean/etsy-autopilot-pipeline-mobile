@@ -10,6 +10,7 @@ import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
 import { buildFileManifest, manifestIsComplete } from "@/lib/file-manifest";
 import { verifyListingDeliveryPack } from "@/lib/artwork-pack";
+import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import { maskSecrets } from "./stage-log";
@@ -167,6 +168,7 @@ export const runPublish: StageFn = async (ctx) => {
     let createdEtsyDraft = false;
     try {
       let etsyListingId: string | null = null;
+      let deliveredFingerprint: string | null = null;
       let printifyProductId: string | null = null;
       let podBlueprintId: number | null = null;
       let podPrintProviderId: number | null = null;
@@ -220,6 +222,7 @@ export const runPublish: StageFn = async (ctx) => {
         for (const file of l.deliveryPack?.files ?? []) {
           await etsy.uploadListingFile(listingId, { name: file.filename, url: absoluteUrl(file.url) });
         }
+        deliveredFingerprint = etsyDeliveryFingerprint({ deliveryUrl: l.deliveryUrl, fileManifest: manifest, deliveryPack: l.deliveryPack });
         etsyListingId = listingId;
         log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {
@@ -256,7 +259,7 @@ export const runPublish: StageFn = async (ctx) => {
         .update(listings)
         .set({
           status: nextStatus,
-          ...(l.productType === "digital" ? { etsyListingId } : {}),
+          ...(l.productType === "digital" ? { etsyListingId, etsyDeliveryFingerprint: deliveredFingerprint } : {}),
           printifyProductId,
           ...(podBlueprintId != null ? { podBlueprintId } : {}),
           ...(podPrintProviderId != null ? { podPrintProviderId } : {}),

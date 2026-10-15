@@ -9,7 +9,8 @@ import * as schema from "@/db/schema";
 import { designs, listings, shops } from "@/db/schema";
 import { inspectArtworkFile } from "@/lib/file-manifest";
 import { rgbPng } from "@/lib/png";
-import { deliveryPackIsComplete, verifyListingDeliveryPack } from "@/lib/artwork-pack";
+import { deliveryPackIsComplete, storeArtworkPack, verifyListingDeliveryPack, type ArtworkExportSpec } from "@/lib/artwork-pack";
+import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { digitalActivationRefusal, digitalDraftRefusal } from "@/lib/publish-gates";
 import { createListingExports, parseArtworkExportSpecs } from "@/pipeline/artwork-exports";
 import { activateDigitalListing, markDeliveryVerified, recordDeliveryManifest } from "@/pipeline/human-publish";
@@ -239,7 +240,7 @@ describe("complete-pack human verification and publication gates", () => {
     expect((await recordDeliveryManifest(db, listing.id)).ok).toBe(true);
     expect((await row(listing.id)).fileVerifiedAt).toBeNull();
     expect(await markDeliveryVerified(db, listing.id, "human")).toEqual({ ok: true });
-    await db.update(listings).set({ etsyListingId: "single-draft" }).where(eq(listings.id, listing.id));
+    await db.update(listings).set({ etsyListingId: "single-draft", status: "published", publishMode: "live", publishedAt: new Date(), publishError: null }).where(eq(listings.id, listing.id));
     expect((await activateDigitalListing(db, listing.id)).ok).toBe(true);
     expect(mocks.getEtsy).toHaveBeenCalledWith(db, undefined, "write", shopId);
     expect(mocks.activate).toHaveBeenCalledWith("single-draft");
@@ -259,7 +260,7 @@ describe("complete-pack human verification and publication gates", () => {
   });
 
   it("never marks a real Etsy draft activated through a dry-run fallback", async () => {
-    const listing = await fixture({ etsyListingId: "12345678" });
+    const listing = await fixture({ etsyListingId: "12345678", status: "published", publishMode: "live", publishedAt: new Date(), publishError: null });
     mocks.getEtsy.mockResolvedValueOnce({ mode: "dry-run", activateListing: mocks.activate });
     const result = await activateDigitalListing(db, listing.id);
     expect(result.ok).toBe(false);
@@ -267,6 +268,89 @@ describe("complete-pack human verification and publication gates", () => {
     expect(mocks.activate).not.toHaveBeenCalled();
     expect((await row(listing.id)).activatedAt).toBeNull();
     expect(mocks.getEtsy).toHaveBeenCalledWith(db, undefined, "write", shopId);
+  });
+
+  it("refuses activation after the original uploaded but an export failed, despite valid stored files and human verification", async () => {
+    const listing = await fixture();
+    await createListingExports(db, shopId, listing.id, plan);
+    expect((await markDeliveryVerified(db, listing.id, "human")).ok).toBe(true);
+    await db.update(listings).set({
+      etsyListingId: "partial-upload-draft", status: "failed", publishMode: "live",
+      publishedAt: new Date(), publishError: "Original uploaded; export upload failed.",
+    }).where(eq(listings.id, listing.id));
+    expect(await verifyListingDeliveryPack(await row(listing.id))).toBe(true);
+    const result = await activateDigitalListing(db, listing.id);
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("including every image and delivery-file upload") });
+    expect(mocks.getEtsy).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect((await row(listing.id)).activatedAt).toBeNull();
+  });
+
+  it("refuses activation while publishing, before a complete publish, or with a stale success timestamp/error", async () => {
+    for (const overrides of [
+      { status: "publishing" as const, publishedAt: null, publishError: null },
+      { status: "approved" as const, publishedAt: new Date(), publishError: null },
+      { status: "published" as const, publishedAt: null, publishError: null },
+      { status: "published" as const, publishedAt: new Date(), publishError: "Uncertain export upload" },
+      { status: "published" as const, publishedAt: new Date(), publishError: null, publishMode: "dry-run" as const },
+    ]) {
+      const listing = await fixture({ etsyListingId: "inflight-draft", publishMode: "live", ...overrides });
+      const result = await activateDigitalListing(db, listing.id);
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining("current live Etsy draft publish") });
+      expect((await row(listing.id)).activatedAt).toBeNull();
+    }
+    expect(mocks.getEtsy).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
+  });
+
+  it("requires current-revision Etsy attachment proof for packs even after a completed live publish", async () => {
+    const listing = await fixture();
+    await createListingExports(db, shopId, listing.id, plan);
+    expect((await markDeliveryVerified(db, listing.id, "human")).ok).toBe(true);
+    await db.update(listings).set({
+      etsyListingId: "complete-pack-draft", status: "published", publishMode: "live", publishedAt: new Date(), publishError: null,
+    }).where(eq(listings.id, listing.id));
+    for (const proof of [null, "a".repeat(64)]) {
+      await db.update(listings).set({ etsyDeliveryFingerprint: proof }).where(eq(listings.id, listing.id));
+      expect(await verifyListingDeliveryPack(await row(listing.id))).toBe(true);
+      expect(await activateDigitalListing(db, listing.id)).toMatchObject({
+        ok: false, error: expect.stringContaining("current file revision"),
+      });
+      expect((await row(listing.id)).activatedAt).toBeNull();
+    }
+    expect(mocks.getEtsy).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
+    const proof = etsyDeliveryFingerprint(await row(listing.id));
+    await db.update(listings).set({ etsyDeliveryFingerprint: proof }).where(eq(listings.id, listing.id));
+    expect((await activateDigitalListing(db, listing.id)).ok).toBe(true);
+    expect(mocks.activate).toHaveBeenCalledWith("complete-pack-draft");
+  });
+
+  it("rejects stale Etsy proof after source changes, re-manifesting, regenerated exports and fresh human verification", async () => {
+    const listing = await fixture();
+    await createListingExports(db, shopId, listing.id, plan);
+    const proof = etsyDeliveryFingerprint(await row(listing.id));
+    const changedSource = rgbPng(40, 60, [200, 100, 20]);
+    objects.set(originalUrl, changedSource);
+    const delivery = (await inspectArtworkFile(changedSource, "original.png"))!;
+    const replacement = await storeArtworkPack(changedSource, plan.exports as ArtworkExportSpec[], {
+      upload: mocks.upload, read: mocks.read,
+    });
+    replacement.source = delivery;
+    await db.update(listings).set({
+      etsyListingId: "stale-attachment-draft", status: "published", publishMode: "live", publishedAt: new Date(), publishError: null,
+      etsyDeliveryFingerprint: proof, fileManifest: { delivery }, deliveryPack: replacement,
+    }).where(eq(listings.id, listing.id));
+    expect((await markDeliveryVerified(db, listing.id, "human")).ok).toBe(true);
+    const changed = await row(listing.id);
+    expect(await verifyListingDeliveryPack(changed)).toBe(true);
+    expect(etsyDeliveryFingerprint(changed)).not.toBe(proof);
+    expect(await activateDigitalListing(db, listing.id)).toMatchObject({
+      ok: false, error: expect.stringContaining("current file revision"),
+    });
+    expect(mocks.getEtsy).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect((await row(listing.id)).activatedAt).toBeNull();
   });
 
   it("validates unknown input safely", () => {

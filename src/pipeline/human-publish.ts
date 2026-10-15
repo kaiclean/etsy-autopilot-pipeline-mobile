@@ -7,6 +7,7 @@ import { config } from "@/lib/config";
 import { buildFileManifest, manifestIsComplete, type ArtworkManifest, type ManifestLoadDeps } from "@/lib/file-manifest";
 import { verifyListingDeliveryPack, withArtworkPackContents } from "@/lib/artwork-pack";
 import { loadArtworkBytes } from "@/lib/artwork-source";
+import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
 import { absoluteUrl, podPreset } from "./publish";
@@ -101,6 +102,12 @@ export async function activateDigitalListing(db: DB, listingId: number, now = ne
     deliveryPackVerified,
   });
   if (refusal) return { ok: false as const, error: refusal };
+  if (l.status !== "published" || l.publishMode !== "live" || !l.publishedAt || l.publishError !== null) {
+    return { ok: false as const, error: "Cannot activate: the current live Etsy draft publish must complete successfully, including every image and delivery-file upload." };
+  }
+  if (l.deliveryPack && (!l.etsyDeliveryFingerprint || l.etsyDeliveryFingerprint !== etsyDeliveryFingerprint(l))) {
+    return { ok: false as const, error: "Cannot activate: Etsy delivery attachments are not confirmed for the current file revision. Complete a live publish of every current delivery file first." };
+  }
   const etsy = await getEtsyAdapter(db, undefined, "write", l.shopId);
   if (etsy.mode !== "live" && !l.etsyListingId!.startsWith("dry-")) {
     return { ok: false as const, error: "Cannot activate a real Etsy draft while live writes are disabled or the shop connection is unavailable." };

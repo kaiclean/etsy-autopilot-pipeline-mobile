@@ -9,6 +9,7 @@ import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { listings, shops } from "@/db/schema";
 import { withDisclosures } from "@/lib/disclosures";
+import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { runPublish, PUBLISH_RETRY_MS } from "@/pipeline/publish";
 import type { StageContext } from "@/pipeline/types";
 
@@ -81,6 +82,7 @@ it("retains the created draft and holds a subsequent upload failure for reconcil
   await expect(runPublish(ctx())).rejects.toThrow("failed 1");
   const [failed] = await db.select().from(listings).where(eq(listings.id, row.id));
   expect(failed.etsyListingId).toBe("dry-existing");
+  expect(failed.etsyDeliveryFingerprint).toBeNull();
   expect(failed.publishError).toMatch(/^Publish attempt ended without a recorded provider result/);
   await runPublish(ctx(new Date(now.getTime() + 2 * PUBLISH_RETRY_MS)));
   expect(createDraftListing).toHaveBeenCalledTimes(1);
@@ -99,4 +101,8 @@ it("uploads every verified pack file without activating the listing", async () =
     ["dry-pack", { name: "small.png", url: "https://assets.example/small.png" }],
   ]);
   expect(activateListing).not.toHaveBeenCalled();
+  const [published] = await db.select().from(listings);
+  expect(published.etsyDeliveryFingerprint).toBe(etsyDeliveryFingerprint(published));
+  expect(published.etsyDeliveryFingerprint).not.toBe(etsyDeliveryFingerprint({ ...published,
+    deliveryPack: { ...published.deliveryPack!, files: published.deliveryPack!.files.map((entry) => ({ ...entry, filename: "changed.png" })) } }));
 });

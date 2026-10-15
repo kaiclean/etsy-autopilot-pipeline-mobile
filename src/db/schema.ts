@@ -217,6 +217,7 @@ export const listings = pgTable("listings", {
   deliveryUrl: text("delivery_url"),
   fileManifest: jsonb("file_manifest").$type<FileManifest>(),
   deliveryPack: jsonb("delivery_pack").$type<ArtworkPackManifest>(),
+  etsyDeliveryFingerprint: text("etsy_delivery_fingerprint"),
   gallery: jsonb("gallery").$type<ArtworkGalleryView[]>().notNull().default([]),
   copyProvenance: jsonb("copy_provenance").$type<{ version: 1; provider: string; inputSha256: string }>(),
   fileVerifiedAt: timestamp("file_verified_at", { withTimezone: true }),

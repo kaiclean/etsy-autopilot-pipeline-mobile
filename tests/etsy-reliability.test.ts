@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import { EtsyLiveClient } from "@/adapters/etsy/client";
 import { EtsyAmbiguousWriteError, etsyRequest, officialEtsyUrl } from "@/adapters/etsy/transport";
 import { etsyMoneyInChf, validateEtsyMoney } from "@/adapters/etsy/money";
@@ -124,7 +125,16 @@ describe("validated taxonomy mappings", () => {
 });
 
 describe("complete receipt ingestion contracts", () => {
-  it("paginates by updated time and preserves original money and timestamps", async () => {
+  it("preserves the decoded JPEG MIME type when uploading a delivery image", async () => {
+    const bytes = await sharp({ create: { width: 4, height: 4, channels: 3, background: "white" } }).jpeg().toBuffer();
+    const fetchImpl = vi.fn(async () => json({}));
+    vi.stubGlobal("fetch", fetchImpl);
+    await client().uploadListingFile("456", { name: "artwork.jpg", url: `data:image/jpeg;base64,${bytes.toString("base64")}` });
+    const init = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
+    expect((init[1].body as FormData).get("file")).toMatchObject({ type: "image/jpeg" });
+  });
+
+  it("filters by updated time with immutable receipt ordering and preserves source money", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(json({ count: 101, results: Array.from({ length: 100 }, (_, i) => receipt(i + 1)) }))
       .mockResolvedValueOnce(json({ count: 101, results: [receipt(101)] }));
@@ -140,7 +150,23 @@ describe("complete receipt ingestion contracts", () => {
     expect(urls[0].searchParams.get("min_last_modified")).toBe("1790812800");
     expect(urls[0].searchParams.get("was_paid")).toBeNull();
     expect(urls[1].searchParams.get("offset")).toBe("100");
-    expect(urls[0].searchParams.get("sort_on")).toBe("updated");
+    expect(urls[0].searchParams.get("sort_on")).toBe("receipt_id");
+  });
+
+  it("does not skip an old receipt when an already-read receipt changes between pages", async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => receipt(i + 1, { updated_timestamp: 1_790_100_000 + i }));
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: URL) => {
+      const query = new URL(input).searchParams;
+      if (++calls === 2) rows[0].updated_timestamp = 1_900_000_000;
+      const sortById = query.get("sort_on") === "receipt_id";
+      const sorted = [...rows].sort((a, b) => sortById ? a.receipt_id - b.receipt_id : a.updated_timestamp - b.updated_timestamp);
+      const offset = Number(query.get("offset"));
+      return json({ count: sorted.length, results: sorted.slice(offset, offset + 100) });
+    }));
+    const result = await client().getReceipts({ since: new Date("2026-10-01T00:00:00Z") });
+    expect(result).toHaveLength(200);
+    expect(result.some((row) => row.receiptId === "101-101")).toBe(true);
   });
 
   it("fails incomplete pagination instead of accepting a partial batch", async () => {

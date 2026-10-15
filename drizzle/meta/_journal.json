@@ -127,6 +127,13 @@
       "when": 1792089000003,
       "tag": "0021_artwork_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792089000004,
+      "tag": "0022_etsy_delivery_proof",
+      "breakpoints": true
     }
   ]
 }

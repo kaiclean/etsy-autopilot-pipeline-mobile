@@ -292,7 +292,9 @@ function HumanPublish({ l }: { l: Listing }) {
               Prepare half-size PNG export
             </Button>
           )}
-          <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
+          <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt) ||
+            l.status !== "published" || l.publishMode !== "live" || Boolean(l.publishError) ||
+            Boolean(l.deliveryPack && !l.etsyDeliveryFingerprint)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
             Activate
           </Button>
         </div>
