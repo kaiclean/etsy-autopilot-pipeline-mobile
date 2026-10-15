@@ -1,20 +1,22 @@
-import { and, desc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import type { EtsyReceipt } from "@/adapters/etsy/types";
 import { getPrintifyAdapter, type PrintifyOrderStatus } from "@/adapters/printify";
 import type { DB } from "@/db";
 import { listings, orders, shops, type Listing } from "@/db/schema";
+import { etsyReceiptSnapshots, etsySyncState } from "@/db/etsy-sync";
 import { isDemoMode } from "@/lib/config";
 import { emit, visible } from "@/lib/events";
 import { dispatchEventPush } from "@/lib/push";
 import { claimSaleAlert, isRealSaleReceipt } from "@/lib/sale-alert";
 import { calculateFees } from "@/lib/fees";
-import { persistedOrderIsDemo, publishedListingsWhere, realOrderCursorWhere, receiptLookback, shouldSimulateReceipts } from "@/lib/real-orders";
+import { persistedOrderIsDemo, publishedListingsWhere, receiptLookback, shouldSimulateReceipts } from "@/lib/real-orders";
 import { syncAwaitingEtsyIds } from "./etsy-id-sync";
 import { flagStalledFulfillment } from "./fulfillment-watch";
 import type { StageFn } from "./types";
 import { listingPreset, recheckOrderSourcing, sourcingAvailable } from "./sourcing";
 import { buyerRegion } from "@/lib/sourcing";
+import { resolveActiveShop } from "@/lib/shops";
 
 type ReceiptLog = (msg: string, level?: "info" | "warn" | "error") => void;
 
@@ -44,9 +46,31 @@ export async function saveReceipts(
 
   let inserted = 0;
   let unmatched = 0;
+  const sourceShopId = opts.shopId ?? (receipts.length ? (await resolveActiveShop(db)).id : undefined);
   for (const r of receipts) {
-    if (existing.has(r.receiptId)) continue;
     const l = byEtsyId.get(r.etsyListingId);
+    if (l && sourceShopId && l.shopId !== sourceShopId) throw new Error("Receipt listing does not belong to this shop");
+    const paymentStatus = r.canceled ? "canceled" : r.refunded ? "refund_pending" : "paid";
+    if (!isDemo && sourceShopId) {
+      const sourceModifiedAt = r.modifiedAt ?? r.createdAt;
+      const observation = {
+        etsyListingId: r.etsyListingId, paid: r.paid !== false, canceled: r.canceled === true,
+        refundDetected: r.refunded === true, quantity: r.quantity,
+        originalMoney: r.originalMoney ?? null, fxRate: r.fxRate ?? null,
+        fxAsOf: r.fxAsOf ? new Date(r.fxAsOf) : null, sourceModifiedAt, observedAt: new Date(),
+      };
+      const accepted = await db.insert(etsyReceiptSnapshots)
+        .values({ shopId: sourceShopId, receiptLineId: r.receiptId, ...observation })
+        .onConflictDoUpdate({
+          target: [etsyReceiptSnapshots.shopId, etsyReceiptSnapshots.receiptLineId],
+          set: observation,
+          setWhere: sql`${etsyReceiptSnapshots.sourceModifiedAt} <= ${sourceModifiedAt}`,
+        }).returning({ id: etsyReceiptSnapshots.receiptLineId });
+      if (!accepted.length) continue;
+      await db.update(orders).set({ etsyPaymentStatus: paymentStatus, updatedAt: new Date() })
+        .where(and(eq(orders.shopId, sourceShopId), eq(orders.etsyReceiptId, r.receiptId)));
+    }
+    if (existing.has(r.receiptId) || r.paid === false || r.canceled || r.refunded) continue;
     if (!l) {
       const fees = calculateFees({ priceChf: r.totalChf / Math.max(r.quantity, 1), quantity: r.quantity, podCostChf: 0, offsiteAds: opts.offsite(r) });
       const insertedRows = await db
@@ -168,7 +192,7 @@ export async function saveReceipts(
 
 export const runOrders: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const etsy = await getEtsyAdapter(db, ctx.random, "read");
+  const etsy = await getEtsyAdapter(db, ctx.random, "read", ctx.shopId);
   const printify = await getPrintifyAdapter({ db, random: ctx.random, intent: "read" });
   const idSync = await syncAwaitingEtsyIds(db, {
     now: ctx.now,
@@ -199,13 +223,10 @@ export const runOrders: StageFn = async (ctx) => {
     .select({ createdAt: shops.createdAt, etsyShopId: shops.etsyShopId })
     .from(shops)
     .where(eq(shops.id, ctx.shopId));
-  const [lastReal] = await db
-    .select({ createdAt: orders.createdAt })
-    .from(orders)
-    .where(realOrderCursorWhere(ctx.shopId))
-    .orderBy(desc(orders.createdAt))
-    .limit(1);
-  const since = lastReal?.createdAt ?? receiptLookback(ctx.now, shop?.createdAt ?? null);
+  const [sync] = await db.select().from(etsySyncState).where(eq(etsySyncState.shopId, ctx.shopId));
+  // Updated-time watermarks find late payments and changes to old receipts. Overlap tolerates eventual consistency.
+  const previous = sync?.receiptsThrough;
+  const since = previous ? new Date(previous.getTime() - 5 * 60_000) : receiptLookback(ctx.now, shop?.createdAt ?? null);
   const receipts = await etsy.getReceipts({
     since,
     candidates: published.map((l) => ({ etsyListingId: l.etsyListingId!, priceChf: l.priceChf, productType: l.productType })),
@@ -234,6 +255,14 @@ export const runOrders: StageFn = async (ctx) => {
     log,
     sourcingRecheck,
   });
+  if (etsy.mode === "live") {
+    await db.insert(etsySyncState).values({ shopId: ctx.shopId, receiptsThrough: ctx.now })
+      .onConflictDoUpdate({
+        target: etsySyncState.shopId,
+        set: { receiptsThrough: ctx.now },
+        setWhere: sql`${etsySyncState.receiptsThrough} IS NULL OR ${etsySyncState.receiptsThrough} < ${ctx.now}`,
+      });
+  }
 
   const open = await db
     .select({ id: orders.id, podOrderId: orders.podOrderId, status: orders.fulfillmentStatus })

@@ -10,13 +10,13 @@ type Niche = { id: string; label: string; revenue: number; profit: number; order
 
 const revConfig = {
   revenue: { label: "Revenue", color: "var(--chart-4)" },
-  profit: { label: "Profit after fees", color: "var(--chart-1)" },
+  profit: { label: "Estimated profit after fees", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
 export function RevenueChart({ series }: { series: Series }) {
   return (
     <Panel className="p-4">
-      <SectionTitle>Revenue vs profit · 30 days</SectionTitle>
+      <SectionTitle>Revenue vs estimated profit · 30 days</SectionTitle>
       <ChartContainer config={revConfig} className="aspect-auto h-56 w-full">
         <AreaChart data={series} margin={{ left: 0, right: 8, top: 8 }}>
           <defs>
@@ -41,14 +41,15 @@ export function RevenueChart({ series }: { series: Series }) {
 }
 
 const trafficConfig = {
-  views: { label: "Views", color: "var(--chart-5)" },
+  views: { label: "View snapshots", color: "var(--chart-5)" },
   orders: { label: "Orders", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
 export function TrafficChart({ series }: { series: Series }) {
   return (
     <Panel className="p-4">
-      <SectionTitle>Views &amp; orders per day</SectionTitle>
+      <SectionTitle>View snapshots &amp; daily orders</SectionTitle>
+      <p className="text-[11px] text-muted-foreground">Snapshots are not measured daily traffic or a conversion funnel.</p>
       <ChartContainer config={trafficConfig} className="aspect-auto h-48 w-full">
         <BarChart data={series} margin={{ left: 0, right: 0, top: 8 }}>
           <CartesianGrid vertical={false} strokeOpacity={0.15} />
@@ -64,18 +65,18 @@ export function TrafficChart({ series }: { series: Series }) {
   );
 }
 
-const nicheConfig = { profit: { label: "Profit", color: "var(--chart-1)" } } satisfies ChartConfig;
+const nicheConfig = { profit: { label: "Estimated profit", color: "var(--chart-1)" } } satisfies ChartConfig;
 
 export function NicheChart({ niches }: { niches: Niche[] }) {
   const data = [...niches].sort((a, b) => b.profit - a.profit);
   return (
     <Panel className="p-4">
-      <SectionTitle>Profit by niche · 30 days</SectionTitle>
+      <SectionTitle>Estimated profit by niche · 30 days</SectionTitle>
       <ChartContainer config={nicheConfig} className="aspect-auto h-52 w-full">
         <BarChart data={data} layout="vertical" margin={{ left: 0, right: 16 }}>
           <XAxis type="number" hide />
           <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={72} fontSize={12} />
-          <ChartTooltip content={<ChartTooltipContent formatter={(v) => [chf(Number(v)), " Profit"]} />} />
+          <ChartTooltip content={<ChartTooltipContent formatter={(v) => [chf(Number(v)), " Estimated profit"]} />} />
           <Bar dataKey="profit" fill="var(--color-profit)" radius={6} barSize={18} />
         </BarChart>
       </ChartContainer>
@@ -83,7 +84,7 @@ export function NicheChart({ niches }: { niches: Niche[] }) {
         {data.map((n) => (
           <div key={n.id} className="flex justify-between">
             <span>{n.label}</span>
-            <span className="tabular">{num(n.orders)} ord · {n.views ? ((n.orders / n.views) * 100).toFixed(1) : "0.0"}% cvr</span>
+            <span className="tabular">{num(n.orders)} ord · {num(n.views)} view snapshots</span>
           </div>
         ))}
       </div>

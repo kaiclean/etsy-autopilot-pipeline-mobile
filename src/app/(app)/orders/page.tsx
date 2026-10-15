@@ -1,4 +1,5 @@
 import { Receipt } from "lucide-react";
+import Link from "next/link";
 import { EmptyState, FulfillmentPill, PageHeader, Panel, Thumb } from "@/components/common";
 import { ProvenanceBadge } from "@/components/provenance-badge";
 import { RunStageButton } from "@/components/run-button";
@@ -28,9 +29,13 @@ export default async function OrdersPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Mini label="Orders · 30d" value={num(summary.count30d)} />
         <Mini label="Revenue · 30d" value={chf(summary.revenue30d, { compact: true })} />
-        <Mini label="Profit after fees" value={chf(summary.profit30d, { compact: true })} accent />
+        <Mini label="Estimated profit after fees" value={chf(summary.profit30d, { compact: true })} accent />
         <Mini label="Open POD orders" value={num(summary.openPod)} />
       </div>
+      <p className="text-xs text-muted-foreground">
+        Profit, fees and supplier costs are estimates, not a reconciled actual ledger. Refunds or missing fees can change the result.
+        {" "}<Link className="underline" href="/analytics">Review financial evidence and incomplete components</Link>.
+      </p>
 
       {rows.length === 0 ? (
         <EmptyState icon={Receipt} title="No orders yet" body="Orders sync from Etsy every run of the Orders stage. Publish a few listings first." />
@@ -65,7 +70,7 @@ export default async function OrdersPage() {
                 {o.matchStatus === "unmatched" ? (
                   <div className="text-[11px] text-warning">Profit pending</div>
                 ) : (
-                  <div className="tabular text-[11px] font-medium text-success">+{chf(o.profitChf).replace("CHF ", "")}</div>
+                  <div className="tabular text-[11px] font-medium text-success">Est. {chf(o.profitChf).replace("CHF ", "")}</div>
                 )}
                 {o.offsiteAdsChf > 0 && <div className="text-[10px] text-warning">Offsite Ads</div>}
               </div>

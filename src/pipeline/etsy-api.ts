@@ -2,6 +2,7 @@ import type { Niche } from "@/db/schema";
 import { config } from "@/lib/config";
 import { activeNiches, normalizeEtsyVolume } from "@/lib/niches";
 import type { KeywordCandidate, KeywordSource } from "./sources";
+import { etsyRequest } from "@/adapters/etsy/transport";
 
 /** Official Open API v3 origin. etsy.com HTML, search, and autocomplete are out of bounds. */
 export const ETSY_OPENAPI_ORIGIN = "https://openapi.etsy.com";
@@ -40,13 +41,10 @@ export async function fetchActiveListingCount(
 ): Promise<number | null> {
   const url = etsyActiveListingsUrl(keyword);
   assertOfficialEtsyApi(url.toString());
-  const fetchImpl = opts.fetchImpl ?? fetch;
   try {
-    const res = await fetchImpl(url, {
-      headers: { "x-api-key": opts.apiKey, "User-Agent": "EtsyAutopilot" },
+    const body = await etsyRequest<{ count?: number }>(url, {}, {
+      apiKey: opts.apiKey, priority: "research", fetchImpl: opts.fetchImpl,
     });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { count?: number };
     return typeof body.count === "number" && body.count >= 0 ? body.count : null;
   } catch {
     return null;

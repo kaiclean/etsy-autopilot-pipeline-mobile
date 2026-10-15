@@ -57,7 +57,6 @@ export function createEtsyBadgesSource(deps: {
     if (opts.demo) return [];
     const apiKey = deps.apiKey ? deps.apiKey() : config.etsy.apiKey && config.etsy.sharedSecret ? `${config.etsy.apiKey}:${config.etsy.sharedSecret}` : config.etsy.apiKey;
     const fetcher = deps.fetcher ?? hotFetcher;
-    const scrapeEnabled = (deps.scrapeEnabled ?? (() => config.hot.scrapeEnabled))();
     const out: HotSignal[] = [];
     const phrases = activeNiches().map((niche) => niche.seeds[Math.floor(opts.now.getTime() / 864e5) % niche.seeds.length].phrase);
     for (const phrase of phrases) {
@@ -70,13 +69,9 @@ export function createEtsyBadgesSource(deps: {
         const result = await fetcher.json(url, { log: opts.log, init: { headers: { "x-api-key": apiKey } } });
         out.push(...parseEtsyApi(result, opts.now));
       }
-      if (scrapeEnabled) {
-        const url = new URL("https://www.etsy.com/search");
-        url.searchParams.set("q", phrase);
-        url.searchParams.set("order", "most_relevant");
-        const html = await fetcher.html(url, { scrapeEnabled, log: opts.log });
-        if (html != null) out.push(...parseEtsyHtml(html, opts.now));
-      }
+    }
+    if ((deps.scrapeEnabled ?? (() => config.hot.scrapeEnabled))()) {
+      opts.log("Etsy HTML scraping is disabled; API data does not prove bestseller badges or sales", "warn");
     }
     return out;
   });

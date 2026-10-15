@@ -1,4 +1,5 @@
 import type { Niche } from "@/db/schema";
+import type { ArtworkProvenance } from "@/lib/artwork-provenance";
 
 export type ImageRequest = {
   prompt: string;
@@ -13,6 +14,7 @@ export type GeneratedImage = {
   url: string;
   costChf: number;
   provider: string;
+  provenance?: ArtworkProvenance;
 };
 
 export interface ImageProvider {

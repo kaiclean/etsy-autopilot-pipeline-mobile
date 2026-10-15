@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { modelReferences, workflowSha256, type ArtworkProvenance } from "@/lib/artwork-provenance";
 import { materializeImageUrl, type MaterializeDeps } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
@@ -104,15 +105,26 @@ export class RunPodImageProvider implements ImageProvider {
 
     const base = `${BASE_URL}/${encodeURIComponent(endpointId)}`;
     const headers = { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" };
+    const submittedWorkflow = workflowForRequest(workflow, req);
+    const provenance: ArtworkProvenance = {
+      version: 1,
+      provider: "runpod",
+      templateSha256: workflowSha256(JSON.parse(workflow)),
+      workflowSha256: workflowSha256(submittedWorkflow),
+      requestedSeed: req.seed,
+      requestedAspectRatio: req.aspectRatio ?? "2:3",
+      printRequested: Boolean(req.print),
+      modelReferences: modelReferences(submittedWorkflow),
+    };
     const submitted = await fetch(`${base}/run`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ input: { workflow: workflowForRequest(workflow, req) } }),
+      body: JSON.stringify({ input: { workflow: submittedWorkflow } }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!submitted.ok) throw new Error(`RunPod submit ${submitted.status}`);
     let job = (await submitted.json()) as RunPodResponse;
-    if (job.status === "COMPLETED") return this.saveImage(job);
+    if (job.status === "COMPLETED") return this.saveImage(job, provenance);
     if (!job.id) throw new Error("RunPod response did not include a job id");
     const jobId = job.id;
 
@@ -128,12 +140,12 @@ export class RunPodImageProvider implements ImageProvider {
       });
       if (!polled.ok) throw new Error(`RunPod status ${polled.status}: ${diagnostic({ ...job, id: jobId })}`);
       job = (await polled.json()) as RunPodResponse;
-      if (job.status === "COMPLETED") return this.saveImage({ ...job, id: jobId });
+      if (job.status === "COMPLETED") return this.saveImage({ ...job, id: jobId }, provenance);
     }
     throw new Error(`RunPod image job timed out: ${diagnostic({ ...job, id: jobId })}`);
   }
 
-  private async saveImage(job: RunPodResponse): Promise<GeneratedImage> {
+  private async saveImage(job: RunPodResponse, provenance: ArtworkProvenance): Promise<GeneratedImage> {
     const url = outputImage(job);
     if (!url) throw new Error(`RunPod completed without an output image: ${diagnostic(job)}. Configure worker S3 upload for large print outputs.`);
     const temporary = job.output?.images?.[0]?.type === "s3_url" || /^https?:/i.test(url);
@@ -143,6 +155,7 @@ export class RunPodImageProvider implements ImageProvider {
     } catch {
       throw new Error(`RunPod image could not be stored: ${diagnostic(job)}. Check app object storage and worker S3 configuration.`);
     }
-    return { url: stored, costChf: this.estimatedCostChf, provider: this.name };
+    const jobId = job.id && /^[a-zA-Z0-9_-]{1,100}$/.test(job.id) ? job.id : undefined;
+    return { url: stored, costChf: this.estimatedCostChf, provider: this.name, provenance: { ...provenance, ...(jobId ? { jobId } : {}) } };
   }
 }

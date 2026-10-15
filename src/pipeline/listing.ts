@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
@@ -162,6 +163,7 @@ async function listRung(
     artworkUrl,
     preset: rung.product.pod,
     niche: design.niche,
+    sourceDimensions: design.imageWidth && design.imageHeight ? { width: design.imageWidth, height: design.imageHeight } : undefined,
   });
   if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
   const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
@@ -202,6 +204,14 @@ async function listRung(
     tags: draft.tags,
     description: draft.description,
     imageUrl: image.url,
+    gallery: image.gallery ?? [],
+    copyProvenance: {
+      version: 1, provider,
+      inputSha256: createHash("sha256").update(JSON.stringify({
+        version: "listing-input-v1", phrase: keywordForRung(phrase, rung),
+        niche: design.niche, product: rung.product, seed: design.id, artDirection: design.prompt,
+      })).digest("hex"),
+    },
     deliveryUrl,
     fileManifest,
     priceChf: draft.priceChf,

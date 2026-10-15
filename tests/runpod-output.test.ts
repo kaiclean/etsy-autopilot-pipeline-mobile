@@ -62,7 +62,16 @@ describe("RunPod output", () => {
   it("uploads base64 output without retaining it in the URL", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "base64-job", status: "COMPLETED", output: { images: [{ type: "base64", data: "cG5n" }] } })));
     const upload = vi.fn<(bytes: Buffer) => Promise<{ url: string; key: string; backend: "s3" }>>().mockResolvedValue({ url: "https://app-storage.example/native.png", key: "native.png", backend: "s3" });
-    expect((await new RunPodImageProvider({ upload }).generate(request)).url).toBe("https://app-storage.example/native.png");
+    const image = await new RunPodImageProvider({ upload }).generate(request);
+    expect(image.url).toBe("https://app-storage.example/native.png");
+    expect(image.provenance).toMatchObject({
+      version: 1, provider: "runpod", requestedSeed: 1,
+      requestedAspectRatio: "2:3", printRequested: true, jobId: "base64-job",
+    });
+    expect(image.provenance?.workflowSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(image.provenance?.templateSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(image.provenance?.workflowSha256).not.toBe(image.provenance?.templateSha256);
+    expect(JSON.stringify(image.provenance)).not.toContain(request.prompt);
     expect(upload.mock.calls[0][0]).toEqual(Buffer.from("png"));
   });
 

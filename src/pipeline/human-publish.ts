@@ -22,11 +22,11 @@ export async function recordDeliveryManifest(db: DB, listingId: number, now = ne
   if (!l.deliveryUrl) return { ok: false as const, error: "Delivery file URL is missing." };
   const manifest = await buildFileManifest(l.deliveryUrl, l.imageUrl, deps);
   if (!manifestIsComplete(manifest)) {
-    return { ok: false as const, error: "Could not read the delivery PNG (filename, pixel size, bytes, hash)." };
+    return { ok: false as const, error: "Could not read the delivery image (PNG, JPEG or WebP: filename, pixel size, bytes, hash)." };
   }
   const [updated] = await db
     .update(listings)
-    .set({ fileManifest: manifest, updatedAt: now })
+    .set({ fileManifest: manifest, fileVerifiedAt: null, fileVerifiedBy: null, updatedAt: now })
     .where(and(eq(listings.id, listingId), eq(listings.deliveryUrl, l.deliveryUrl), eq(listings.imageUrl, l.imageUrl)))
     .returning({ id: listings.id });
   if (!updated) return { ok: false as const, error: "Listing artwork changed while the delivery file was being read. Please retry." };

@@ -1,13 +1,20 @@
 import { AnalyticsExport } from "@/components/analytics/export-csv";
+import { FinanceImport } from "@/components/analytics/finance-import";
 import { NicheChart, RevenueChart, TrafficChart } from "@/components/analytics/charts";
 import { NicheTag, PageHeader, Panel, SectionTitle, Thumb } from "@/components/common";
 import { chf, num, pct } from "@/lib/format";
 import { ANALYTICS_FRESHNESS_HOURS, getAnalytics } from "@/lib/queries";
+import { getDb } from "@/db";
+import { getFinancialEvidence } from "@/lib/etsy-finance";
+import { resolveRequestShop } from "@/lib/shops";
 
 export const metadata = { title: "Analytics" };
 
 export default async function AnalyticsPage() {
   const a = await getAnalytics();
+  const db = await getDb();
+  const shop = await resolveRequestShop(db);
+  const finance = await getFinancialEvidence(db, shop.id);
   const t = a.totals;
   const lastCheckedAt = a.analyticsFreshness.lastCheckedAt
     ? `${a.analyticsFreshness.lastCheckedAt.toISOString().replace("T", " ").slice(0, 16)} UTC`
@@ -25,7 +32,7 @@ export default async function AnalyticsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Analytics"
-        subtitle={`Last 30 days · all amounts in CHF · ${freshnessSummary}`}
+        subtitle={`Last 30 days · estimates in CHF; evidence in original currency · ${freshnessSummary}`}
         action={
           <AnalyticsExport
             rows={a.series.map((row) => ({
@@ -41,11 +48,40 @@ export default async function AnalyticsPage() {
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Net profit" value={chf(t.netProfit)} accent />
+        <Stat label="Estimated net profit" value={chf(t.netProfit)} accent />
         <Stat label="Revenue" value={chf(t.revenue)} />
-        <Stat label="Conversion" value={pct(t.conversion, 2)} sub={`${num(t.orders)} orders / ${num(t.views)} views`} />
+        <Stat label="Orders / view snapshots" value={pct(t.conversion, 2)} sub="Not a measured conversion rate" />
         <Stat label="Avg order" value={chf(t.aov)} sub={`${num(t.favorites)} favorites`} />
       </div>
+
+      <Panel className="space-y-3 p-4">
+        <SectionTitle>Financial evidence · actual profit unavailable</SectionTitle>
+        <p className="text-xs text-muted-foreground">
+          Existing CHF profit and fee figures remain estimates; imported evidence never overwrites them.
+          Individual actual observations do not establish actual profit. Reconcile {finance.incompleteComponents.join(", ")} before making a profit claim.
+          Listing views and favorites are snapshots, not verified traffic for the selected period.
+        </p>
+        <FinanceImport etsyShopId={shop.etsyShopId} />
+        {finance.rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No financial observations imported for this shop.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <p className="mb-2 text-xs text-muted-foreground">Latest {finance.rows.length} observations · original units, not converted to CHF or summed across currencies</p>
+            <table className="w-full text-left text-xs">
+              <thead><tr><th className="p-2">Evidence date</th><th className="p-2">Component / original type</th><th className="p-2">Status</th><th className="p-2">Original amount / divisor</th><th className="p-2">Source reference</th></tr></thead>
+              <tbody>{finance.rows.map((row) => (
+                <tr key={row.id} className="border-t border-border">
+                  <td className="p-2">{row.occurredAt.toISOString().slice(0, 10)}</td>
+                  <td className="p-2">{row.component} / {row.ledgerType}</td>
+                  <td className="p-2">{row.status}</td>
+                  <td className="p-2 font-mono">{row.amount === null ? "Unavailable" : `${row.amount} / ${row.divisor} ${row.currency}`}</td>
+                  <td className="p-2">{row.sourceKind}: {row.sourceRef} / {row.observationRef}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <RevenueChart series={a.series} />
@@ -72,7 +108,7 @@ export default async function AnalyticsPage() {
               );
             })}
             <div className="flex justify-between border-t border-border pt-2.5">
-              <span className="font-semibold">Net profit</span>
+              <span className="font-semibold">Estimated net profit</span>
               <span className="tabular font-semibold text-success">{chf(t.netProfit)}</span>
             </div>
           </div>
@@ -83,7 +119,7 @@ export default async function AnalyticsPage() {
       </div>
 
       <div>
-        <SectionTitle>Top products by profit</SectionTitle>
+        <SectionTitle>Top products by estimated profit</SectionTitle>
         <Panel className="divide-y divide-border">
           {a.topProducts.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No sales in the last 30 days.</p>}
           {a.topProducts.map((p, i) => (

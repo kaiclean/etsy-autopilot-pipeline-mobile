@@ -4,14 +4,25 @@ import { describeFetchError } from "@/lib/http-error";
 import { localAssetPng } from "@/lib/png";
 import type { EtsyTokens } from "@/lib/settings";
 import { refreshTokens } from "./oauth";
-import type { EtsyAdapter, EtsyDraftInput, EtsyReceipt } from "./types";
+import { etsyMoneyInChf, validateEtsyMoney } from "./money";
+import { etsyRequest } from "./transport";
+import type { components } from "./generated";
+import type { EtsyAdapter, EtsyDraftInput, EtsyListingStats, EtsyReceipt } from "./types";
 
 const API = "https://openapi.etsy.com/v3/application";
 
-type RawMoney = { amount: number; divisor?: number };
-type RawTransaction = { transaction_id: number; listing_id: number; quantity?: number; price?: RawMoney };
-type RawReceipt = { receipt_id: number; country_iso?: string; created_timestamp: number; transactions?: RawTransaction[] };
-type RawListing = { listing_id: number; views?: number; num_favorers?: number };
+type RawReceipt = components["schemas"]["ShopReceipt"];
+type RawListing = components["schemas"]["ShopListing"] & { views?: unknown };
+const refreshFlights = new Map<string, Promise<EtsyTokens>>();
+
+function numericId(value: string) {
+  if (!/^\d+$/.test(value)) throw new Error("Invalid Etsy resource id");
+  return value;
+}
+
+function counter(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
 
 /** Live Etsy Open API v3 client. Token persistence is injected so refreshes are saved. */
 export class EtsyLiveClient implements EtsyAdapter {
@@ -21,15 +32,19 @@ export class EtsyLiveClient implements EtsyAdapter {
     private tokens: EtsyTokens,
     private saveTokens: (t: EtsyTokens, expected?: EtsyTokens) => Promise<EtsyTokens | null | void>,
     private shopIdOverride?: string,
+    private loadTokens?: () => Promise<EtsyTokens | null>,
+    private refreshLease?: <T>(work: () => Promise<T>) => Promise<T>,
   ) {}
 
   private get shopId() {
     const id = this.shopIdOverride || config.etsy.shopId;
     if (!id) throw new Error("ETSY_SHOP_ID missing");
-    return id;
+    return numericId(id);
   }
 
   private async authHeaders() {
+    const stored = await this.loadTokens?.();
+    if (stored) this.tokens = stored;
     if (Date.now() > this.tokens.expiresAt) {
       if (!this.tokens.refreshToken) {
         const refreshError = "Etsy refresh token missing";
@@ -38,10 +53,26 @@ export class EtsyLiveClient implements EtsyAdapter {
         throw new Error(refreshError);
       }
       const current = this.tokens;
+      const key = `${this.shopId}:${current.userId ?? ""}`;
       try {
-        const next = await refreshTokens(current.refreshToken);
-        this.tokens = { ...next, refreshError: null };
-        await this.saveTokens(this.tokens);
+        let flight = refreshFlights.get(key);
+        if (!flight) {
+          const refresh = async () => {
+            const latest = await this.loadTokens?.();
+            if (latest && latest.expiresAt > Date.now()) return latest;
+            const expected = latest ?? current;
+            const next = { ...(await refreshTokens(expected.refreshToken)), refreshError: null };
+            return (await this.saveTokens(next, expected)) ?? next;
+          };
+          flight = this.refreshLease ? this.refreshLease(refresh) : refresh();
+          refreshFlights.set(key, flight);
+        }
+        try {
+          this.tokens = await flight;
+        } finally {
+          if (refreshFlights.get(key) === flight) refreshFlights.delete(key);
+        }
+        if (this.tokens.expiresAt <= Date.now()) throw new Error("Etsy refresh did not produce a current token");
       } catch (error) {
         const status = error instanceof Error ? error.message.match(/\b(\d{3})\b/)?.[1] : undefined;
         const refreshError = status ? `Etsy token refresh failed (HTTP ${status})` : "Etsy token refresh failed";
@@ -58,18 +89,10 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const method = init.method ?? "GET";
-    let res: Response;
-    try {
-      res = await fetch(`${API}${path}`, {
-        ...init,
-        headers: { ...(await this.authHeaders()), ...(init.headers ?? {}) },
-      });
-    } catch (error) {
-      throw describeFetchError(error, `Etsy ${method} ${path}`);
-    }
-    if (!res.ok) throw new Error(`Etsy ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 400)}`);
-    return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+    return etsyRequest<T>(`${API}${path}`, init, {
+      apiKey: `${config.etsy.apiKey}:${config.etsy.sharedSecret}`,
+      headers: () => this.authHeaders(),
+    });
   }
 
   async createDraftListing(input: EtsyDraftInput) {
@@ -116,12 +139,14 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   async uploadListingImage(listingId: string, imageUrl: string) {
+    numericId(listingId);
     const form = new FormData();
     form.append("image", await this.fetchBlob(imageUrl), "image.png");
     await this.request(`/shops/${this.shopId}/listings/${listingId}/images`, { method: "POST", body: form });
   }
 
   async uploadListingFile(listingId: string, file: { name: string; url: string }) {
+    numericId(listingId);
     const form = new FormData();
     form.append("file", await this.fetchBlob(file.url), file.name);
     form.append("name", file.name);
@@ -129,6 +154,7 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   async activateListing(listingId: string) {
+    numericId(listingId);
     const body = new URLSearchParams({ state: "active" });
     await this.request(`/shops/${this.shopId}/listings/${listingId}`, {
       method: "PATCH",
@@ -138,35 +164,85 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   async getReceipts({ since }: { since: Date }): Promise<EtsyReceipt[]> {
-    const minCreated = Math.floor(since.getTime() / 1000);
-    const json = await this.request<{ results: RawReceipt[] }>(
-      `/shops/${this.shopId}/receipts?min_created=${minCreated}&limit=100&was_paid=true`,
-    );
+    if (!Number.isFinite(since.getTime())) throw new Error("Invalid Etsy receipt cursor");
+    const query = new URLSearchParams({
+      min_last_modified: String(Math.max(946684800, Math.floor(since.getTime() / 1000))),
+      limit: "100", sort_on: "updated", sort_order: "asc",
+    });
     const out: EtsyReceipt[] = [];
-    for (const r of json.results ?? []) {
+    const seen = new Set<number | undefined>();
+    for (let offset = 0; offset < 100_000; offset += 100) {
+      query.set("offset", String(offset));
+      const json = await this.request<{ count?: number; results: RawReceipt[] }>(`/shops/${this.shopId}/receipts?${query}`);
+      if (!Array.isArray(json.results)) throw new Error("Etsy receipts response is invalid");
+      let added = 0;
+      for (const receipt of json.results) {
+        if (seen.has(receipt.receipt_id)) continue;
+        seen.add(receipt.receipt_id);
+        out.push(...this.receiptLines(receipt));
+        added++;
+      }
+      if (json.results.length && !added) throw new Error("Etsy receipt pagination did not advance");
+      if (json.results.length < 100) return out;
+    }
+    throw new Error("Etsy receipt backfill exceeds the per-run limit; narrow the backfill window");
+  }
+
+  async getReceipt(receiptId: string) {
+    const receipt = await this.request<RawReceipt>(`/shops/${this.shopId}/receipts/${numericId(receiptId)}`);
+    return this.receiptLines(receipt);
+  }
+
+  async getListing(listingId: string) {
+    const row = await this.request<RawListing>(`/listings/${numericId(listingId)}`);
+    if (String(row.shop_id) !== this.shopId || String(row.listing_id) !== listingId || typeof row.state !== "string") {
+      throw new Error("Etsy listing does not belong to this shop");
+    }
+    const modified = row.updated_timestamp ?? row.last_modified_timestamp;
+    return {
+      listingId, shopId: this.shopId, state: row.state, quantity: row.quantity, title: row.title,
+      updatedAt: typeof modified === "number" && Number.isFinite(modified) ? new Date(modified * 1000) : undefined,
+    };
+  }
+
+  private receiptLines(r: RawReceipt): EtsyReceipt[] {
+    const created = r.created_timestamp ?? r.create_timestamp;
+    if (!Number.isSafeInteger(r.receipt_id) || r.receipt_id! <= 0 || !Number.isSafeInteger(created) ||
+        created! < 946684800 ||
+        !Array.isArray(r.transactions)) throw new Error("Etsy receipt is invalid");
+    const out: EtsyReceipt[] = [];
       for (const t of r.transactions ?? []) {
-        const amount = (t.price?.amount ?? 0) / (t.price?.divisor ?? 100);
+        if (!Number.isSafeInteger(t.transaction_id) || t.transaction_id! <= 0 ||
+            !Number.isSafeInteger(t.listing_id) || t.listing_id! <= 0 ||
+            !Number.isSafeInteger(t.quantity) || t.quantity! <= 0) throw new Error("Etsy receipt transaction is invalid");
+        const money = validateEtsyMoney(t.price);
+        const converted = etsyMoneyInChf(money);
         out.push({
           receiptId: `${r.receipt_id}-${t.transaction_id}`,
           etsyListingId: String(t.listing_id),
           buyerCountry: r.country_iso ?? "??",
           quantity: t.quantity ?? 1,
-          totalChf: amount * (t.quantity ?? 1),
-          createdAt: new Date(r.created_timestamp * 1000),
+          totalChf: converted.amountChf * t.quantity!,
+          createdAt: new Date(created! * 1000),
+          modifiedAt: new Date((r.updated_timestamp ?? r.update_timestamp ?? created!) * 1000),
+          paid: r.is_paid === true,
+          canceled: r.status === "canceled",
+          refunded: r.status === "fully refunded" || r.status === "partially refunded" || (Array.isArray(r.refunds) && r.refunds.length > 0),
+          originalMoney: money, fxRate: converted.rate, fxAsOf: converted.asOf,
         });
       }
-    }
     return out;
   }
 
   async getListingStats(current: { etsyListingId: string }[]) {
     const listingIds = current.map((c) => c.etsyListingId).filter((id) => !id.startsWith("dry-"));
-    const out: Record<string, { views: number; favorites: number }> = {};
+    const out: Record<string, EtsyListingStats> = {};
     for (let i = 0; i < listingIds.length; i += 100) {
       const batch = listingIds.slice(i, i + 100);
+      batch.forEach(numericId);
       const json = await this.request<{ results: RawListing[] }>(`/listings/batch?listing_ids=${batch.join(",")}`);
       for (const l of json.results ?? []) {
-        out[String(l.listing_id)] = { views: l.views ?? 0, favorites: l.num_favorers ?? 0 };
+        out[String(l.listing_id)] = { views: counter(l.views), favorites: counter(l.num_favorers) };
       }
     }
     return out;
