@@ -5,8 +5,9 @@ import { localAssetPng } from "@/lib/png";
 import type { EtsyTokens } from "@/lib/settings";
 import { refreshTokens } from "./oauth";
 import { etsyMoneyInChf, validateEtsyMoney } from "./money";
-import { etsyRequest } from "./transport";
+import { EtsyAmbiguousWriteError, etsyRequest } from "./transport";
 import type { components } from "./generated";
+import { findSellerTaxonomy } from "./taxonomy";
 import type { EtsyAdapter, EtsyDraftInput, EtsyListingStats, EtsyReceipt } from "./types";
 
 const API = "https://openapi.etsy.com/v3/application";
@@ -96,6 +97,12 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   async createDraftListing(input: EtsyDraftInput) {
+    const name = input.type === "download" ? "ETSY_TAXONOMY_ID_DIGITAL" : "ETSY_TAXONOMY_ID_POSTER";
+    const taxonomyId = Number(process.env[name]);
+    if (!Number.isSafeInteger(taxonomyId) || taxonomyId <= 0) throw new Error(`${name} must explicitly select a seller taxonomy before live draft creation`);
+    const taxonomy = await this.request<components["schemas"]["SellerTaxonomyNodes"]>("/seller-taxonomy/nodes");
+    const selected = findSellerTaxonomy(taxonomy.results ?? [], taxonomyId);
+    if (!selected || selected.children?.length) throw new Error("Select an existing leaf seller taxonomy before creating an Etsy draft");
     const body = new URLSearchParams({
       quantity: String(input.quantity ?? 999),
       title: input.title,
@@ -103,7 +110,7 @@ export class EtsyLiveClient implements EtsyAdapter {
       price: input.priceChf.toFixed(2),
       who_made: "i_did",
       when_made: "made_to_order",
-      taxonomy_id: String(input.type === "download" ? config.etsy.taxonomyDigital : config.etsy.taxonomyPoster),
+      taxonomy_id: String(taxonomyId),
       type: input.type,
       is_supply: "false",
     });
@@ -113,6 +120,7 @@ export class EtsyLiveClient implements EtsyAdapter {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
+    if (!Number.isSafeInteger(json.listing_id) || json.listing_id <= 0) throw new EtsyAmbiguousWriteError();
     return { listingId: String(json.listing_id) };
   }
 
@@ -198,11 +206,19 @@ export class EtsyLiveClient implements EtsyAdapter {
     if (String(row.shop_id) !== this.shopId || String(row.listing_id) !== listingId || typeof row.state !== "string") {
       throw new Error("Etsy listing does not belong to this shop");
     }
+
     const modified = row.updated_timestamp ?? row.last_modified_timestamp;
     return {
       listingId, shopId: this.shopId, state: row.state, quantity: row.quantity, title: row.title,
       updatedAt: typeof modified === "number" && Number.isFinite(modified) ? new Date(modified * 1000) : undefined,
     };
+  }
+
+  async getTaxonomyProperties(taxonomyId: number) {
+    if (!Number.isSafeInteger(taxonomyId) || taxonomyId <= 0) throw new Error("Invalid Etsy taxonomy id");
+    return this.request<components["schemas"]["TaxonomyNodeProperties"]>(
+      `/seller-taxonomy/nodes/${taxonomyId}/properties?supports_variations=true`,
+    );
   }
 
   private receiptLines(r: RawReceipt): EtsyReceipt[] {

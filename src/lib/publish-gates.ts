@@ -1,5 +1,6 @@
 import type { FileManifest } from "@/db/schema";
 import { manifestIsComplete } from "./file-manifest";
+import { deliveryPackIsComplete, type ArtworkPackManifest } from "./artwork-pack";
 
 export function isMockPlaceholder(imageProvider: string, designProvider: string | null) {
   return imageProvider === "mock" || designProvider === "mock" || designProvider === "mock-template";
@@ -16,6 +17,9 @@ export function digitalDraftRefusal(input: {
   imageUrl: string;
   deliveryUrl: string | null;
   manifest: FileManifest | null;
+  deliveryPack?: ArtworkPackManifest | null;
+  deliveryPackVerified?: boolean;
+  fileVerifiedAt?: Date | null;
 }): string | null {
   if (input.etsyMode === "live" && isMockPlaceholder(input.imageProvider, input.designProvider)) {
     return "Refusing to publish digital: the image provider is the mock placeholder. Generate the file with a real image provider first.";
@@ -26,6 +30,10 @@ export function digitalDraftRefusal(input: {
   }
   if (input.etsyMode === "live" && !manifestIsComplete(input.manifest)) {
     return "Refusing to publish digital: record the delivery file (filename, pixel size, bytes, sha256) before creating the Etsy draft.";
+  }
+  if (input.deliveryPack && (!deliveryPackIsComplete(input.deliveryPack, input.manifest?.delivery) ||
+      !input.deliveryPackVerified || !input.fileVerifiedAt)) {
+    return "Refusing to publish digital: every prepared export and the original must be stored, hash-checked and human-verified.";
   }
   return null;
 }
@@ -39,6 +47,8 @@ export function digitalActivationRefusal(input: {
   etsyListingId: string | null;
   imageUrl: string;
   deliveryUrl: string | null;
+  deliveryPack?: ArtworkPackManifest | null;
+  deliveryPackVerified?: boolean;
 }): string | null {
   if (isMockPlaceholder(input.imageProvider, input.designProvider)) {
     return "Cannot activate: the artwork is the mock placeholder.";
@@ -47,6 +57,9 @@ export function digitalActivationRefusal(input: {
     return "Cannot activate: record the delivery file (filename, pixel size, bytes, sha256) first.";
   }
   if (!input.fileVerifiedAt) return "Cannot activate: a human must open the delivery file and mark it verified.";
+  if (input.deliveryPack && (!deliveryPackIsComplete(input.deliveryPack, input.manifest?.delivery) || !input.deliveryPackVerified)) {
+    return "Cannot activate: the attached digital export files changed or could not all be verified. Reverify every delivery file.";
+  }
   if (!input.etsyListingId) return "Cannot activate: the Etsy draft does not exist yet.";
   if (!input.deliveryUrl || input.imageUrl === input.deliveryUrl) {
     return "Cannot activate: the gallery image is the full-resolution deliverable.";

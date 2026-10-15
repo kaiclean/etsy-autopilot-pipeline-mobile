@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import type { Listing, Niche } from "@/db/schema";
 import { filterProducts, listingHasErrors, QUEUE_TRIAGE, titleImageMismatch, type QueueTriage } from "@/lib/catalog-filters";
 import { calculateFees, productLabel } from "@/lib/fees";
-import { isPlaceholderUrl } from "@/lib/art-quality";
+import { isPlaceholderUrl, isSafeArtworkUrl } from "@/lib/art-quality";
 import { listingProvenance } from "@/lib/provenance";
 import { chf, num, relTime } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
@@ -188,8 +188,8 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
                   <span className="tabular">net {chf(l.netChf)}</span>
                   {l.status === "published" && (
                     <>
-                      <span className="tabular flex items-center gap-0.5"><Eye className="size-3" />{num(l.views)}</span>
-                      <span className="tabular flex items-center gap-0.5"><Heart className="size-3" />{num(l.favorites)}</span>
+                      <span className="tabular flex items-center gap-0.5" title={l.analyticsCheckedAt ? "Latest observed views" : "Views unavailable or not fresh"}><Eye className="size-3" />{l.analyticsCheckedAt ? num(l.views) : "—"}</span>
+                      <span className="tabular flex items-center gap-0.5" title={l.analyticsCheckedAt ? "Latest observed favorites" : "Counters unavailable or not fresh"}><Heart className="size-3" />{l.analyticsCheckedAt ? num(l.favorites) : "—"}</span>
                     </>
                   )}
                 </div>
@@ -227,6 +227,11 @@ function HumanPublish({ l }: { l: Listing }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const file = l.fileManifest?.delivery;
+  const deliveryHref = l.deliveryUrl && (isSafeArtworkUrl(l.deliveryUrl) || /^\/api\/(?:media|placeholder)\//.test(l.deliveryUrl))
+    ? l.deliveryUrl : null;
+  const canPrepareHalfSize = file && file.width > 1 && file.height > 1 &&
+    file.width % 2 === 0 && file.height % 2 === 0 && !l.deliveryPack && !l.etsyListingId &&
+    ["pending_approval", "approved", "quality_failed"].includes(l.status);
   const run = (label: string, action: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
       const result = await action();
@@ -252,15 +257,41 @@ function HumanPublish({ l }: { l: Listing }) {
           <p className="text-muted-foreground">No manifest yet. Reading the file records the filename, pixel size, bytes and hash. Activate refuses until you open the file and mark it verified.</p>
         )}
         {file && !l.fileVerifiedAt ? (
-          <p className="text-muted-foreground">Mark the file verified after you open it. Mock placeholder art cannot be verified or activated.</p>
+          <p className="text-muted-foreground">Open every delivery file before marking it verified. Mock placeholder art cannot be verified or activated.</p>
         ) : null}
+        {deliveryHref && (
+          <a href={deliveryHref} target="_blank" rel="noopener noreferrer" className="block underline">Open original delivery file</a>
+        )}
+        {l.deliveryPack?.files.map((exported) => (
+          <a key={exported.filename} href={exported.url} target="_blank" rel="noopener noreferrer" className="block underline">
+            Open {exported.filename} · {exported.width}×{exported.height}px
+          </a>
+        ))}
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending} onClick={() => run("Delivery file recorded", () => readDeliveryFile(l.id))}>
             Read delivery file
           </Button>
           <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending || Boolean(l.fileVerifiedAt)} onClick={() => run("File marked verified", () => verifyDeliveryFile(l.id))}>
-            I opened this file
+            {l.deliveryPack ? "I opened every delivery file" : "I opened this file"}
           </Button>
+          {canPrepareHalfSize && (
+            <Button type="button" variant="secondary" className="h-9 rounded-xl" disabled={pending} onClick={() => run("Export prepared; reopen every file and approve again", async () => {
+              try {
+                const response = await fetch(`/api/listings/${l.id}/exports`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ exports: [{ filename: `artwork-${file.width / 2}x${file.height / 2}.png`,
+                    width: file.width / 2, height: file.height / 2, format: "png" }] }),
+                });
+                const result = await response.json();
+                return response.ok ? { ok: true } : { ok: false, error: result.error ?? "Export could not be prepared" };
+              } catch {
+                return { ok: false, error: "Export request failed; review the draft before retrying." };
+              }
+            })}>
+              Prepare half-size PNG export
+            </Button>
+          )}
           <Button type="button" className="h-9 rounded-xl" disabled={pending || Boolean(l.activatedAt)} onClick={() => run("Listing activated", () => activateListing(l.id))}>
             Activate
           </Button>
@@ -332,10 +363,24 @@ function Detail({ l }: { l: Listing }) {
             {l.printifyProductId && <div className="font-mono">Printify: {l.printifyProductId}</div>}
             <div suppressHydrationWarning>Updated {relTime(l.updatedAt)}</div>
             {l.status === "published" && (
-              <div className="tabular">{num(l.views)} views · {num(l.favorites)} favorites</div>
+              <div className="tabular">{l.analyticsCheckedAt ? `${num(l.views)} views · ${num(l.favorites)} favorites` : "Listing counters unavailable or not fresh"}</div>
             )}
           </div>
         </div>
+
+        {Boolean(l.gallery?.length) && (
+          <div className="flex gap-3 overflow-x-auto" aria-label="Prepared product gallery">
+            {l.gallery.map((view) => (
+              <figure key={view.url} className="w-36 shrink-0 space-y-1 text-xs text-muted-foreground">
+                <Thumb src={view.url} alt={view.label} className="h-32 w-36" />
+                <figcaption>
+                  {view.label}
+                  {view.sourceDimensions && <span className="block">Source: {view.sourceDimensions.width}×{view.sourceDimensions.height}px</span>}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
 
         {l.status === "publishing" && (
           <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning">

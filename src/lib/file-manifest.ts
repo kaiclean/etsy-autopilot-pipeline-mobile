@@ -202,7 +202,7 @@ export function manifestIsComplete(manifest: FileManifest | null | undefined) {
   const file = manifest?.delivery;
   if (!file) return false;
   return Boolean(
-    file.filename &&
+    typeof file.filename === "string" && file.filename.length > 0 &&
       Number.isSafeInteger(file.width) && file.width > 0 && file.width <= MAX_ARTWORK_EDGE &&
       Number.isSafeInteger(file.height) && file.height > 0 && file.height <= MAX_ARTWORK_EDGE &&
       file.width * file.height <= MAX_ARTWORK_PIXELS &&

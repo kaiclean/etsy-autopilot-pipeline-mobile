@@ -15,7 +15,7 @@ import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
 import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
-import { dashboardOrdersWhere, isRealPublishedListing, notFakeReceiptWhere } from "./real-orders";
+import { dashboardOrdersWhere, isRealPublishedListing, notFakeReceiptWhere, revenueEligibleOrderWhere } from "./real-orders";
 import { dayKey } from "./format";
 import { NICHES } from "./niches";
 import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, loadPublishFailures, railwayDeploySha } from "./alerts";
@@ -153,7 +153,7 @@ async function loadWindow(days: number, now = new Date()) {
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY);
   const [o, c, s] = await Promise.all([
-    db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere())),
+    db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere(), revenueEligibleOrderWhere())),
     db.select().from(costs).where(and(gte(costs.createdAt, since), visible(costs.isDemo))),
     db.select().from(dailyStats).where(visible(dailyStats.isDemo)),
   ]);
@@ -166,6 +166,11 @@ export async function getHomeData() {
   const now = new Date();
   const todayKey = dayKey(now);
   const days60 = lastNDays(60, now);
+  const observedListings = (await db.select().from(listings)
+    .where(and(eq(listings.status, "published"), visible(listings.isDemo)))).filter(isRealPublishedListing);
+  const metricsAvailable = isDemoMode() || (observedListings.length > 0 && observedListings.every((listing) =>
+    listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() <= now.getTime() &&
+    listing.analyticsCheckedAt.getTime() >= now.getTime() - ANALYTICS_FRESHNESS_HOURS * 60 * 60_000));
 
   const byDay = new Map<string, { revenue: number; profit: number; orders: number; costs: number; views: number }>();
   for (const k of days60) byDay.set(k, { revenue: 0, profit: 0, orders: 0, costs: 0, views: 0 });
@@ -196,7 +201,8 @@ export async function getHomeData() {
       t.costs += b.costs;
       t.views += b.views;
     }
-    return { ...t, net: t.profit - t.costs, conversion: t.views ? (t.orders / t.views) * 100 : 0 };
+    return { ...t, views: metricsAvailable ? t.views : null, net: t.profit - t.costs,
+      conversion: metricsAvailable && t.views ? (t.orders / t.views) * 100 : null };
   };
   const windows: Record<RangeKey, number> = { today: 1, "7d": 7, "30d": 30 };
   const kpis = Object.fromEntries(
@@ -453,7 +459,8 @@ export async function getAnalytics(now = new Date()) {
   const publishedListings = allListings.filter(isRealPublishedListing);
   const analyticsFreshCutoff = now.getTime() - ANALYTICS_FRESHNESS_HOURS * 60 * 60 * 1000;
   const freshAnalyticsListings = publishedListings.filter(
-    (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff,
+    (listing) => listing.analyticsCheckedAt && listing.analyticsCheckedAt.getTime() >= analyticsFreshCutoff &&
+      listing.analyticsCheckedAt.getTime() <= now.getTime(),
   );
   const latestAnalyticsCheck = publishedListings.reduce<Date | null>((latest, listing) => {
     if (!listing.analyticsCheckedAt) return latest;
@@ -477,7 +484,8 @@ export async function getAnalytics(now = new Date()) {
       orders: o.length,
       views,
       favorites,
-      conversion: views ? (o.length / views) * 100 : 0,
+      conversion: views > 0 && publishedListings.length > 0 && freshAnalyticsListings.length === publishedListings.length
+        ? (o.length / views) * 100 : null,
       aov: o.length ? revenue / o.length : 0,
     },
   };

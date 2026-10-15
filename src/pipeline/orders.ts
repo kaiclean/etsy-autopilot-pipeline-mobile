@@ -4,7 +4,7 @@ import type { EtsyReceipt } from "@/adapters/etsy/types";
 import { getPrintifyAdapter, type PrintifyOrderStatus } from "@/adapters/printify";
 import type { DB } from "@/db";
 import { listings, orders, shops, type Listing } from "@/db/schema";
-import { etsyReceiptSnapshots, etsySyncState } from "@/db/etsy-sync";
+import { etsySyncState } from "@/db/etsy-sync";
 import { isDemoMode } from "@/lib/config";
 import { emit, visible } from "@/lib/events";
 import { dispatchEventPush } from "@/lib/push";
@@ -19,6 +19,82 @@ import { buyerRegion } from "@/lib/sourcing";
 import { resolveActiveShop } from "@/lib/shops";
 
 type ReceiptLog = (msg: string, level?: "info" | "warn" | "error") => void;
+
+async function saveLiveReceipt(
+  db: DB,
+  receipt: EtsyReceipt,
+  shopId: string,
+  order?: typeof orders.$inferInsert,
+  recheck?: Awaited<ReturnType<typeof recheckOrderSourcing>> | null,
+) {
+  const statement = sql`
+    with accepted_observation as (
+      insert into etsy_receipt_snapshots (
+        shop_id, receipt_line_id, etsy_listing_id, paid, canceled, refund_detected,
+        quantity, original_money, fx_rate, fx_as_of, source_modified_at, observed_at
+      ) values (
+        ${shopId}::uuid, ${receipt.receiptId}, ${receipt.etsyListingId}, ${receipt.paid !== false},
+        ${receipt.canceled === true}, ${receipt.refunded === true}, ${receipt.quantity},
+        ${receipt.originalMoney ? JSON.stringify(receipt.originalMoney) : null}::jsonb, ${receipt.fxRate ?? null},
+        ${receipt.fxAsOf ? new Date(receipt.fxAsOf).toISOString() : null}::timestamptz,
+        ${(receipt.modifiedAt ?? receipt.createdAt).toISOString()}::timestamptz, now()
+      )
+      on conflict (shop_id, receipt_line_id) do update set
+        etsy_listing_id = excluded.etsy_listing_id, paid = excluded.paid,
+        canceled = case when etsy_receipt_snapshots.source_modified_at = excluded.source_modified_at
+          then etsy_receipt_snapshots.canceled or excluded.canceled else excluded.canceled end,
+        refund_detected = case when etsy_receipt_snapshots.source_modified_at = excluded.source_modified_at
+          then etsy_receipt_snapshots.refund_detected or excluded.refund_detected else excluded.refund_detected end,
+        quantity = excluded.quantity, original_money = excluded.original_money,
+        fx_rate = excluded.fx_rate, fx_as_of = excluded.fx_as_of,
+        source_modified_at = excluded.source_modified_at, observed_at = excluded.observed_at
+      where etsy_receipt_snapshots.source_modified_at <= excluded.source_modified_at
+      returning *
+    ), updated_order as (
+      update orders set etsy_payment_status = case
+        when observation.canceled then 'canceled'
+        when observation.refund_detected then 'refund_pending'
+        when observation.paid then 'paid'
+        else orders.etsy_payment_status end,
+        updated_at = now()
+      from accepted_observation observation
+      where orders.shop_id = observation.shop_id and orders.etsy_receipt_id = observation.receipt_line_id
+      returning orders.id
+    ), inserted_order as (
+      ${order ? sql`
+        insert into orders (
+          shop_id, etsy_receipt_id, listing_id, unmatched_etsy_listing_id, match_status,
+          buyer_country, quantity, total_chf, fees_chf, pod_cost_chf, offsite_ads_chf,
+          profit_chf, fulfillment_status, fulfillment_changed_at, pod_order_id, is_demo,
+          created_at${recheck ? sql`, sourcing_recheck` : sql``}
+        )
+        select observation.shop_id, observation.receipt_line_id, ${order.listingId ?? null},
+          ${order.unmatchedEtsyListingId ?? null}, ${order.matchStatus ?? "matched"},
+          ${order.buyerCountry}, ${order.quantity ?? 1}, ${order.totalChf}, ${order.feesChf},
+          ${order.podCostChf ?? 0}, ${order.offsiteAdsChf ?? 0}, ${order.profitChf},
+          ${order.fulfillmentStatus}, ${receipt.createdAt.toISOString()}::timestamptz,
+          ${order.podOrderId ?? null}, false, ${receipt.createdAt.toISOString()}::timestamptz
+          ${recheck ? sql`, ${JSON.stringify(recheck)}::jsonb` : sql``}
+        from accepted_observation observation
+        where observation.paid and not observation.canceled and not observation.refund_detected
+          and not exists (select 1 from updated_order)
+        on conflict (etsy_receipt_id) do nothing
+        returning id
+      ` : sql`select null::integer as id where false`}
+    )
+    select (select id from inserted_order) as id,
+      exists (select 1 from accepted_observation) as accepted,
+      exists (select 1 from updated_order) as updated
+  `;
+  const result = await db.execute<{ id: number | null; accepted: boolean; updated: boolean }>(statement);
+  let row = result.rows[0];
+  // A lock wait can hide a concurrent first order insert from this statement's MVCC snapshot.
+  // Replay once with a fresh snapshot; acceptance still guards against newer observations.
+  if (row.accepted && row.id === null && !row.updated) {
+    row = (await db.execute<{ id: number | null; accepted: boolean; updated: boolean }>(statement)).rows[0];
+  }
+  return row.id === null ? [] : [{ id: row.id }];
+}
 
 /** Persist every receipt. Unknown Etsy listing ids are stored unmatched instead of dropped. */
 export async function saveReceipts(
@@ -50,32 +126,13 @@ export async function saveReceipts(
   for (const r of receipts) {
     const l = byEtsyId.get(r.etsyListingId);
     if (l && sourceShopId && l.shopId !== sourceShopId) throw new Error("Receipt listing does not belong to this shop");
-    const paymentStatus = r.canceled ? "canceled" : r.refunded ? "refund_pending" : "paid";
-    if (!isDemo && sourceShopId) {
-      const sourceModifiedAt = r.modifiedAt ?? r.createdAt;
-      const observation = {
-        etsyListingId: r.etsyListingId, paid: r.paid !== false, canceled: r.canceled === true,
-        refundDetected: r.refunded === true, quantity: r.quantity,
-        originalMoney: r.originalMoney ?? null, fxRate: r.fxRate ?? null,
-        fxAsOf: r.fxAsOf ? new Date(r.fxAsOf) : null, sourceModifiedAt, observedAt: new Date(),
-      };
-      const accepted = await db.insert(etsyReceiptSnapshots)
-        .values({ shopId: sourceShopId, receiptLineId: r.receiptId, ...observation })
-        .onConflictDoUpdate({
-          target: [etsyReceiptSnapshots.shopId, etsyReceiptSnapshots.receiptLineId],
-          set: observation,
-          setWhere: sql`${etsyReceiptSnapshots.sourceModifiedAt} <= ${sourceModifiedAt}`,
-        }).returning({ id: etsyReceiptSnapshots.receiptLineId });
-      if (!accepted.length) continue;
-      await db.update(orders).set({ etsyPaymentStatus: paymentStatus, updatedAt: new Date() })
-        .where(and(eq(orders.shopId, sourceShopId), eq(orders.etsyReceiptId, r.receiptId)));
+    if (existing.has(r.receiptId) || r.paid === false || r.canceled || r.refunded) {
+      if (!isDemo && sourceShopId) await saveLiveReceipt(db, r, sourceShopId);
+      continue;
     }
-    if (existing.has(r.receiptId) || r.paid === false || r.canceled || r.refunded) continue;
     if (!l) {
       const fees = calculateFees({ priceChf: r.totalChf / Math.max(r.quantity, 1), quantity: r.quantity, podCostChf: 0, offsiteAds: opts.offsite(r) });
-      const insertedRows = await db
-        .insert(orders)
-        .values({
+      const values: typeof orders.$inferInsert = {
           ...(opts.shopId ? { shopId: opts.shopId } : {}),
           etsyReceiptId: r.receiptId,
           listingId: null,
@@ -92,9 +149,10 @@ export async function saveReceipts(
           fulfillmentChangedAt: r.createdAt,
           isDemo,
           createdAt: r.createdAt,
-        })
-        .onConflictDoNothing({ target: orders.etsyReceiptId })
-        .returning({ id: orders.id });
+        };
+      const insertedRows = !isDemo && sourceShopId
+        ? await saveLiveReceipt(db, r, sourceShopId, values)
+        : await db.insert(orders).values(values).onConflictDoNothing({ target: orders.etsyReceiptId }).returning({ id: orders.id });
     if (insertedRows.length === 0) continue;
     existing.add(r.receiptId);
     inserted++;
@@ -144,9 +202,7 @@ export async function saveReceipts(
     // Fallbacks are recommendations only. A live receipt's actual fulfillment cost is not rewritten to a simulated alternative.
     const sourcedCost = recheck && !recheck.alert && (!recheck.switched || isDemo) ? recheck.choice?.landedCostChf : null;
     const fees = calculateFees({ priceChf: r.totalChf / r.quantity, quantity: r.quantity, podCostChf: sourcedCost ?? l.podCostChf, offsiteAds: offsite });
-    const insertedRows = await db
-      .insert(orders)
-      .values({
+    const values: typeof orders.$inferInsert = {
         ...(opts.shopId ? { shopId: opts.shopId } : {}),
         etsyReceiptId: r.receiptId,
         listingId: l.id,
@@ -163,11 +219,12 @@ export async function saveReceipts(
         podOrderId: opts.podOrderId?.(l, r) ?? null,
         isDemo,
         createdAt: r.createdAt,
-      })
-      .onConflictDoNothing({ target: orders.etsyReceiptId })
-      .returning({ id: orders.id });
+      };
+    const insertedRows = !isDemo && sourceShopId
+      ? await saveLiveReceipt(db, r, sourceShopId, values, recheck)
+      : await db.insert(orders).values(values).onConflictDoNothing({ target: orders.etsyReceiptId }).returning({ id: orders.id });
     if (insertedRows.length === 0) continue;
-    if (recheck) {
+    if (recheck && isDemo) {
       await db.execute(sql`update orders set sourcing_recheck = ${JSON.stringify(recheck)}::jsonb where id = ${insertedRows[0].id}`);
     }
     existing.add(r.receiptId);

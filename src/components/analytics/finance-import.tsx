@@ -29,7 +29,8 @@ export function FinanceImport({ etsyShopId }: { etsyShopId: string | null }) {
     <details className="space-y-3 text-xs">
       <summary className="cursor-pointer font-medium">Import authorized financial observations</summary>
       <p className="mt-3 text-muted-foreground">
-        No financial API endpoint is verified. Normalize a seller export into the JSON format below;
+        Automatic payment and ledger imports are not enabled. Payments expose card-processing fees,
+        not all Etsy fees; ledger monetary divisors remain unverified. Normalize a seller export into the JSON format below;
         do not upload raw CSV, buyer names, emails, addresses or descriptions.
         This only records evidence. It never changes orders, listings, inventory or ads.
       </p>
@@ -39,6 +40,9 @@ export function FinanceImport({ etsyShopId }: { etsyShopId: string | null }) {
         signed integer string, divided by divisor, in the original currency. Use a negative amount
         for charges; a component is not a profit calculation. Unknown types use component unknown
         and retain their ledgerType code. Optional etsyListingId and receiptId must match this shop.
+        receiptId must exactly match a synced receipt-line key such as 12345-67890
+        (receipt ID-transaction ID), or a legacy numeric key. Whole-receipt IDs are not automatically
+        matched or allocated across receipt lines.
         Status is actual, estimated, or unavailable (amount null).
         Actual means seller-reported evidence, not independent API verification or complete profit.
       </p>

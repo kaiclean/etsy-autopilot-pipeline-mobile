@@ -24,7 +24,7 @@ export class EtsyReconciliationRequestError extends Error {
 
 /** Authenticated operator intent is labeled separately; this never represents a verified webhook. */
 export async function enqueueEtsyReconciliation(db: DB, input: unknown, requestId: string | null, now = new Date()) {
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!requestId || !uuid.test(requestId)) {
     throw new EtsyReconciliationRequestError(400, "A UUID Idempotency-Key header is required");
   }

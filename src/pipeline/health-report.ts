@@ -3,7 +3,7 @@ import type { DB } from "@/db";
 import { costs, healthReports, listings, orders, type HealthSuggestion } from "@/db/schema";
 import { emit } from "@/lib/events";
 import { calculateFees, round2 } from "@/lib/fees";
-import { notFakeReceiptWhere } from "@/lib/real-orders";
+import { notFakeReceiptWhere, revenueEligibleOrderWhere } from "@/lib/real-orders";
 import { weeklyWindow } from "@/lib/utc-day";
 import { hasFreshListingSnapshot, RECOMMENDATION_FRESHNESS_MS, type EvidenceHealthReport } from "@/lib/operator-recommendations";
 
@@ -31,7 +31,7 @@ export function suggestListingActions(rows: SuggestionInput[], now = new Date())
         listingId: row.id,
         title: row.title,
         action: "retire",
-        reason: `Consider retiring: live for ${row.ageDays} days with ${row.views} views, no favorites and no synced sales. Verify order coverage first. ${evidence}`,
+        reason: `Consider retiring: live for ${row.ageDays} days with ${row.views} views, no favorites and no eligible paid sales. Verify order coverage first. ${evidence}`,
       });
       continue;
     }
@@ -40,7 +40,7 @@ export function suggestListingActions(rows: SuggestionInput[], now = new Date())
         listingId: row.id,
         title: row.title,
         action: "refresh",
-        reason: `Consider reviewing photos or title: ${row.favorites} favorites and no synced sales. Verify order coverage first. ${evidence}`,
+        reason: `Consider reviewing photos or title: ${row.favorites} favorites and no eligible paid sales. Verify order coverage first. ${evidence}`,
       });
       continue;
     }
@@ -49,7 +49,7 @@ export function suggestListingActions(rows: SuggestionInput[], now = new Date())
         listingId: row.id,
         title: row.title,
         action: "refresh",
-        reason: `Consider reviewing tags or mockups: ${row.views} views, ${row.favorites} favorites and no synced sales. Verify order coverage first. ${evidence}`,
+        reason: `Consider reviewing tags or mockups: ${row.views} views, ${row.favorites} favorites and no eligible paid sales. Verify order coverage first. ${evidence}`,
       });
     }
   }
@@ -63,12 +63,12 @@ function isRealPublishedListing(row: { isDemo: boolean; publishMode: string | nu
   return true;
 }
 
-/** Shop totals for the trailing week. Demo rows and dry-run receipt ids are left out. */
+/** Paid shop totals for the trailing week; cancellations and unresolved refunds remain audit-only. */
 export async function buildHealthReport(db: DB, shopId: string, now: Date): Promise<EvidenceHealthReport> {
   const window = weeklyWindow(now);
 
   const [realOrders, adRows, listingRows] = await Promise.all([
-    db.select().from(orders).where(and(eq(orders.shopId, shopId), eq(orders.isDemo, false), notFakeReceiptWhere())),
+    db.select().from(orders).where(and(eq(orders.shopId, shopId), eq(orders.isDemo, false), notFakeReceiptWhere(), revenueEligibleOrderWhere())),
     db
       .select()
       .from(costs)
@@ -168,7 +168,7 @@ export async function publishHealthReport(db: DB, shopId: string, now: Date) {
       {
         type: "health.report",
         title: "Weekly shop health",
-        body: `${payload.views} view snapshots · ${payload.favorites} favorite snapshots · ${payload.sales} weekly sales · estimated profit CHF ${payload.profitChf.toFixed(2)} after estimated fees. Estimated VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${(payload.adsEstimateChf ?? payload.adsChf).toFixed(2)}, actual ads CHF ${(payload.adsActualChf ?? 0).toFixed(2)}. Review candidates: ${refresh} refresh, ${retire} retire. No changes applied.`,
+        body: `${payload.views} view snapshots · ${payload.favorites} favorite snapshots · ${payload.sales} eligible paid weekly sales · estimated profit CHF ${payload.profitChf.toFixed(2)} after estimated fees. Estimated VAT CHF ${payload.vatChf.toFixed(2)}, POD CHF ${payload.podCostChf.toFixed(2)}, ad estimate CHF ${(payload.adsEstimateChf ?? payload.adsChf).toFixed(2)}, actual ads CHF ${(payload.adsActualChf ?? 0).toFixed(2)}. Review candidates: ${refresh} refresh, ${retire} retire. No changes applied.`,
         severity: "info",
         href: "/",
         shopId,

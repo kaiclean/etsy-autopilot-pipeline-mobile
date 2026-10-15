@@ -74,5 +74,7 @@ describe("actual dashboard costs", () => {
     expect(html).toContain("actual profit unavailable");
     expect(html).toContain("Estimated net profit");
     expect(html).toContain("not independent API verification");
+    expect(html).toContain("Unavailable");
+    expect(html).toContain("Not a measured conversion rate");
   });
 });

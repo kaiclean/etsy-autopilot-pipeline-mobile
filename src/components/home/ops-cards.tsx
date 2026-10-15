@@ -113,7 +113,7 @@ export function OpsCards({
             <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
               <Stat label="View snapshots" value={String(payload.views)} />
               <Stat label="Favorite snapshots" value={String(payload.favorites)} />
-              <Stat label="Sales" value={String(payload.sales)} />
+              <Stat label="Eligible paid sales" value={String(payload.sales)} />
               <Stat label="Estimated profit" value={chf(payload.profitChf)} />
               <Stat label="Estimated VAT" value={chf(payload.vatChf)} />
               <Stat label="Estimated POD cost" value={chf(payload.podCostChf)} />
@@ -121,6 +121,7 @@ export function OpsCards({
               <Stat label="Actual ads" value={chf(payload.adsActualChf ?? 0)} />
             </div>
             <p className="text-xs text-muted-foreground">Views and favorites are cumulative listing snapshots, not weekly traffic or a conversion rate. Recommendations require a check within 36h and human approval. No listing, inventory or ad changes are applied.</p>
+            <p className="text-xs text-muted-foreground">Canceled and refund-pending receipts are excluded from sales and financial totals; their recorded values remain in the order audit list.</p>
             {!reviewable ? (
               <p className="text-xs text-muted-foreground">Recommendations withheld: regenerate the health report with fresh, shop-owned analytics evidence.</p>
             ) : payload.suggestions.length === 0 ? (

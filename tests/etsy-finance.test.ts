@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { and, eq } from "drizzle-orm";
@@ -32,9 +31,6 @@ describe("shop-owned immutable financial evidence", () => {
   beforeAll(async () => {
     db = drizzle(client, { schema }) as DB;
     await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
-    // This scope owns the migration; the parent separately wires its journal entry.
-    const exists = await client.query<{ name: string | null }>("SELECT to_regclass('etsy_financial_evidence')::text AS name");
-    if (!exists.rows[0].name) await client.exec(readFileSync(path.join(process.cwd(), "drizzle/0020_etsy_financial_evidence.sql"), "utf8"));
     const [shop] = await db.insert(schema.shops).values({ slug: "finance-a", displayName: "Finance A", etsyShopId: "111" }).returning();
     const [other] = await db.insert(schema.shops).values({ slug: "finance-b", displayName: "Finance B", etsyShopId: "222" }).returning();
     shopId = shop.id;
@@ -147,6 +143,58 @@ describe("shop-owned immutable financial evidence", () => {
     await db.update(schema.listings).set({ analyticsCheckedAt: new Date(now.getTime() - RECOMMENDATION_FRESHNESS_MS - 1) }).where(eq(schema.listings.shopId, otherShopId));
     expect((await buildHealthReport(db, otherShopId, now)).suggestions).toHaveLength(0);
   });
+
+  it("excludes canceled and refund-pending amounts from health totals without deleting audit records", async () => {
+    await db.insert(schema.orders).values([
+      {
+        shopId, listingId, etsyReceiptId: "90003", buyerCountry: "CH", totalChf: 1000,
+        feesChf: 100, profitChf: 900, podCostChf: 500, etsyPaymentStatus: "canceled",
+        fulfillmentStatus: "delivered_digital", createdAt: now,
+      },
+      {
+        shopId, listingId, etsyReceiptId: "90004", buyerCountry: "CH", totalChf: 2000,
+        feesChf: 200, profitChf: 1800, podCostChf: 600, etsyPaymentStatus: "refund_pending",
+        fulfillmentStatus: "delivered_digital", createdAt: now,
+      },
+    ]);
+    const report = await buildHealthReport(db, shopId, now);
+    expect(report.sales).toBe(1);
+    expect(report.profitChf).toBe(15);
+    expect(report.podCostChf).toBe(0);
+    expect(report.suggestions.find((row) => row.listingId === listingId)).toBeUndefined();
+    const auditRows = await db.select().from(schema.orders).where(eq(schema.orders.shopId, shopId));
+    expect(auditRows).toHaveLength(3);
+    expect(auditRows.find((row) => row.etsyReceiptId === "90004")).toMatchObject({
+      etsyPaymentStatus: "refund_pending", totalChf: 2000, feesChf: 200, profitChf: 1800,
+    });
+  });
+
+  it("matches compound live receipt-line keys exactly and idempotently without inferring whole-receipt ownership", async () => {
+    const base = {
+      shopId, listingId, buyerCountry: "CH", totalChf: 10, feesChf: 1, profitChf: 9,
+      fulfillmentStatus: "delivered_digital" as const, createdAt: now,
+    };
+    await db.insert(schema.orders).values([
+      { ...base, etsyReceiptId: "90005-10005" },
+      { ...base, etsyReceiptId: "90005-10006" },
+      { ...base, shopId: otherShopId, listingId: null, etsyReceiptId: "90006-10007" },
+    ]);
+    const input = batch({ sourceRef: "compound-lines" }, [{ ...observation, receiptId: "90005-10005" }]);
+    await importFinancialEvidence(db, shopId, input);
+    await importFinancialEvidence(db, shopId, input);
+    const imported = (await getFinancialEvidence(db, shopId)).rows.filter((row) => row.sourceRef === "compound-lines");
+    expect(imported).toHaveLength(1);
+    expect(imported[0]).toMatchObject({ receiptId: "90005-10005", listingId });
+    for (const receiptId of ["90005", "90005-1000", "90006-10007"]) {
+      await expect(importFinancialEvidence(db, shopId, batch({ sourceRef: "unowned-compound" }, [
+        { ...observation, receiptId },
+      ]))).rejects.toMatchObject({ status: 403 });
+    }
+    await expect(importFinancialEvidence(db, shopId, batch({ sourceRef: "wrong-line-listing" }, [
+      { ...observation, receiptId: "90005-10005", etsyListingId: "10003" },
+    ]))).rejects.toMatchObject({ status: 403 });
+    expect((await getFinancialEvidence(db, shopId)).rows.some((row) => row.sourceRef === "unowned-compound")).toBe(false);
+  });
 });
 
 describe("financial import validation and deterministic recommendation evidence", () => {
@@ -158,7 +206,14 @@ describe("financial import validation and deterministic recommendation evidence"
       batch({}, [{ ...observation, divisor: 0 }]),
       batch({}, [{ ...observation, status: "unavailable", amount: "0" }]),
       batch({}, [{ ...observation, ledgerType: "Fee for buyer@example.invalid" }]),
+      batch({}, [{ ...observation, receiptId: "90005-" }]),
+      batch({}, [{ ...observation, receiptId: "90005-10005-extra" }]),
     ]) expect(() => parseFinanceImport(input)).toThrow();
+  });
+
+  it("preserves unfamiliar open-string ledger categories exactly instead of enforcing a known category whitelist", () => {
+    const ledgerType = " Unmapped fee / 海外 + v2?! ";
+    expect(parseFinanceImport(batch({}, [{ ...observation, ledgerType }])).observations[0].ledgerType).toBe(ledgerType);
   });
 
   it("requires finite fresh non-future snapshots, with a deterministic 36h boundary", () => {

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EtsyLiveClient } from "@/adapters/etsy/client";
-import { etsyRequest, officialEtsyUrl } from "@/adapters/etsy/transport";
+import { EtsyAmbiguousWriteError, etsyRequest, officialEtsyUrl } from "@/adapters/etsy/transport";
 import { etsyMoneyInChf, validateEtsyMoney } from "@/adapters/etsy/money";
+import { findSellerTaxonomy, validateVariationScales } from "@/adapters/etsy/taxonomy";
 import type { EtsyTokens } from "@/lib/settings";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -45,8 +46,20 @@ describe("shared Etsy request safety", () => {
     const fetchImpl = vi.fn().mockResolvedValue(json({ secret: "do-not-log" }, { status }));
     await expect(etsyRequest("/v3/application/shops/123/listings", { method: "POST" }, {
       apiKey: `write-${status}`, fetchImpl,
-    })).rejects.toThrow(`Etsy API HTTP ${status}`);
+    })).rejects.toThrow(status === 429 ? `Etsy API HTTP ${status}` : "outcome is unknown");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds interrupted and unreadable write outcomes without retrying", async () => {
+    for (const fetchImpl of [
+      vi.fn().mockRejectedValue(new Error("private network message")),
+      vi.fn().mockResolvedValue(new Response("not json")),
+    ]) {
+      await expect(etsyRequest("/v3/application/shops/123/listings", { method: "POST" }, {
+        apiKey: "ambiguous-write", fetchImpl,
+      })).rejects.toBeInstanceOf(EtsyAmbiguousWriteError);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("reserves low daily quota for operations and stops long cooldowns immediately", async () => {
@@ -59,6 +72,43 @@ describe("shared Etsy request safety", () => {
     const blocked = vi.fn().mockResolvedValue(json({}, { status: 429, headers: { "retry-after": "300" } }));
     await expect(etsyRequest("/v3/application/listings/active", {}, { apiKey: "blocked-fixture", fetchImpl: blocked })).rejects.toThrow("cooldown");
     expect(blocked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("validated taxonomy mappings", () => {
+  const input = { title: "Example", description: "Example", priceChf: 8, tags: ["example"], type: "download" as const };
+
+  it("requires an explicit existing leaf taxonomy before sending a draft write", async () => {
+    vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "");
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    await expect(client().createDraftListing(input)).rejects.toThrow("explicitly select");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "1");
+    fetchImpl.mockResolvedValue(json({ results: [{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }] }));
+    await expect(client().createDraftListing(input)).rejects.toThrow("leaf");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the reviewed taxonomy and rejects a successful write without a valid provider id", async () => {
+    vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "2");
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json({ results: [{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }] }))
+      .mockResolvedValueOnce(json({}));
+    vi.stubGlobal("fetch", fetchImpl);
+    await expect(client().createDraftListing(input)).rejects.toBeInstanceOf(EtsyAmbiguousWriteError);
+    expect(new URLSearchParams(fetchImpl.mock.calls[1][1].body).get("taxonomy_id")).toBe("2");
+    expect(findSellerTaxonomy([{ id: 1, parent_id: null, children: [{ id: 2, parent_id: 1 }] }], 2)?.id).toBe(2);
+  });
+
+  it("rejects unsupported properties, invalid values, and inconsistent inventory scales", () => {
+    const properties = [{ property_id: 7, supports_variations: true, scales: [{ scale_id: 1 }, { scale_id: 2 }], possible_values: [{ value_id: 3 }] }];
+    expect(() => validateVariationScales([{ propertyValues: [{ propertyId: 7 }] }], properties)).toThrow("scale");
+    expect(() => validateVariationScales([
+      { propertyValues: [{ propertyId: 7, scaleId: 1 }] }, { propertyValues: [{ propertyId: 7, scaleId: 2 }] },
+    ], properties)).toThrow("consistent");
+    expect(() => validateVariationScales([{ propertyValues: [{ propertyId: 7, scaleId: 1, valueIds: [99] }] }], properties)).toThrow("value");
+    expect(() => validateVariationScales([{ propertyValues: [{ propertyId: 8, scaleId: 1 }] }], properties)).toThrow("not supported");
   });
 });
 

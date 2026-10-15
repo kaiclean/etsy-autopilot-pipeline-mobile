@@ -21,7 +21,7 @@ export default async function AnalyticsPage() {
     : "no analytics check yet";
   const freshnessSummary = `Stats checked for ${a.analyticsFreshness.checked}/${a.analyticsFreshness.total} live listings in the last ${ANALYTICS_FRESHNESS_HOURS}h · last check ${lastCheckedAt}`;
   const waterfall: [string, number, string?][] = [
-    ["Gross revenue", t.revenue],
+    ["Estimated paid revenue", t.revenue],
     ["Etsy fees (listing, transaction, processing, VAT)", -t.etsyFees],
     ["Offsite Ads (15%, attributed)", -t.offsiteAds],
     ["POD production + shipping", -t.podCosts],
@@ -49,8 +49,8 @@ export default async function AnalyticsPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Estimated net profit" value={chf(t.netProfit)} accent />
-        <Stat label="Revenue" value={chf(t.revenue)} />
-        <Stat label="Orders / view snapshots" value={pct(t.conversion, 2)} sub="Not a measured conversion rate" />
+        <Stat label="Estimated paid revenue" value={chf(t.revenue)} />
+        <Stat label="Orders / view snapshots" value={t.conversion === null ? "Unavailable" : pct(t.conversion, 2)} sub="Not a measured conversion rate" />
         <Stat label="Avg order" value={chf(t.aov)} sub={`${num(t.favorites)} favorites`} />
       </div>
 
@@ -58,6 +58,8 @@ export default async function AnalyticsPage() {
         <SectionTitle>Financial evidence · actual profit unavailable</SectionTitle>
         <p className="text-xs text-muted-foreground">
           Existing CHF profit and fee figures remain estimates; imported evidence never overwrites them.
+          CHF receipt totals are reporting estimates, with original money and FX observations preserved separately.
+          Canceled and refund-pending receipts are excluded from revenue, profit and optimization totals, not removed from the order audit list.
           Individual actual observations do not establish actual profit. Reconcile {finance.incompleteComponents.join(", ")} before making a profit claim.
           Listing views and favorites are snapshots, not verified traffic for the selected period.
         </p>

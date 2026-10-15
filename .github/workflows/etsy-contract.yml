@@ -19,11 +19,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check reviewed declarations
+        run: npm ci --ignore-scripts && npm run etsy:contract:check
       - name: Download canonical Etsy specification
+        id: download
         run: curl --fail --proto '=https' --tlsv1.2 --max-time 60 https://www.etsy.com/openapi/generated/oas/3.0.0.json -o /tmp/etsy-current.json
       - name: Detect upstream breaking changes
         env:
           GOTOOLCHAIN: auto
         run: go run github.com/oasdiff/oasdiff@v1.11.7 breaking data/etsy-openapi.snapshot.json /tmp/etsy-current.json --fail-on ERR
       - name: Report all contract changes for review
+        if: ${{ !cancelled() && steps.download.outcome == 'success' }}
         run: go run github.com/oasdiff/oasdiff@v1.11.7 changelog data/etsy-openapi.snapshot.json /tmp/etsy-current.json

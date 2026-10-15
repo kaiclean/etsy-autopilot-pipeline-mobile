@@ -1,5 +1,6 @@
 import { and, count, eq, isNotNull, isNull, like, lt, notLike, or } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
+import { EtsyAmbiguousWriteError } from "@/adapters/etsy/transport";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
 import { costs, designs, listings } from "@/db/schema";
@@ -8,6 +9,7 @@ import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
 import { validateListing } from "@/lib/listing-validator";
 import { buildFileManifest, manifestIsComplete } from "@/lib/file-manifest";
+import { verifyListingDeliveryPack } from "@/lib/artwork-pack";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
 import { maskSecrets } from "./stage-log";
@@ -101,7 +103,7 @@ export const runPublish: StageFn = async (ctx) => {
     return held ? stageResult(`Nothing approved to publish; held ${held} for operator reconciliation`, "warning") : "Nothing approved to publish.";
   }
 
-  const etsy = await getEtsyAdapter(db, ctx.random);
+  const etsy = await getEtsyAdapter(db, ctx.random, "write", ctx.shopId);
   const printify = await getPrintifyAdapter({ db, random: ctx.random });
   log(`Etsy adapter: ${etsy.mode} · Printify adapter: ${printify.mode}`);
 
@@ -162,6 +164,7 @@ export const runPublish: StageFn = async (ctx) => {
       eq(listings.publishAttemptCount, claimed.publishAttemptCount),
       eq(listings.publishAttemptedAt, ctx.now),
     );
+    let createdEtsyDraft = false;
     try {
       let etsyListingId: string | null = null;
       let printifyProductId: string | null = null;
@@ -188,6 +191,9 @@ export const runPublish: StageFn = async (ctx) => {
           imageUrl: l.imageUrl,
           deliveryUrl: l.deliveryUrl,
           manifest,
+          deliveryPack: l.deliveryPack,
+          deliveryPackVerified: await verifyListingDeliveryPack({ ...l, fileManifest: manifest }),
+          fileVerifiedAt: l.fileVerifiedAt,
         });
         if (refusal) throw new Error(refusal);
         let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
@@ -199,13 +205,21 @@ export const runPublish: StageFn = async (ctx) => {
             tags: l.tags,
             type: "download",
           });
+          createdEtsyDraft = true;
           listingId = created.listingId;
           const [saved] = await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
           if (!saved) throw new Error("Publish claim changed before recording the Etsy draft");
         }
         // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
-        await etsy.uploadListingImage(listingId, absoluteUrl(l.imageUrl));
+        const buyerFiles = new Set([l.deliveryUrl, ...(l.deliveryPack?.files.map((file) => file.url) ?? [])]);
+        const previews = [...new Set([l.imageUrl, ...(l.gallery ?? [])
+          .filter((view) => view.role === "artwork-preview").map((view) => view.url)])]
+          .filter((url) => !buyerFiles.has(url)).slice(0, 10);
+        for (const preview of previews) await etsy.uploadListingImage(listingId, absoluteUrl(preview));
         await etsy.uploadListingFile(listingId, { name: manifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
+        for (const file of l.deliveryPack?.files ?? []) {
+          await etsy.uploadListingFile(listingId, { name: file.filename, url: absoluteUrl(file.url) });
+        }
         etsyListingId = listingId;
         log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {
@@ -268,7 +282,10 @@ export const runPublish: StageFn = async (ctx) => {
       });
       ok++;
     } catch (e) {
-      const msg = maskSecrets(e instanceof Error ? e.message : String(e));
+      const message = maskSecrets(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof EtsyAmbiguousWriteError || createdEtsyDraft
+        ? `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} ${message} Check Etsy before retrying.`
+        : message;
       const [completed] = await db
         .update(listings)
         .set({

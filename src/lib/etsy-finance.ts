@@ -12,8 +12,8 @@ export class FinanceImportError extends Error {
 const components = ["revenue", "fee", "refund", "tax", "supplier_spend", "adjustment", "unknown"] as const;
 const statuses = ["actual", "estimated", "unavailable"] as const;
 const identifier = /^[A-Za-z0-9:_-]{1,100}$/;
-const ledgerCategory = /^[A-Za-z0-9_ .:/()+-]{1,100}$/;
 const etsyId = /^[1-9][0-9]{0,29}$/;
+const receiptLineId = /^[1-9][0-9]{0,29}(?:-[1-9][0-9]{0,29})?$/;
 const MAX_ROWS = 500;
 
 function object(value: unknown, allowed: string[]): Record<string, unknown> {
@@ -36,7 +36,7 @@ export function parseFinanceImport(input: unknown) {
   const etsyShopId = token(body.etsyShopId, "etsyShopId", etsyId);
   const sourceRef = token(body.sourceRef, "sourceRef");
   if (body.sourceKind !== "seller_export" && body.sourceKind !== "normalized_ledger") {
-    throw new FinanceImportError("Only seller_export or normalized_ledger is supported. No financial API endpoint is verified.");
+    throw new FinanceImportError("Only seller_export or normalized_ledger is supported. Automatic payment and ledger imports are not enabled.");
   }
   const sourceKind: "seller_export" | "normalized_ledger" = body.sourceKind;
   if (!Array.isArray(body.observations) || body.observations.length < 1 || body.observations.length > MAX_ROWS) {
@@ -46,7 +46,12 @@ export function parseFinanceImport(input: unknown) {
     const row = object(input, ["observationRef", "etsyListingId", "receiptId", "ledgerType", "component", "status", "amount", "divisor", "currency", "occurredAt"]);
     const observationRef = token(row.observationRef, "observationRef");
     // Preserve unfamiliar ledger codes without retaining raw exports, titles or buyer details.
-    const ledgerType = token(row.ledgerType, "ledgerType", ledgerCategory);
+    if (typeof row.ledgerType !== "string" || !row.ledgerType.trim() || row.ledgerType.length > 256
+      || [...row.ledgerType].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+      || /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(row.ledgerType)) {
+      throw new FinanceImportError("ledgerType must be a category label without personal data or control characters.");
+    }
+    const ledgerType = row.ledgerType;
     if (!components.includes(row.component as FinancialComponent)) throw new FinanceImportError("Invalid component; use unknown for an unrecognized ledger type.");
     if (!statuses.includes(row.status as FinancialEvidenceStatus)) throw new FinanceImportError("Invalid evidence status.");
     if (!Number.isInteger(row.divisor) || Number(row.divisor) <= 0 || Number(row.divisor) > 2_147_483_647) {
@@ -62,7 +67,7 @@ export function parseFinanceImport(input: unknown) {
     return {
       observationRef, ledgerType,
       etsyListingId: row.etsyListingId == null ? null : token(row.etsyListingId, "etsyListingId", etsyId),
-      receiptId: row.receiptId == null ? null : token(row.receiptId, "receiptId", etsyId),
+      receiptId: row.receiptId == null ? null : token(row.receiptId, "receiptId", receiptLineId),
       component: row.component as FinancialComponent, status: row.status as FinancialEvidenceStatus,
       amount: row.amount as string | null, divisor: row.divisor as number, currency: row.currency,
       occurredAt: new Date(row.occurredAt),
@@ -94,7 +99,7 @@ export async function importFinancialEvidence(db: DB, shopId: string, input: unk
     if (row.etsyListingId && ownedListings.filter((entry) => entry.etsyListingId === row.etsyListingId).length !== 1) {
       throw new FinanceImportError("Listing ownership is ambiguous; reconcile duplicate listing IDs first.", 409);
     }
-    if (row.receiptId && !receipt) throw new FinanceImportError("Receipt is not owned by the selected shop. Sync orders first.", 403);
+    if (row.receiptId && !receipt) throw new FinanceImportError("An exact receipt-line or legacy receipt key owned by the selected shop is required. Sync orders first.", 403);
     if (listing && receipt && (receipt.listingId !== null ? receipt.listingId !== listing.id : receipt.unmatchedEtsyListingId !== row.etsyListingId)) {
       throw new FinanceImportError("Receipt and listing do not match.", 403);
     }

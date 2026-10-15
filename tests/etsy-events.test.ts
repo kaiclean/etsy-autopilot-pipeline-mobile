@@ -62,7 +62,7 @@ async function insertEvent(deliveryId = randomUUID()) {
 beforeAll(async () => {
   client = new PGlite();
   const dir = path.join(process.cwd(), "drizzle");
-  for (const file of readdirSync(dir).filter((f) => /^\d{4}.*\.sql$/.test(f) && f.slice(0, 4) <= "0019").sort()) {
+  for (const file of readdirSync(dir).filter((f) => /^\d{4}.*\.sql$/.test(f)).sort()) {
     for (const statement of readFileSync(path.join(dir, file), "utf8").split("--> statement-breakpoint").filter((s) => s.trim())) {
       await client.exec(statement);
     }

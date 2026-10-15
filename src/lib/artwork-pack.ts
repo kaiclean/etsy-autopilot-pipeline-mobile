@@ -123,6 +123,25 @@ export async function verifyDeliveryPack(
   }
 }
 
+export async function verifyListingDeliveryPack(
+  listing: { deliveryPack?: ArtworkPackManifest | null; fileManifest: FileManifest | null; deliveryUrl: string | null },
+  read: (url: string) => Promise<Buffer | null> = loadArtworkBytes,
+): Promise<boolean> {
+  if (!listing.deliveryPack) return true;
+  if (!listing.deliveryUrl || !listing.fileManifest || !deliveryPackIsComplete(listing.deliveryPack, listing.fileManifest.delivery)) return false;
+  try {
+    const bytes = await read(listing.deliveryUrl);
+    if (!bytes || bytes.length > MAX_PACK_FILE_BYTES) return false;
+    const actual = await inspectArtworkFile(bytes, listing.fileManifest.delivery.filename);
+    if (!actual || actual.sha256 !== listing.fileManifest.delivery.sha256 ||
+        actual.bytes !== listing.fileManifest.delivery.bytes || actual.width !== listing.fileManifest.delivery.width ||
+        actual.height !== listing.fileManifest.delivery.height) return false;
+    return verifyDeliveryPack(listing.deliveryPack, listing.fileManifest.delivery, read);
+  } catch {
+    return false;
+  }
+}
+
 const CONTENTS_START = "--- Digital file contents ---";
 const CONTENTS_END = "--- End digital file contents ---";
 
@@ -130,6 +149,9 @@ export function withArtworkPackContents(description: string, pack: ArtworkPackMa
   const start = description.indexOf(CONTENTS_START);
   const end = start < 0 ? -1 : description.indexOf(CONTENTS_END, start);
   const base = start >= 0 && end >= 0 ? `${description.slice(0, start)}${description.slice(end + CONTENTS_END.length)}`.trim() : description.trim();
+  if (!deliveryPackIsComplete(pack)) {
+    return `${base}\n\n${CONTENTS_START}\nPrepared exports are invalid; regenerate and verify every delivery file.\n${CONTENTS_END}`;
+  }
   const files = [pack.source, ...pack.files];
   const heading = verified ? `Included digital files (${files.length}):` :
     `Prepared digital files (${files.length}); awaiting human verification, not yet approved for delivery:`;

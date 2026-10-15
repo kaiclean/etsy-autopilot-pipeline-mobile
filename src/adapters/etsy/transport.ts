@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { metrics, SpanStatusCode, trace } from "@opentelemetry/api";
 
 export const ETSY_API_ORIGIN = "https://openapi.etsy.com";
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -7,10 +8,19 @@ const RESEARCH_RESERVE = 20;
 
 type Quota = { blockedUntil: number; dailyRemaining?: number; dailyReset: number };
 const quotas = new Map<string, Quota>();
+const meter = metrics.getMeter("etsy-autopilot");
+const requests = meter.createCounter("etsy.api.requests");
+const latency = meter.createHistogram("etsy.api.duration", { unit: "ms" });
 
 export class EtsyRequestError extends Error {
   constructor(readonly status: number, readonly retryable: boolean) {
     super(`Etsy API HTTP ${status}`);
+  }
+}
+
+export class EtsyAmbiguousWriteError extends Error {
+  constructor() {
+    super("Etsy write outcome is unknown; reconcile the provider result before retrying");
   }
 }
 
@@ -58,8 +68,13 @@ export async function etsyRequest<T>(path: string | URL, init: RequestInit, opts
   const quota = quotas.get(key) ?? { blockedUntil: 0, dailyReset: 0 };
   quotas.set(key, quota);
   const method = (init.method ?? "GET").toUpperCase();
+  const span = trace.getTracer("etsy-autopilot").startSpan("etsy.api.request", {
+    attributes: { "http.request.method": method, "server.address": "openapi.etsy.com", "etsy.priority": opts.priority ?? "operations" },
+  });
   const canRetry = method === "GET" || method === "HEAD";
   const attempts = canRetry ? 3 : 1;
+  let dispatched = false;
+  try {
   for (let attempt = 0; attempt < attempts; attempt++) {
     const time = now();
     if (time >= quota.dailyReset) quota.dailyRemaining = undefined;
@@ -80,6 +95,7 @@ export async function etsyRequest<T>(path: string | URL, init: RequestInit, opts
     const started = now();
     let response: Response;
     try {
+      dispatched = true;
       response = await (opts.fetchImpl ?? fetch)(url, {
         ...init, headers, redirect: "error", cache: "no-store",
         signal: init.signal
@@ -91,6 +107,11 @@ export async function etsyRequest<T>(path: string | URL, init: RequestInit, opts
       throw new Error(`Etsy ${method} request failed; ${canRetry ? "retry on a later run" : "reconcile the provider result before retrying"}`);
     }
     opts.onResponse?.({ method, status: response.status, durationMs: now() - started, attempt: attempt + 1 });
+    const attributes = { method, status: response.status, priority: opts.priority ?? "operations" };
+    requests.add(1, attributes);
+    latency.record(Math.max(0, now() - started), attributes);
+    span.setAttribute("http.response.status_code", response.status);
+    span.setAttribute("etsy.attempt", attempt + 1);
     const daily = seconds(response.headers.get("x-remaining-today"));
     if (daily != null) {
       quota.dailyRemaining = daily;
@@ -137,4 +158,14 @@ export async function etsyRequest<T>(path: string | URL, init: RequestInit, opts
     }
   }
   throw new Error("Etsy request retry limit exceeded");
+  } catch (error) {
+    span.setStatus({ code: SpanStatusCode.ERROR, message: "Etsy request failed" });
+    if (!canRetry && dispatched &&
+      !(error instanceof EtsyRequestError && error.status >= 400 && error.status < 500 && error.status !== 408)) {
+      throw new EtsyAmbiguousWriteError();
+    }
+    throw error;
+  } finally {
+    span.end();
+  }
 }

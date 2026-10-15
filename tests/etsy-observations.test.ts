@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
-import { listings, orders, shops, type Listing } from "@/db/schema";
+import { events, listings, orders, saleAlerts, shops, type Listing } from "@/db/schema";
 import { etsyReceiptSnapshots } from "@/db/etsy-sync";
 import type { EtsyListingStats, EtsyReceipt } from "@/adapters/etsy/types";
 import { saveReceipts } from "@/pipeline/orders";
@@ -26,8 +26,11 @@ beforeAll(async () => {
     status: "published", etsyListingId: "456", publishMode: "live", isDemo: false,
     views: 120, favorites: 8, analyticsCheckedAt: now,
   }).returning();
+}, 60_000);
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
-afterEach(() => vi.unstubAllEnvs());
 
 function line(extra: Partial<EtsyReceipt> = {}): EtsyReceipt {
   return {
@@ -58,7 +61,10 @@ describe("redacted receipt observations", () => {
   });
 
   it("ignores stale observations and never promotes an unpaid receipt into revenue", async () => {
+    const [before] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, "123456-789"));
     await save([line({ modifiedAt: new Date(now.getTime() - 60_000) })]);
+    const [after] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, "123456-789"));
+    expect(after).toEqual(before);
     const [unchanged] = await db.select().from(orders).where(eq(orders.etsyReceiptId, "123456-789"));
     expect(unchanged.etsyPaymentStatus).toBe("refund_pending");
     expect((await save([line({ receiptId: "123456-790", paid: false })])).inserted).toBe(0);
@@ -69,6 +75,144 @@ describe("redacted receipt observations", () => {
     await expect(saveReceipts(db, [line()], new Map([["456", listing]]), {
       shopId: "00000000-0000-0000-0000-000000000001", isDemo: false, offsite: () => false,
     })).rejects.toThrow("does not belong");
+  });
+
+  it.each(["canceled", "refunded"] as const)("does not insert an older paid receipt after a concurrent %s during sourcing", async (flag) => {
+    const receiptId = flag === "canceled" ? "223456-101" : "223456-102";
+    let started!: () => void;
+    let resume!: () => void;
+    const sourcingStarted = new Promise<void>((resolve) => { started = resolve; });
+    const sourcingResumed = new Promise<void>((resolve) => { resume = resolve; });
+    const beforeEvents = await db.select().from(events).where(eq(events.shopId, shopId));
+    const older = saveReceipts(db, [line({ receiptId })], new Map([["456", listing]]), {
+      shopId, isDemo: false, offsite: () => false,
+      sourcingRecheck: async () => {
+        started();
+        await sourcingResumed;
+        return null;
+      },
+    });
+    try {
+      await sourcingStarted;
+      expect(await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId))).toHaveLength(0);
+      expect(await save([line({ receiptId, [flag]: true, modifiedAt: new Date(now.getTime() + 60_000) })])).toEqual({ inserted: 0, unmatched: 0 });
+    } finally {
+      resume();
+    }
+    expect(await older).toEqual({ inserted: 0, unmatched: 0 });
+    expect(await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId))).toHaveLength(0);
+    const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
+    expect(flag === "canceled" ? snapshot.canceled : snapshot.refundDetected).toBe(true);
+    expect(await db.select().from(saleAlerts).where(eq(saleAlerts.etsyReceiptId, receiptId))).toHaveLength(0);
+    expect(await db.select().from(events).where(eq(events.shopId, shopId))).toHaveLength(beforeEvents.length);
+  });
+
+  it.each(["canceled", "refunded"] as const)("keeps %s conservative at equal provider timestamps but accepts a truly newer paid state", async (flag) => {
+    const receiptId = flag === "canceled" ? "223456-201" : "223456-202";
+    expect((await save([line({ receiptId })])).inserted).toBe(1);
+    await save([line({ receiptId, [flag]: true })]);
+    await save([line({ receiptId })]);
+    const [blocked] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(blocked.etsyPaymentStatus).toBe(flag === "canceled" ? "canceled" : "refund_pending");
+    const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
+    expect(flag === "canceled" ? snapshot.canceled : snapshot.refundDetected).toBe(true);
+    await save([line({ receiptId, modifiedAt: new Date(now.getTime() + 60_000) })]);
+    const [newer] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(newer.etsyPaymentStatus).toBe("paid");
+    expect(newer.totalChf).toBe(blocked.totalChf);
+    expect(await db.select().from(saleAlerts).where(eq(saleAlerts.etsyReceiptId, receiptId))).toHaveLength(1);
+  });
+
+  it.each(["canceled", "refunded"] as const)("keeps an equal-timestamp %s snapshot without creating matched or unmatched revenue", async (flag) => {
+    const receiptId = flag === "canceled" ? "223456-301" : "223456-302";
+    await save([line({ receiptId, [flag]: true })]);
+    expect(await save([line({ receiptId })])).toEqual({ inserted: 0, unmatched: 0 });
+    expect(await saveReceipts(db, [line({ receiptId, etsyListingId: "unknown" })], new Map(), {
+      shopId, isDemo: false, offsite: () => false,
+    })).toEqual({ inserted: 0, unmatched: 0 });
+    expect(await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId))).toHaveLength(0);
+  });
+
+  it("rolls back snapshot acceptance when the order insert fails", async () => {
+    const receiptId = "223456-401";
+    const invalid = line({ receiptId, buyerCountry: null as unknown as string });
+    await expect(save([invalid])).rejects.toThrow();
+    expect(await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId))).toHaveLength(0);
+    expect((await save([line({ receiptId })])).inserted).toBe(1);
+  });
+
+  it("preserves compound receipt identity and the owning shop on a cross-shop collision", async () => {
+    const receiptId = "223456-501";
+    await save([line({ receiptId })]);
+    const [otherShop] = await db.insert(shops).values({ slug: "observations-other", displayName: "Other" }).returning();
+    expect(await saveReceipts(db, [line({ receiptId, refunded: true })], new Map(), {
+      shopId: otherShop.id, isDemo: false, offsite: () => false,
+    })).toEqual({ inserted: 0, unmatched: 0 });
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.shopId).toBe(shopId);
+    expect(order.etsyReceiptId).toBe(receiptId);
+    expect(order.etsyPaymentStatus).toBe("paid");
+    const otherSnapshots = await db.select().from(etsyReceiptSnapshots).where(and(
+      eq(etsyReceiptSnapshots.shopId, otherShop.id), eq(etsyReceiptSnapshots.receiptLineId, receiptId),
+    ));
+    expect(otherSnapshots).toHaveLength(1);
+    expect(otherSnapshots[0].refundDetected).toBe(true);
+  });
+
+  it("only alerts once when concurrent paid observations target the same receipt", async () => {
+    const receiptId = "223456-601";
+    const results = await Promise.all([save([line({ receiptId })]), save([line({ receiptId })])]);
+    expect(results.reduce((sum, result) => sum + result.inserted, 0)).toBe(1);
+    expect(await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId))).toHaveLength(1);
+    expect(await db.select().from(saleAlerts).where(eq(saleAlerts.etsyReceiptId, receiptId))).toHaveLength(1);
+  });
+
+  it("retains legacy demo persistence without creating source snapshots", async () => {
+    const receiptId = "dry-observation-701";
+    await saveReceipts(db, [line({ receiptId })], new Map([["456", listing]]), {
+      shopId, isDemo: true, offsite: () => false,
+    });
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.isDemo).toBe(true);
+    expect(order.podOrderId).toBeNull();
+    expect(await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId))).toHaveLength(0);
+  });
+
+  it("replays accepted observations with a fresh statement when a concurrent insert was not visible", async () => {
+    const receiptId = "223456-801";
+    await save([line({ receiptId })]);
+    const execute = db.execute.bind(db);
+    const spy = vi.spyOn(db, "execute").mockImplementationOnce(() =>
+      execute(sql`select null::integer as id, true as accepted, false as updated`));
+    await save([line({ receiptId, canceled: true, modifiedAt: new Date(now.getTime() + 60_000) })]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.etsyPaymentStatus).toBe("canceled");
+  });
+
+  it("does not let a fresh-snapshot replay overwrite a newer accepted observation", async () => {
+    const receiptId = "223456-802";
+    await save([line({ receiptId, modifiedAt: new Date(now.getTime() + 120_000) })]);
+    const execute = db.execute.bind(db);
+    const spy = vi.spyOn(db, "execute").mockImplementationOnce(() =>
+      execute(sql`select null::integer as id, true as accepted, false as updated`));
+    await save([line({ receiptId, canceled: true, modifiedAt: new Date(now.getTime() + 60_000) })]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.etsyPaymentStatus).toBe("paid");
+    const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
+    expect(snapshot.sourceModifiedAt).toEqual(new Date(now.getTime() + 120_000));
+  });
+
+  it("does not reactivate canceled revenue on a newer unpaid observation", async () => {
+    const receiptId = "223456-901";
+    await save([line({ receiptId })]);
+    await save([line({ receiptId, canceled: true })]);
+    await save([line({ receiptId, paid: false, modifiedAt: new Date(now.getTime() + 60_000) })]);
+    const [order] = await db.select().from(orders).where(eq(orders.etsyReceiptId, receiptId));
+    expect(order.etsyPaymentStatus).toBe("canceled");
+    const [snapshot] = await db.select().from(etsyReceiptSnapshots).where(eq(etsyReceiptSnapshots.receiptLineId, receiptId));
+    expect(snapshot.paid).toBe(false);
   });
 });
 

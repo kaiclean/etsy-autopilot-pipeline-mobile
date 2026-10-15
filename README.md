@@ -12,6 +12,8 @@ Everything runs out of the box in **demo mode**: seeded demo data (flagged `is_d
 
 ## Quick start (local, no keys needed)
 
+Use Node.js **22.12 or newer** (also required by the optional pg-boss worker).
+
 ```bash
 npm install
 npm run dev            # http://localhost:4317
@@ -35,6 +37,7 @@ Try the whole loop:
 | `npm run build && npm start` | Production build and server (port 4317) |
 | `npm test` | Vitest: fee math, listing validator, auth, end-to-end mock pipeline |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
+| `npm run etsy:types` / `npm run etsy:contract:check` | Generate Etsy declarations from the reviewed snapshot / check reproducibility |
 | `npm run db:generate` | Generate a new SQL migration after editing `src/db/schema.ts` |
 | `npm run db:seed` | Wipe and reseed **demo** rows only (`is_demo = true`) |
 | `npm run images:backfill` | Upload inline `data:` images to the configured S3/Blob bucket and rewrite `image_url`. `--dry-run` only counts them. The maintenance cron rewrites at most 10 rows per run when S3 is configured |
@@ -76,7 +79,7 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 | Approval | Always a human gate: swipe, edit inline, undo | — |
 | Publish | Etsy draft plus preview image and delivery file. Printify product create only. Activate and Publish to Etsy are human actions. | Records payloads and returns `dry-…` ids |
 | Orders | Etsy `getShopReceipts`, Printify order status | Simulated receipts, fulfillment advances each sync |
-| Analytics | Etsy listing `views` / `num_favorers`, rollups, ads budget booking | Simulated view growth |
+| Analytics | Available Etsy listing counters, rollups, ads budget booking. Missing metrics stay unknown, not fresh zeros. | Demo-only simulated view growth |
 
 ### Fee math (business plan §6)
 
@@ -92,7 +95,37 @@ Every stage is a plain async function `(ctx) => summary` that talks to adapters 
 
 Before this change a global 55% target, with Offsite Ads on, solved near CHF 54 (mug) and CHF 74 (poster) and then clamped to the band max: mugs CHF 49.90 and gothic posters CHF 44.90. At the 30% default, the same products land in the competitive bands (mug about CHF 15–25, poster about CHF 18–33). Covered in `tests/fees.test.ts`.
 
-Digital publish uploads **one PNG**. Listing copy says that. It does not promise a 300 DPI pack in 2:3, 3:4, 4:5, 11x14, and ISO A, or an editable template. Those exports are not generated yet. POD queue images use a template mockup at `/api/mockup/{preset}`; the print file stays the design artwork.
+Digital publish defaults to **one verified artwork file**. Optional export packs must be explicitly generated and verified before approval; they never promise unproduced sizes, new aspect ratios, editable templates, or invented print resolution. POD queue images use a template mockup at `/api/mockup/{preset}`; the print file stays the design artwork.
+
+### Etsy integration reliability and rollout
+
+The official [`etsy/open-api`](https://github.com/etsy/open-api) project is a contract/announcements source, not an SDK installed by this app. `data/etsy-openapi.snapshot.json` is the reviewed October 5, 2026 snapshot; `data/etsy-openapi.provenance.json` records its canonical URL, pinned mirror, retrieval date, and SHA-256. Etsy's canonical documentation host was unreachable during implementation, so this is **not** a claim that the live contract has remained unchanged. Regenerate with `npm run etsy:types`; review changes before replacing the snapshot. The scheduled **Etsy contract compatibility** workflow compares the canonical schema with `oasdiff`; it never updates code or deploys automatically.
+
+- Publishing, receipts, competition research, and Etsy hot signals share the fixed-origin transport: deadlines, bounded response sizes, safe errors, read-only retries, quota cooldowns, and a small operational quota reserve. Quota observations are process-local; this does not promise cluster-wide quota enforcement. Etsy HTML scraping is disabled regardless of `HOT_SCRAPE_ENABLED`.
+- Token refresh is serialized per shop with a database lease and compare-and-swap persistence. A shop cannot borrow another shop's tokens. To rotate the application shared secret, obtain the replacement through Etsy, update every deployment/worker's `ETSY_SHARED_SECRET`, restart them, and verify an authenticated read and token refresh before revoking the old secret. Follow Etsy's actual overlap/rotation policy; never commit either value. Webhook endpoint signing secrets are a different credential.
+- Receipts paginate by modification time, persist redacted source observations, and advance an overlapping watermark only after a complete batch succeeds. Late payment, cancellation, and refund observations reconcile existing orders without creating a second supplier-fulfillment path. Canceled/refund-pending orders remain auditable but are excluded from revenue and conversion aggregates.
+- Original money amounts, divisors, and currencies are preserved. Non-CHF receipts require explicit fresh `ETSY_FX_RATES_JSON` conversion evidence; no currency or `/100` assumption is substituted. Unconvertible batches fail visibly without advancing the cursor.
+- Missing listing counters preserve previous observations but invalidate analytics freshness. The reviewed API schema does not promise listing views, keyword search volume, competitor sales, or complete advertising analytics. Do not infer those from competition counts.
+- Live draft creation requires an explicitly configured, verified leaf seller taxonomy. Variation-scale validation helpers are available for reviewed future mappings; **there are no direct inventory writes** competing with Printify.
+- Ambiguous Etsy writes are not retried automatically. An uncertain draft creation or interrupted publish is held for operator reconciliation; first inspect Etsy and attach/resolve the existing resource rather than clearing the hold blindly.
+
+**Durable reconciliation:** pg-boss is the single queue implementation. Opt in with `ETSY_EVENTS_ENABLED=true` and a TCP Postgres URL (`ETSY_QUEUE_DATABASE_URL`, otherwise `DATABASE_URL`) pointing to the **same application database**. Embedded PGlite remains the demo/test store, not the production queue. Schedule authenticated `GET /api/cron/etsy-events` at a suitable cadence using `CRON_SECRET`; the endpoint drains bounded work without relying on a background process surviving a serverless request.
+
+An operator can enqueue a read-only repair with authenticated `POST /api/cron/etsy-events`, a UUID `Idempotency-Key`, and JSON fields `shopId` (local shop UUID), `resourceType` (`receipt` or `listing`), and `resourceId` (numeric Etsy identifier). Accepted work is durably recorded before **202**. Queue dispatch recovery, retry limits, dead-letter state, and shop-scoped replay survive restarts. Keep the existing orders polling schedule enabled.
+
+**Public webhook limitation:** `/api/webhooks/etsy` is separate from Printify and intentionally returns **503** even if `ETSY_WEBHOOK_ENABLED=true`. Current Etsy signature-entry syntax and a genuine signed delivery could not be independently verified. Do not register or enable production delivery until the raw-body/signature contract is verified and implemented, replay/forgery tests pass, and a portal delivery succeeds. An environment switch cannot bypass this gate. No unverified public events are accepted.
+
+**Artwork and copy evidence:** Sharp validates PNG/JPEG/WebP with byte/pixel/time limits, orientation handling and sRGB previews. Designs record provider, workflow fingerprint and available seed/model references; listings retain gallery metadata and a versioned copy-input hash. This does not establish a model's commercial-use licence. Pin and review ComfyUI workers, models and custom nodes separately.
+
+For an owned, unsent digital draft, `POST /api/listings/{id}/exports` prepares explicit same-aspect, no-upscale exports through configured permanent storage. At most four exports plus the original are allowed, each at most 20 MiB. Stored bytes are read back and SHA-256 checked. Changing the pack clears prior approval and delivery verification; approve and verify every promised file again before activation. Existing single-file listings remain supported.
+
+**Financial evidence:** Analytics accepts authorized seller exports through `POST /api/etsy/finance/import` and its authenticated import control. Imports preserve original money, open-ended ledger categories, provenance and immutable deduplication keys without retaining buyer/contact data or raw exports. Observed fee/refund/supplier components remain distinct from existing fee estimates; partial evidence does **not** become reconciled actual profit. Payment processing fees alone are not all Etsy fees. Automatic ledger ingestion and complete profit reconciliation remain gated on verified endpoint/divisor/coverage contracts.
+
+Health recommendations are evidence-based, human-approved suggestions, not automatic title, price, stock, or ad changes. Low samples or unavailable/stale views suppress conversion advice. Existing Vitest checks cover conservative recommendation behavior; Promptfoo and Trigger.dev are not installed as duplicate evaluation/queue systems.
+
+The shared transport emits OpenTelemetry API request spans, status counts and latency with method/status/priority only—no tokens, URLs, buyer details or provider bodies. Without a separately configured OpenTelemetry SDK/exporter these are no-op; no telemetry leaves the deployment by default.
+
+**Go-live gate:** deploy read-only sync first, validate a representative backfill and financial import, exercise queue restart/replay recovery, then test one human-approved draft and its downloaded files/physical sample. Real Etsy/Printify/AI/storage credentials, OAuth scopes, production auth, taxonomy, budgets and existing approval gates must all be verified before selecting Go live. Both the host `PUBLISH_MODE=live` and the dashboard's explicit confirmation are required. This implementation does not enable live mode merely because local tests pass; public-webhook verification remains a separate prerequisite for webhook reception.
 
 ### Supplier sourcing (dry-run)
 

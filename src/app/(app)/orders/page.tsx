@@ -27,13 +27,15 @@ export default async function OrdersPage() {
       )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Mini label="Orders · 30d" value={num(summary.count30d)} />
-        <Mini label="Revenue · 30d" value={chf(summary.revenue30d, { compact: true })} />
+        <Mini label="Eligible paid orders · 30d" value={num(summary.count30d)} />
+        <Mini label="Estimated paid revenue · 30d" value={chf(summary.revenue30d, { compact: true })} />
         <Mini label="Estimated profit after fees" value={chf(summary.profit30d, { compact: true })} accent />
         <Mini label="Open POD orders" value={num(summary.openPod)} />
       </div>
       <p className="text-xs text-muted-foreground">
-        Profit, fees and supplier costs are estimates, not a reconciled actual ledger. Refunds or missing fees can change the result.
+        CHF amounts are stored reporting estimates, not original-currency financial evidence. Foreign-currency imports require a documented fresh FX quote.
+        Profit, fees and supplier costs are estimates, not a reconciled actual ledger.
+        Canceled and refund-pending receipts stay visible for audit but are excluded from revenue, profit and optimization totals; partial refund amounts remain unknown until reconciled.
         {" "}<Link className="underline" href="/analytics">Review financial evidence and incomplete components</Link>.
       </p>
 
@@ -54,6 +56,11 @@ export default async function OrdersPage() {
                   <span suppressHydrationWarning>{relTime(o.createdAt)}</span>
                   {o.quantity > 1 && <span>· ×{o.quantity}</span>}
                   <ProvenanceBadge kind={orderProvenance(o)} />
+                  {o.etsyPaymentStatus !== "paid" && (
+                    <span className="inline-flex h-5 items-center rounded-full bg-warning/15 px-2 text-[11px] font-semibold text-warning">
+                      {o.etsyPaymentStatus === "canceled" ? "Canceled · excluded" : "Refund pending · excluded"}
+                    </span>
+                  )}
                   {o.matchStatus === "unmatched" ? (
                     <span className="inline-flex h-5 items-center rounded-full bg-warning/15 px-2 text-[11px] font-semibold text-warning">Unmatched</span>
                   ) : (
@@ -66,8 +73,10 @@ export default async function OrdersPage() {
                 </div>
               </div>
               <div className="text-right">
-                <div className="tabular text-sm font-semibold">{chf(o.totalChf)}</div>
-                {o.matchStatus === "unmatched" ? (
+                <div className="tabular text-sm font-semibold" title="Stored CHF reporting estimate; original money and FX observations are preserved separately">{chf(o.totalChf)}</div>
+                {o.etsyPaymentStatus !== "paid" ? (
+                  <div className="text-[11px] text-warning">Audit only · profit unavailable</div>
+                ) : o.matchStatus === "unmatched" ? (
                   <div className="text-[11px] text-warning">Profit pending</div>
                 ) : (
                   <div className="tabular text-[11px] font-medium text-success">Est. {chf(o.profitChf).replace("CHF ", "")}</div>

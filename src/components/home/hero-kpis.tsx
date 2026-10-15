@@ -8,7 +8,7 @@ import { dashboardTrendForRange, type DashboardRange } from "@/lib/dashboard-met
 import { chf, num, pct, shortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Totals = { revenue: number; profit: number; orders: number; costs: number; views: number; net: number; conversion: number };
+type Totals = { revenue: number; profit: number; orders: number; costs: number; views: number | null; net: number; conversion: number | null };
 type Props = {
   kpis: Record<"today" | "7d" | "30d", { cur: Totals; prev: Totals }>;
   series: { date: string; revenue: number; profit: number }[];
@@ -21,8 +21,8 @@ const RANGES: { id: DashboardRange; label: string }[] = [
 ] as const;
 
 const chartConfig = {
-  profit: { label: "Profit", color: "var(--chart-1)" },
-  revenue: { label: "Revenue", color: "var(--chart-4)" },
+  profit: { label: "Estimated profit", color: "var(--chart-1)" },
+  revenue: { label: "Estimated revenue", color: "var(--chart-4)" },
 } satisfies ChartConfig;
 
 export function HeroKpis({ kpis, series }: Props) {
@@ -39,7 +39,7 @@ export function HeroKpis({ kpis, series }: Props) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="size-2 rounded-full bg-primary" />
-              <div className="text-[13px] font-medium text-muted-foreground">Net profit after fees &amp; costs</div>
+              <div className="text-[13px] font-medium text-muted-foreground">Estimated net profit after fees &amp; costs</div>
             </div>
             <div className="tabular mt-2 text-[40px] leading-none font-semibold tracking-tight md:text-5xl">{chf(cur.net)}</div>
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -97,22 +97,22 @@ export function HeroKpis({ kpis, series }: Props) {
       </Panel>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Revenue" value={chf(cur.revenue)} cur={cur.revenue} prev={prev.revenue} />
+        <Kpi label="Estimated revenue" value={chf(cur.revenue)} cur={cur.revenue} prev={prev.revenue} />
         <Kpi label="Orders" value={num(cur.orders)} cur={cur.orders} prev={prev.orders} />
-        <Kpi label="Conversion" value={pct(cur.conversion, 2)} cur={cur.conversion} prev={prev.conversion} />
-        <Kpi label="Views" value={num(cur.views)} cur={cur.views} prev={prev.views} />
+        <Kpi label="Orders / view snapshots" value={cur.conversion === null ? "Unavailable" : pct(cur.conversion, 2)} cur={cur.conversion} prev={prev.conversion} />
+        <Kpi label="Observed views" value={cur.views === null ? "Unavailable" : num(cur.views)} cur={cur.views} prev={prev.views} />
       </div>
     </div>
   );
 }
 
-function Kpi({ label, value, cur, prev }: { label: string; value: string; cur: number; prev: number }) {
+function Kpi({ label, value, cur, prev }: { label: string; value: string; cur: number | null; prev: number | null }) {
   return (
     <Panel className="p-3.5">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="tabular mt-1 truncate text-xl font-semibold tracking-tight">{value}</div>
       <div className="mt-1">
-        <Delta cur={cur} prev={prev} />
+        {cur !== null && prev !== null && <Delta cur={cur} prev={prev} />}
       </div>
     </Panel>
   );
