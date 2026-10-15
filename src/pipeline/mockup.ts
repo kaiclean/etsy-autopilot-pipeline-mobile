@@ -17,7 +17,49 @@ export type MockupResult = {
   provider: string;
   /** False when the URL is the raw artwork. Digital galleries use a preview instead. */
   mocked: boolean;
+  /** Only actual renderable views; never inferred pack files or unproduced lifestyle photography. */
+  gallery?: ArtworkGalleryView[];
 };
+
+export type ArtworkGalleryView = {
+  url: string;
+  role: "artwork-preview" | "product-mockup";
+  label: string;
+  sourceDimensions?: { width: number; height: number };
+};
+
+type ListingImageOptions = {
+  productType: ProductType;
+  artworkUrl: string;
+  preset?: PodPreset;
+  niche: Niche | string;
+  productId?: string;
+  /** Measured source pixels, not advertised paper sizes or assumed print resolution. */
+  sourceDimensions?: { width: number; height: number };
+};
+
+function withGallery(image: MockupResult, opts: ListingImageOptions): MockupResult {
+  const measured = opts.sourceDimensions;
+  const sourceDimensions = measured && Number.isSafeInteger(measured.width) && measured.width > 0 &&
+    Number.isSafeInteger(measured.height) && measured.height > 0 ? measured : undefined;
+  const primary: ArtworkGalleryView = {
+    url: image.url,
+    role: image.provider === "preview" ? "artwork-preview" : "product-mockup",
+    label: image.provider === "preview" ? "Artwork preview; not the full-resolution delivery file" :
+      image.provider === "printify-mockup" ? "Supplier-generated product mockup" :
+        "Illustrative product preview; not a supplier placement proof",
+    ...(sourceDimensions ? { sourceDimensions } : {}),
+  };
+  const gallery = [primary];
+  if (opts.productType === "pod" && !isPlaceholderUrl(opts.artworkUrl)) {
+    const preview = digitalPreviewUrl(opts.artworkUrl, String(opts.niche));
+    if (new URL(preview, "http://localhost").searchParams.has("src") && preview !== image.url) {
+      gallery.push({ url: preview, role: "artwork-preview", label: "Artwork composition preview; product mockup shown separately",
+        ...(sourceDimensions ? { sourceDimensions } : {}) });
+    }
+  }
+  return { ...image, gallery };
+}
 
 /**
  * Pluggable POD mockup step. The first provider that returns an image wins.
@@ -77,15 +119,9 @@ export const printifyMockupProvider: MockupProvider = {
 
 const PROVIDERS: MockupProvider[] = [printifyMockupProvider, templateMockupProvider];
 
-export async function listingImageForProduct(opts: {
-  productType: ProductType;
-  artworkUrl: string;
-  preset?: PodPreset;
-  niche: Niche | string;
-  productId?: string;
-}): Promise<MockupResult> {
+export async function listingImageForProduct(opts: ListingImageOptions): Promise<MockupResult> {
   if (opts.productType !== "pod" || !opts.preset) {
-    return { url: digitalPreviewUrl(opts.artworkUrl, String(opts.niche)), provider: "preview", mocked: true };
+    return withGallery({ url: digitalPreviewUrl(opts.artworkUrl, String(opts.niche)), provider: "preview", mocked: true }, opts);
   }
   const req: MockupRequest = {
     artworkUrl: opts.artworkUrl,
@@ -96,12 +132,12 @@ export async function listingImageForProduct(opts: {
   for (const provider of PROVIDERS) {
     try {
       const image = await provider.tryCompose(req);
-      if (image) return image;
+      if (image) return withGallery(image, opts);
     } catch {
       // The template provider is last and does not throw; a failed live hook falls through.
     }
   }
-  return { url: podMockupUrl(opts.preset, opts.niche), provider: "template-mockup", mocked: true };
+  return withGallery({ url: podMockupUrl(opts.preset, opts.niche), provider: "template-mockup", mocked: true }, opts);
 }
 
 /** Print file for Printify. The listing image may be a mockup; the design file is what gets printed. */

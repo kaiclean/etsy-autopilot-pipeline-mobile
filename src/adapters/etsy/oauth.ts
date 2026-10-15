@@ -35,9 +35,17 @@ async function tokenRequest(body: Record<string, string>): Promise<EtsyTokens> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body),
+    signal: AbortSignal.timeout(20_000),
+    redirect: "error",
+    cache: "no-store",
   });
-  if (!res.ok) throw new Error(`Etsy token ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`Etsy token HTTP ${res.status}`);
   const json = await res.json();
+  if (typeof json.access_token !== "string" || !json.access_token ||
+      typeof json.refresh_token !== "string" || !json.refresh_token ||
+      !Number.isFinite(json.expires_in) || json.expires_in <= 60) {
+    throw new Error("Etsy returned an invalid token response");
+  }
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,

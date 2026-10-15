@@ -76,11 +76,15 @@ export async function readEtsyTokens(db: DB, shopId: string): Promise<EtsyTokens
     .from(shopConnections)
     .where(and(eq(shopConnections.shopId, shopId), eq(shopConnections.provider, "etsy")));
   if (isEtsyTokens(row?.tokens)) return row.tokens;
-  return getSetting(db, "etsyTokens");
+  const [shop] = await db.select({ slug: shops.slug }).from(shops).where(eq(shops.id, shopId));
+  return shop?.slug === OMNISHOP_SLUG ? getSetting(db, "etsyTokens") : null;
 }
 
 /** Dual-write during the migration window so settings.etsyTokens and shop_connections stay readable. */
 export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens, expected?: EtsyTokens): Promise<EtsyTokens | null> {
+  const [shop] = await db.select({ slug: shops.slug }).from(shops).where(eq(shops.id, shopId));
+  if (!shop) throw new Error("Etsy shop is not registered");
+  const legacy = shop.slug === OMNISHOP_SLUG;
   if (expected) {
     const [row] = await db
       .select({ id: shopConnections.id, tokens: shopConnections.tokens })
@@ -99,7 +103,7 @@ export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens
         )
         .returning({ id: shopConnections.id });
       if (!updated) return (await readEtsyTokens(db, shopId)) ?? row.tokens;
-      await db
+      if (legacy) await db
         .update(settings)
         .set({ value: tokens, updatedAt: new Date() })
         .where(
@@ -111,6 +115,7 @@ export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens
         );
       return tokens;
     }
+    if (!legacy) return readEtsyTokens(db, shopId);
     const [updated] = await db
       .update(settings)
       .set({ value: tokens, updatedAt: new Date() })
@@ -124,7 +129,7 @@ export async function writeEtsyTokens(db: DB, shopId: string, tokens: EtsyTokens
       .returning({ key: settings.key });
     return updated ? tokens : readEtsyTokens(db, shopId);
   }
-  await setSetting(db, "etsyTokens", tokens);
+  if (legacy) await setSetting(db, "etsyTokens", tokens);
   const [row] = await db
     .select({ id: shopConnections.id })
     .from(shopConnections)

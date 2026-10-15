@@ -33,7 +33,12 @@ export function dashboardOrdersWhere(): SQL | undefined {
 
 /** Cron / stage totals. Fake receipt ids never count, including while demo mode is on. */
 export function analyticsOrdersWhere(shopId: string, since: Date): SQL {
-  return defined(and(eq(orders.shopId, shopId), gte(orders.createdAt, since), visible(orders.isDemo), notFakeReceiptWhere()));
+  return defined(and(eq(orders.shopId, shopId), gte(orders.createdAt, since), visible(orders.isDemo), notFakeReceiptWhere(), revenueEligibleOrderWhere()));
+}
+
+/** Refunds without reconciled amounts must not masquerade as full paid revenue or conversion. */
+export function revenueEligibleOrderWhere(): SQL {
+  return eq(orders.etsyPaymentStatus, "paid");
 }
 
 /** Newest row that can advance the Etsy receipt cursor for this shop. */

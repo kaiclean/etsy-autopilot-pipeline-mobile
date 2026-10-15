@@ -95,13 +95,14 @@ describe("quality gate", () => {
 
 describe("refresh and retire suggestions", () => {
   it("retires quiet listings and refreshes ones with attention but no sales", () => {
+    const now = new Date("2026-10-05T09:00:00.000Z");
     const suggestions = suggestListingActions([
       { id: 1, title: "Quiet", views: 2, favorites: 0, sales: 0, ageDays: 30 },
       { id: 2, title: "Watched", views: 40, favorites: 1, sales: 0, ageDays: 10 },
       { id: 3, title: "Loved", views: 8, favorites: 4, sales: 0, ageDays: 12 },
       { id: 4, title: "Seller", views: 1, favorites: 0, sales: 2, ageDays: 40 },
       { id: 5, title: "New", views: 0, favorites: 0, sales: 0, ageDays: 3 },
-    ]);
+    ].map((row) => ({ ...row, analyticsCheckedAt: now })), now);
     expect(suggestions.find((item) => item.listingId === 1)?.action).toBe("retire");
     expect(suggestions.find((item) => item.listingId === 2)?.action).toBe("refresh");
     expect(suggestions.find((item) => item.listingId === 3)?.action).toBe("refresh");
@@ -148,6 +149,7 @@ describe("weekly health report", () => {
         etsyListingId: "445566",
         views: 40,
         favorites: 1,
+        analyticsCheckedAt: now,
         publishedAt: new Date("2026-09-01T00:00:00.000Z"),
         isDemo: false,
       })
@@ -170,6 +172,7 @@ describe("weekly health report", () => {
       etsyListingId: "445567",
       views: 40,
       favorites: 1,
+      analyticsCheckedAt: now,
       publishedAt: new Date("2026-09-01T00:00:00.000Z"),
       isDemo: false,
     });
@@ -229,7 +232,7 @@ describe("weekly health report", () => {
     expect(report.adsChf).toBe(5);
     expect(report.adsEstimateChf).toBe(3.5);
     expect(report.adsActualChf).toBe(1.5);
-    expect(report.views).toBe(11);
+    expect(report.views).toBe(80);
     expect(report.favorites).toBe(2);
     expect(report.suggestions.map((item) => item.action)).toContain("refresh");
 

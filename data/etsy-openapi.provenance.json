@@ -1,0 +1,14 @@
+{
+  "source": "https://www.etsy.com/openapi/generated/oas/3.0.0.json",
+  "retrievedAt": "2026-10-05T16:58:26.138Z",
+  "mirror": "https://raw.githubusercontent.com/profplum700/etsy-v3-api-client/7ca3ebbb921a00feb74049af377f8f8eac756975/spec/etsy-openapi.json",
+  "sha256": "b993d52f46afdf87f7687dc6ff8885f2b012589f9b123e1faf14cc54ee73a9ef",
+  "reviewedAt": "2026-10-15",
+  "limitations": [
+    "The canonical Etsy URL was unavailable in the implementation environment.",
+    "This is a pinned third-party mirror of Etsy's specification, not a claim of live schema freshness.",
+    "Receipt addresses, email, gift messages, descriptions, and contact details are not persisted by the integration.",
+    "Listing views are not declared in this schema; absent metrics must remain unavailable.",
+    "Webhook signature verification remains disabled pending current official documentation and a verified portal delivery."
+  ]
+}

@@ -1,4 +1,7 @@
 import { sql } from "drizzle-orm";
+import type { ArtworkProvenance } from "@/lib/artwork-provenance";
+import type { ArtworkPackManifest } from "@/lib/artwork-pack";
+import type { ArtworkGalleryView } from "@/pipeline/mockup";
 import {
   boolean,
   doublePrecision,
@@ -181,6 +184,7 @@ export const designs = pgTable("designs", {
   prompt: text("prompt").notNull(),
   provider: text("provider").notNull(),
   imageUrl: text("image_url").notNull(),
+  provenance: jsonb("provenance").$type<ArtworkProvenance>(),
   imageWidth: integer("image_width"),
   imageHeight: integer("image_height"),
   colorVariance: doublePrecision("color_variance"),
@@ -212,6 +216,10 @@ export const listings = pgTable("listings", {
   /** Full-resolution digital file. The gallery `imageUrl` must be a different preview. */
   deliveryUrl: text("delivery_url"),
   fileManifest: jsonb("file_manifest").$type<FileManifest>(),
+  deliveryPack: jsonb("delivery_pack").$type<ArtworkPackManifest>(),
+  etsyDeliveryFingerprint: text("etsy_delivery_fingerprint"),
+  gallery: jsonb("gallery").$type<ArtworkGalleryView[]>().notNull().default([]),
+  copyProvenance: jsonb("copy_provenance").$type<{ version: 1; provider: string; inputSha256: string }>(),
   fileVerifiedAt: timestamp("file_verified_at", { withTimezone: true }),
   fileVerifiedBy: text("file_verified_by"),
   /** Set only by the per-listing Activate action. Cron never sets this. */
@@ -297,6 +305,7 @@ export const orders = pgTable("orders", {
     .default(omnishopId)
     .references(() => shops.id),
   etsyReceiptId: text("etsy_receipt_id").notNull().unique(),
+  etsyPaymentStatus: text("etsy_payment_status").$type<"paid" | "unpaid" | "canceled" | "refund_pending">().notNull().default("paid"),
   listingId: integer("listing_id").references(() => listings.id),
   /** Etsy listing id from the receipt when no pipeline row has that id yet. */
   unmatchedEtsyListingId: text("unmatched_etsy_listing_id"),

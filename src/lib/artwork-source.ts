@@ -1,8 +1,9 @@
 import { isPlaceholderUrl, isSafeArtworkUrl } from "@/lib/art-quality";
-import { decodeDataUrl, MEDIA_KEY, readStoredObject } from "@/lib/object-storage";
-import { decodePng, encodeRgbPng, shrinkToLongEdge, type RgbImage } from "@/lib/png";
+import { decodeArtwork, inspectArtwork } from "@/lib/artwork-codec";
+import { decodeDataUrl, MAX_ARTWORK_BYTES, MEDIA_KEY, readStoredObject } from "@/lib/object-storage";
+import { encodeRgbPng, shrinkToLongEdge, type RgbImage } from "@/lib/png";
 
-const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_BYTES = MAX_ARTWORK_BYTES;
 /** Gallery previews stay well under the 2048px print file so the deliverable is not given away. */
 export const PREVIEW_LONG_EDGE = 1200;
 
@@ -33,30 +34,62 @@ export function ownMediaKey(url: string): string | null {
 export async function loadArtworkBytes(src: string, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
   if (!src) return null;
   if (src.startsWith("data:")) {
-    const decoded = decodeDataUrl(src);
-    return decoded && decoded.bytes.length <= MAX_BYTES ? decoded.bytes : null;
+    // Bound the encoded input before the data URL parser allocates its decoded buffer.
+    if (src.length > MAX_BYTES * 4 / 3 + 1024) return null;
+    try {
+      const decoded = decodeDataUrl(src);
+      return decoded && decoded.bytes.length <= MAX_BYTES ? decoded.bytes : null;
+    } catch {
+      return null;
+    }
   }
   const key = ownMediaKey(src);
   if (key) {
     const stored = await readStoredObject(key).catch(() => null);
-    if (stored) return Buffer.from(stored.bytes);
+    if (stored && stored.bytes.length > 0 && stored.bytes.length <= MAX_BYTES) return Buffer.from(stored.bytes);
   }
   if (!isSafeArtworkUrl(src)) return null;
   try {
     const res = await fetchImpl(src, { redirect: "error", signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    return bytes.length > 0 && bytes.length <= MAX_BYTES ? bytes : null;
+    return await readCappedArtworkBody(res, MAX_BYTES);
   } catch {
     return null;
   }
+}
+
+export async function readCappedArtworkBody(res: Response, maxBytes = MAX_BYTES): Promise<Buffer | null> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES) return null;
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return bytes.length > 0 && bytes.length <= maxBytes ? bytes : null;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return total ? Buffer.concat(chunks, total) : null;
 }
 
 /** Decoded real artwork. Placeholder, mockup, and preview URLs are not artwork and return null. */
 export async function loadArtworkImage(src: string | null | undefined, fetchImpl: typeof fetch = fetch): Promise<RgbImage | null> {
   if (!src || isPlaceholderUrl(src) || src.includes("/api/mockup/") || src.includes("/api/preview")) return null;
   const bytes = await loadArtworkBytes(src, fetchImpl);
-  return bytes ? decodePng(bytes) : null;
+  return bytes ? decodeArtwork(bytes) : null;
 }
 
 /** True for this app's `/api/preview` gallery URLs. */
@@ -75,9 +108,16 @@ export function isPreviewUrl(url: string) {
 export async function renderArtworkPreview(previewUrl: string, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
   if (!isPreviewUrl(previewUrl)) return null;
   const src = new URL(previewUrl, "http://localhost").searchParams.get("src");
-  const image = await loadArtworkImage(src, fetchImpl);
+  if (!src || isPlaceholderUrl(src) || src.includes("/api/mockup/") || src.includes("/api/preview")) return null;
+  const bytes = await loadArtworkBytes(src, fetchImpl);
+  return bytes ? renderArtworkPreviewBytes(bytes) : null;
+}
+
+export async function renderArtworkPreviewBytes(bytes: Buffer): Promise<Buffer | null> {
+  const info = await inspectArtwork(bytes);
+  if (!info) return null;
+  const edge = Math.min(PREVIEW_LONG_EDGE, Math.max(1, Math.round(Math.max(info.width, info.height) * 0.6)));
+  const image = await decodeArtwork(bytes, edge);
   if (!image) return null;
-  const long = Math.max(image.width, image.height);
-  const edge = Math.min(PREVIEW_LONG_EDGE, Math.max(1, Math.round(long * 0.6)));
   return encodeRgbPng(shrinkToLongEdge(image, edge));
 }
