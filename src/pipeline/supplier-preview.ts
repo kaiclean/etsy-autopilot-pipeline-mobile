@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import type { DB } from "@/db";
 import { designs, listings, type Listing, type ValidationIssue } from "@/db/schema";
@@ -13,6 +13,16 @@ export { WAITING_FOR_PRINTIFY_MOCKUPS };
 
 function absoluteUrl(url: string) {
   return new URL(url, `${publicAppUrl()}/`).toString();
+}
+
+function snapshotWhere(listing: Listing) {
+  return and(
+    eq(listings.id, listing.id),
+    eq(listings.status, listing.status),
+    eq(listings.updatedAt, listing.updatedAt),
+    eq(listings.publishAttemptCount, listing.publishAttemptCount),
+    listing.publishAttemptedAt ? eq(listings.publishAttemptedAt, listing.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
+  );
 }
 
 function fixedSupplierError(error: unknown): ValidationIssue | undefined {
@@ -41,6 +51,7 @@ export async function refreshSupplierDescription(db: DB, listing: Listing): Prom
   if (!preset || (listing.supplier && listing.supplier !== "printify")) return unavailable;
   try {
     const adapter = await getPrintifyAdapter({ db, intent: "read" });
+    if (!listing.isDemo && adapter.mode !== "live") return unavailable;
     if (adapter.mode === "dry-run" && listing.printifyProductId && !listing.printifyProductId.startsWith("dry-")) return unavailable;
     const providerDetails = await adapter.getProviderDetails?.(preset);
     if (!validProviderDetails(providerDetails)) return unavailable;
@@ -54,10 +65,11 @@ export async function refreshSupplierDescription(db: DB, listing: Listing): Prom
     };
     const [saved] = await db.update(listings).set({
       description, copyProvenance,
-      validation: listing.validation.filter((issue) => issue.code !== "supplier_preview_error"),
+      validation: listing.validation.filter((issue) => issue.code !== "supplier_preview_error" && issue.code !== "missing_provider_timings"),
       updatedAt: new Date(),
     })
-      .where(eq(listings.id, listing.id)).returning();
+      .where(snapshotWhere(listing)).returning();
+    if (!saved) return unavailable;
     return { ...saved, title: listing.title, tags: listing.tags, priceChf: listing.priceChf };
   } catch (error) {
     const fixed = fixedSupplierError(error);
@@ -108,7 +120,8 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
         podBlueprintId: result.blueprintId ?? listing.podBlueprintId,
         podPrintProviderId: result.printProviderId ?? listing.podPrintProviderId,
         publishMode: adapter.mode, updatedAt: new Date(),
-      }).where(eq(listings.id, listing.id)).returning();
+      }).where(snapshotWhere(current)).returning();
+      if (!saved) return { ready: false, listing: current, error: "Listing changed during supplier preparation. Retry review." };
       current = { ...saved, title: listing.title, description: listing.description, tags: listing.tags, priceChf: listing.priceChf };
     }
     const images = await adapter.getProductImages?.(productId) ?? [];
@@ -130,7 +143,8 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
       validation: ready ? validation : [...validation, waiting],
       ...(!ready ? { status: "pending_approval" as const, approvedAt: null } : {}),
       updatedAt: new Date(),
-    }).where(eq(listings.id, listing.id)).returning();
+    }).where(snapshotWhere(current)).returning();
+    if (!saved) return { ready: false, listing: current, error: "Listing changed during supplier preparation. Retry review." };
     return { ready, listing: saved, error: ready ? undefined : WAITING_FOR_PRINTIFY_MOCKUPS };
   } catch (error) {
     const failure = fixedSupplierError(error) ?? waiting;
@@ -138,7 +152,7 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
       status: "pending_approval", approvedAt: null,
       validation: [...current.validation.filter((issue) => issue.code !== waiting.code && issue.code !== "supplier_preview_error"), failure],
       updatedAt: new Date(),
-    }).where(eq(listings.id, listing.id)).returning();
-    return { ready: false, listing: saved, error: failure.message };
+    }).where(snapshotWhere(current)).returning();
+    return { ready: false, listing: saved ?? current, error: failure.message };
   }
 }

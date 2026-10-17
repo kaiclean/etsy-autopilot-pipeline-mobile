@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
 import { PrintifyDryRunAdapter } from "@/adapters/printify/dryrun";
@@ -6,6 +6,7 @@ import type { PrintifyAdapter } from "@/adapters/printify";
 import { listings, type Listing } from "@/db/schema";
 import { evaluateQualityGate, supplierMockupCount, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/lib/quality-gate";
 import { prepareSupplierPreview } from "@/pipeline/supplier-preview";
+import { runPublish } from "@/pipeline/publish";
 import { bulkSetListingStatus, setListingStatus, updateListing } from "@/app/actions";
 
 const mocks = vi.hoisted(() => ({
@@ -133,10 +134,10 @@ describe("supplier previews before approval", () => {
     mocks.mode = "dry-run";
     mocks.getProductImages.mockResolvedValue([1, 2, 3].map((n) => ({ src: `/api/mockup/posterA3?synthetic=printify&view=${n}` })));
     const row = await draft({ isDemo: false });
-    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: false, error: WAITING_FOR_PRINTIFY_MOCKUPS });
+    expect(await setListingStatus(row.id, "approved")).toMatchObject({ ok: false, error: expect.stringContaining("Verified production-provider") });
     const saved = await reload(row.id);
     expect(saved.status).toBe("pending_approval");
-    expect(saved.printifyProductId).toBe("dry-supplier-product");
+    expect(saved.printifyProductId).toBeNull();
     expect(supplierMockupCount(saved)).toBe(0);
   });
 
@@ -226,10 +227,67 @@ describe("supplier previews before approval", () => {
     expect((await reload(row.id)).status).toBe("pending_approval");
   });
 
+  it("retries fresh missing timings and hydrates them before creation when the provider recovers", async () => {
+    const row = await draft();
+    mocks.getProviderDetails.mockRejectedValueOnce(new Error("provider facts pending"));
+    expect(await setListingStatus(row.id, "approved")).toMatchObject({ ok: false });
+    expect(mocks.createAndPublish).not.toHaveBeenCalled();
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
+    const saved = await reload(row.id);
+    expect(saved.status).toBe("approved");
+    expect(saved.validation.some((issue) => issue.code === "missing_provider_timings")).toBe(false);
+    expect(mocks.getProviderDetails.mock.invocationCallOrder[1]).toBeLessThan(mocks.createAndPublish.mock.invocationCallOrder[0]);
+  });
+
+  it("reuses the supplier product while sending edited copy through create-only synchronization", async () => {
+    const row = await draft();
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
+    await setListingStatus(row.id, "pending_approval");
+    const saved = await reload(row.id);
+    const title = "Alpine Mountain Poster";
+    const description = `${saved.description}\n\nA revised alpine composition.`;
+    expect(await updateListing(row.id, { title, description, tags: saved.tags, priceChf: saved.priceChf }, true)).toMatchObject({ ok: true });
+    expect(mocks.createAndPublish).toHaveBeenLastCalledWith(expect.objectContaining({
+      existingProductId: "supplier-product", title,
+      description: expect.stringContaining("A revised alpine composition."), publishToEtsy: false,
+    }));
+    expect((await reload(row.id)).printifyProductId).toBe("supplier-product");
+  });
+
   it("blocks the automatic quality path without three actual supplier views", async () => {
     const row = await draft();
     const input = { ...row, title: "Alpine Poster", podProvider: "printify:posterA3", priceChf: 24.9 };
     expect(evaluateQualityGate(input).reasons).toContainEqual(expect.objectContaining({ code: "supplier_mockups_pending", message: WAITING_FOR_PRINTIFY_MOCKUPS }));
     expect(supplierMockupCount({ gallery: row.gallery })).toBe(0);
+  });
+
+  it.each(["rejected", "publishing"] as const)("preserves a concurrent %s transition during provider timing lookup", async (status) => {
+    await db.update(listings).set({ status: "rejected" }).where(inArray(listings.status, ["approved", "failed"]));
+    const row = await draft({ status: "approved" });
+    mocks.getProviderDetails.mockImplementationOnce(async () => {
+      await db.update(listings).set({
+        status, updatedAt: new Date(),
+        ...(status === "publishing" ? { publishAttemptCount: 1, publishAttemptedAt: new Date() } : {}),
+      }).where(eq(listings.id, row.id));
+      return { processingMin: 2, processingMax: 4, shippingMin: 3, shippingMax: 7 };
+    });
+    await runPublish({ db, shopId: row.shopId, now: new Date(), demo: true, trigger: "manual", random: () => 0.5, log: vi.fn() });
+    const saved = await reload(row.id);
+    expect(saved.status).toBe(status);
+    expect(saved.publishAttemptCount).toBe(status === "publishing" ? 1 : 0);
+    expect(mocks.createAndPublish).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a rejected listing during supplier image polling", async () => {
+    const row = await draft();
+    mocks.getProductImages.mockImplementationOnce(async () => {
+      await db.update(listings).set({ status: "rejected", updatedAt: new Date() }).where(eq(listings.id, row.id));
+      return images(3);
+    });
+    const result = await prepareSupplierPreview(db, row);
+    expect(result.ready).toBe(false);
+    const saved = await reload(row.id);
+    expect(saved.status).toBe("rejected");
+    expect(saved.printifyProductId).toBe("supplier-product");
   });
 });

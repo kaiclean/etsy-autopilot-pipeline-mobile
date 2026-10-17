@@ -12,6 +12,7 @@ import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
 import { absoluteUrl, podPreset } from "./publish";
 import { refreshSupplierDescription, validateSupplierApproval } from "./supplier-preview";
+import { MIN_SUPPLIER_MOCKUPS, supplierMockupCount, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/lib/quality-gate";
 
 async function designProvider(db: DB, designId: number | null) {
   if (!designId) return null;
@@ -146,6 +147,10 @@ export async function recordPodSample(
 export async function publishPodListingToEtsy(db: DB, listingId: number, now = new Date()) {
   let [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "pod") return { ok: false as const, error: "Not a print-on-demand listing" };
+  if (l.status !== "approved" && l.status !== "pod_created" && l.status !== "publishing") {
+    return { ok: false as const, error: "Approve this listing before publishing to Etsy." };
+  }
+  if (supplierMockupCount(l) < MIN_SUPPLIER_MOCKUPS) return { ok: false as const, error: WAITING_FOR_PRINTIFY_MOCKUPS };
   const [sample] =
     l.podBlueprintId && l.podPrintProviderId
       ? await db
@@ -169,6 +174,13 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
       check.issues.find((issue) => issue.severity === "error")?.message ?? "Invalid listing" };
   }
   const printify = await getPrintifyAdapter({ db });
+  if (printify.mode === "live" && (l.isDemo || l.printifyProductId?.startsWith("dry-") ||
+    supplierMockupCount({ ...l, publishMode: "live" }) < MIN_SUPPLIER_MOCKUPS)) {
+    return { ok: false as const, error: "Synthetic demo previews cannot publish to live Etsy." };
+  }
+  if (printify.mode === "dry-run" && l.printifyProductId && !l.printifyProductId.startsWith("dry-")) {
+    return { ok: false as const, error: "Live supplier products require live publish mode." };
+  }
   const result = await printify.createAndPublish({
     title: l.title,
     description: l.description,

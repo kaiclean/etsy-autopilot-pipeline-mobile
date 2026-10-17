@@ -2,8 +2,8 @@ import type { ProductType, ValidationIssue } from "@/db/schema";
 import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
-import { POD_PRESETS, type PodPreset } from "@/lib/fees";
-import { PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
+import { isPodPreset, POD_PRESETS, type PodPreset } from "@/lib/fees";
+import { PRINT_TARGETS } from "@/lib/print-targets";
 import type { ArtworkGalleryView } from "@/pipeline/mockup";
 
 export const WAITING_FOR_PRINTIFY_MOCKUPS = "Waiting for Printify mockups";
@@ -64,7 +64,7 @@ export type QualityGateInput = {
 
 export function podPresetFromProvider(provider: string | null | undefined): PodPreset | null {
   const name = provider?.startsWith("printify:") ? provider.slice("printify:".length) : provider ?? "";
-  if (name === "posterA3" || name === "mug" || name === "tshirt" || name === "sweatshirt") return name;
+  if (isPodPreset(name)) return name;
   return null;
 }
 
@@ -182,10 +182,16 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
   if (artChecked) {
     const width = input.printWidth ?? 0;
     const height = input.printHeight ?? 0;
-    if (preset === "posterA3" && (Math.min(width, height) < PRINT_WIDTH || Math.max(width, height) < PRINT_HEIGHT)) {
+    const target = preset ? PRINT_TARGETS[preset] : null;
+    const meetsMinimum = target && (preset === "posterA3"
+      ? Math.min(width, height) >= target.width && Math.max(width, height) >= target.height
+      : width >= target.width && height >= target.height);
+    if (preset && target && !meetsMinimum) {
       const size = width && height ? `${width}×${height}px` : "an unknown size";
       reasons.push(
-        issue("image", "low_res_art", `Print file is ${size}. Print files need at least ${PRINT_WIDTH}×${PRINT_HEIGHT}px for an A3 poster at 300 dpi.`),
+        issue("image", "low_res_art", preset === "posterA3"
+          ? `Print file is ${size}. Print files need at least ${target.width}×${target.height}px for an A3 poster at 300 dpi.`
+          : `Print file is ${size}. ${POD_PRESETS[preset].label} artwork needs at least ${target.width}×${target.height}px in this orientation (no upscaling).`),
       );
     }
     if (input.colorVariance != null && input.colorVariance < MIN_COLOR_STDDEV) {

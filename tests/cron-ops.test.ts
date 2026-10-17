@@ -14,7 +14,8 @@ import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { costs, events, jobRuns, listings, shops, type Listing } from "@/db/schema";
 import { buildCockpitAlerts } from "@/lib/alerts";
-import { withDisclosures } from "@/lib/disclosures";
+import { appendProviderDetails, withDisclosures } from "@/lib/disclosures";
+import { digitalFileBlurb, measuredDigitalDeliverable } from "@/lib/delivery";
 import { draftListing } from "@/pipeline/listing";
 import { AMBIGUOUS_PUBLISH_ERROR, PUBLISH_RETRY_MS, PUBLISH_STALE_MS, publishRetryBlocked, runPublish } from "@/pipeline/publish";
 import { asStageResult, type StageContext } from "@/pipeline/types";
@@ -36,6 +37,10 @@ const TAGS = [
   "scandi wall art", "switzerland gift", "hiking gift", "cabin decor", "matterhorn",
   "travel poster", "gallery wall", "neutral wall art",
 ];
+const PROVIDER_DETAILS = { processingMin: 2, processingMax: 4, shippingMin: 3, shippingMax: 7 };
+const podGallery = (source: "supplier" | "synthetic") => Array.from({ length: 3 }, (_, index) => ({
+  url: `https://supplier.example/mockup-${index}.png`, role: "product-mockup" as const, source, label: `Fixture mockup ${index + 1}`,
+}));
 
 async function memoryDb() {
   const client = new PGlite("memory://");
@@ -119,16 +124,18 @@ describe("publish retry and dashboard", () => {
     process.env.PRINTIFY_API_TOKEN = token;
     const db = await memoryDb();
     const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
-    const description = withDisclosures(
+    const description = appendProviderDetails(withDisclosures(
       "Bring the calm of the Swiss Alps into your home with this minimalist printable. One PNG for personal printing at home or at a local print shop.",
       "pod",
-    );
+    ), PROVIDER_DETAILS);
     const draft = {
       title: "Swiss Alps Wall Art Printable, Minimalist Mountain Poster, Alpine Decor",
       tags: TAGS,
       description,
       priceChf: 24.9,
       productType: "pod" as const,
+      podProvider: "printify:posterA3",
+      copyProvenance: { version: 1 as const, provider: "fixture", inputSha256: "a".repeat(64), providerDetails: PROVIDER_DETAILS },
     };
     expect(validateListing(draft).valid).toBe(true);
     const [row] = await db
@@ -136,8 +143,9 @@ describe("publish retry and dashboard", () => {
       .values({
         shopId: shop.id,
         niche: "alpine",
-        podProvider: "printify:posterA3",
         ...draft,
+        gallery: podGallery("supplier"),
+        publishMode: "live",
         imageUrl: "/api/mockup/posterA3?niche=alpine",
         priceChf: 24.9,
         podCostChf: 8,
@@ -153,7 +161,7 @@ describe("publish retry and dashboard", () => {
       throw new Error(`Printify rejected ${token} Bearer ${token}`);
     });
     adapters.getEtsyAdapter.mockResolvedValue({ mode: "live" });
-    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "live", createAndPublish });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "live", createAndPublish, getProviderDetails: async () => PROVIDER_DETAILS });
     const errors: string[] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((msg) => {
       errors.push(String(msg));
@@ -224,6 +232,7 @@ describe("publish retry and dashboard", () => {
         tags: TAGS,
         description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
         imageUrl: "/api/mockup/posterA3?niche=alpine",
+        gallery: podGallery("synthetic"), publishMode: "dry-run",
         priceChf: 24.9,
         podCostChf: 8,
         netChf: 5,
@@ -262,6 +271,7 @@ describe("publish retry and dashboard", () => {
       tags: TAGS,
       description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
       imageUrl: "/api/mockup/posterA3?niche=alpine",
+      gallery: podGallery("synthetic"), publishMode: "dry-run",
       priceChf: 24.9,
       netChf: 5,
       marginPct: 20,
@@ -286,7 +296,7 @@ describe("publish retry and dashboard", () => {
       return { productId: "dry-late-product" };
     });
     adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
-    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish, getProviderDetails: async () => PROVIDER_DETAILS });
 
     const result = asStageResult(await runPublish(ctx));
     const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
@@ -307,10 +317,12 @@ describe("publish retry and dashboard", () => {
       shopId: shop.id,
       niche: "alpine" as const,
       productType: "pod" as const,
+      podProvider: "printify:posterA3",
       title: "Swiss Alps wall art poster",
       tags: TAGS,
       description: withDisclosures("Swiss alpine poster artwork for a calm home.", "pod"),
       imageUrl: "/api/mockup/posterA3?niche=alpine",
+      gallery: podGallery("synthetic"), publishMode: "dry-run" as const,
       priceChf: 24.9,
       netChf: 5,
       marginPct: 20,
@@ -323,7 +335,7 @@ describe("publish retry and dashboard", () => {
     const [row] = await db.insert(listings).values({ ...draft, status: "approved" }).returning();
     const createAndPublish = vi.fn(async () => ({ productId: "dry-new-product" }));
     adapters.getEtsyAdapter.mockResolvedValue({ mode: "dry-run" });
-    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish });
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish, getProviderDetails: async () => PROVIDER_DETAILS });
 
     const result = asStageResult(await runPublish({
       db, shopId: shop.id, demo: true, trigger: "cron", random: () => 0,
@@ -342,9 +354,9 @@ describe("publish retry and dashboard", () => {
     const [row] = await db.insert(listings).values({
       shopId: shop.id, niche: "alpine", productType: "digital",
       title: "Swiss Alps wall art printable poster", tags: TAGS,
-      description: withDisclosures("Swiss alpine printable artwork for a calm home.", "digital"),
+      description: withDisclosures(digitalFileBlurb("png", measuredDigitalDeliverable("png", { width: 3000, height: 4000 })), "digital"),
       imageUrl: "/api/preview/alpine", deliveryUrl: "/api/artwork/alpine",
-      fileManifest: { delivery: { filename: "art.png", width: 3000, height: 4000, bytes: 1000, sha256: "a".repeat(64) } },
+      fileManifest: { delivery: { filename: "art.png", width: 3000, height: 4000, bytes: 1000, sha256: "a".repeat(64), format: "png" } },
       priceChf: 8.9, netChf: 5, marginPct: 56, status: "approved", isDemo: true,
     }).returning();
     const uploadListingImage = vi.fn();

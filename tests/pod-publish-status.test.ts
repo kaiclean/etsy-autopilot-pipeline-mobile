@@ -85,11 +85,17 @@ describe("publish stage POD status", () => {
         marginPct: src.marginPct,
         validation: src.validation,
         status: "pod_created",
+        gallery: [1, 2, 3].map((n) => ({
+          url: productId.startsWith("dry-") ? `/api/mockup/posterA3?synthetic=true&view=${n}` : `https://images.printify.example/ready-${n}.png`,
+          role: "product-mockup" as const, source: productId.startsWith("dry-") ? "synthetic" as const : "supplier" as const,
+          label: productId.startsWith("dry-") ? "Synthetic demo" : "Supplier mockup",
+        })),
         etsyListingId: null,
         printifyProductId: productId,
         podBlueprintId: 42,
         podPrintProviderId: 7,
-        isDemo: false,
+        isDemo: productId.startsWith("dry-"),
+        publishMode: productId.startsWith("dry-") ? "dry-run" : "live",
       })
       .returning();
     await recordPodSample(db, { blueprintId: 42, providerId: 7, actor: "test", note: "sample" });
@@ -148,6 +154,7 @@ describe("publish stage POD status", () => {
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });
+
     const result = await publishPodListingToEtsy(db, row.id, now);
     expect(result).toEqual({ ok: true, status: "publishing", etsyListingId: null });
     expect(createAndPublish).toHaveBeenCalledWith(expect.objectContaining({ publishToEtsy: true, existingProductId: "pfy-human-wait" }));
@@ -164,6 +171,46 @@ describe("publish stage POD status", () => {
     expect(after.podPublishedAt).toEqual(now);
     expect(after.publishedAt).toBeNull();
     expect((await db.select().from(costs)).length).toBe(before);
+  });
+
+  it.each(["pending_approval", "rejected"] as const)("never publishes a %s product even when an ID and sample exist", async (status) => {
+    const row = await createdPod(`pfy-held-${status}`);
+    await db.update(listings).set({ status }).where(eq(listings.id, row.id));
+    const createAndPublish = vi.fn();
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "live", createAndPublish });
+    expect(await publishPodListingToEtsy(db, row.id)).toMatchObject({ ok: false, error: expect.stringContaining("Approve") });
+    expect(createAndPublish).not.toHaveBeenCalled();
+  });
+
+  it("requires three unique supplier proofs even for an approved product with an approved sample", async () => {
+    const row = await createdPod("pfy-missing-proofs");
+    await db.update(listings).set({ status: "approved", gallery: row.gallery.slice(0, 2) }).where(eq(listings.id, row.id));
+    const createAndPublish = vi.fn();
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "live", createAndPublish });
+    expect(await publishPodListingToEtsy(db, row.id)).toEqual({ ok: false, error: "Waiting for Printify mockups" });
+    expect(createAndPublish).not.toHaveBeenCalled();
+    await db.update(listings).set({ status: "pending_approval" }).where(eq(listings.id, row.id));
+  });
+
+  it("preserves an unpublished publishing retry with complete supplier proofs", async () => {
+    const row = await createdPod("pfy-publishing-retry");
+    await db.update(listings).set({ status: "publishing" }).where(eq(listings.id, row.id));
+    const createAndPublish = vi.fn(async () => ({ productId: row.printifyProductId!, blueprintId: 42, printProviderId: 7 }));
+    adapters.getPrintifyAdapter.mockResolvedValue({
+      mode: "live", createAndPublish, getProviderDetails: vi.fn(async () => providerDetails),
+    });
+    expect(await publishPodListingToEtsy(db, row.id)).toMatchObject({ ok: true, status: "publishing" });
+    expect(createAndPublish).toHaveBeenCalledWith(expect.objectContaining({ publishToEtsy: true, existingProductId: row.printifyProductId }));
+  });
+
+  it("does not send a demo product or synthetic proofs to live Etsy", async () => {
+    const row = await createdPod("dry-pfy-never-live");
+    const createAndPublish = vi.fn();
+    adapters.getPrintifyAdapter.mockResolvedValue({
+      mode: "live", createAndPublish, getProviderDetails: vi.fn(async () => providerDetails),
+    });
+    expect(await publishPodListingToEtsy(db, row.id)).toMatchObject({ ok: false, error: expect.stringContaining("Synthetic demo") });
+    expect(createAndPublish).not.toHaveBeenCalled();
   });
 
   it("human publish with an external Etsy id is published", async () => {

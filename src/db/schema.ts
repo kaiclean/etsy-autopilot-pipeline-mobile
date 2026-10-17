@@ -33,6 +33,7 @@ export type ListingStatus =
 /** Recorded bytes for the file a digital buyer downloads, plus the smaller gallery preview. */
 export type DeliveryFileRecord = {
   filename: string;
+  format?: "png" | "jpeg" | "webp";
   width: number;
   height: number;
   bytes: number;
