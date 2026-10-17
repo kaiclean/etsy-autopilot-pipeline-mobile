@@ -6,15 +6,15 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { describe, expect, it } from "vitest";
 import * as schema from "@/db/schema";
 
-describe("optional marketplace listing storage", () => {
-  it("stays unjournaled, applies idempotently, and enforces listing references and marketplace uniqueness", async () => {
+describe("marketplace listing storage", () => {
+  it("auto-migrates idempotently and enforces listing references and marketplace uniqueness", async () => {
     const client = new PGlite("memory://");
     try {
       const db = drizzle(client, { schema });
       const migrationsFolder = path.join(process.cwd(), "drizzle");
       await migrate(db, { migrationsFolder });
       expect((await client.query("SELECT to_regclass('public.marketplace_listings') AS table_name")).rows)
-        .toEqual([{ table_name: null }]);
+        .toEqual([{ table_name: "marketplace_listings" }]);
       const sql = await readFile(path.join(migrationsFolder, "0017_marketplace_listings.sql"), "utf8");
       await client.exec(sql);
       await client.exec(sql);

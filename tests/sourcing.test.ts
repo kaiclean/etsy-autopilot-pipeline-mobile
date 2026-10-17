@@ -128,12 +128,18 @@ function supplierFixture(): Supplier {
 }
 
 describe("sourcing persistence and dry-run order decisions", () => {
-  it("does not auto-run manual migration and preserves estimates until it is applied", async () => withDb(async (db, client) => {
-    expect(await sourcingAvailable(db)).toBe(false);
+  it("auto-runs the sourcing migration idempotently and preserves estimates without quotes", async () => withDb(async (db, client) => {
+    expect(await sourcingAvailable(db)).toBe(true);
     expect((await sourcedListingCosts(db, ["mug"], now)).estimates.mug).toBe(true);
     await applySourcing(client);
     await applySourcing(client);
     expect(await sourcingAvailable(db)).toBe(true);
+  }));
+
+  it("preserves estimates when the sourcing schema is unavailable", async () => withDb(async (db, client) => {
+    await client.exec("ALTER TABLE orders DROP COLUMN sourcing_recheck");
+    expect(await sourcingAvailable(db)).toBe(false);
+    expect((await sourcedListingCosts(db, ["mug"], now)).estimates.mug).toBe(true);
   }));
 
   it("caches fresh quotes, refreshes expired quotes, retains current choice with alert on no candidates", async () => withDb(async (db, client) => {

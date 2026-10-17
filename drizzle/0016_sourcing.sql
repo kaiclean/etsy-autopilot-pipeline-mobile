@@ -13,8 +13,11 @@ CREATE TABLE IF NOT EXISTS supplier_quotes (
   source_url text,
   fetched_at timestamptz NOT NULL
 );
+--> statement-breakpoint
 ALTER TABLE supplier_quotes ADD COLUMN IF NOT EXISTS destination_country text;
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS supplier_quotes_lookup ON supplier_quotes (preset, region, fetched_at DESC);
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS sourcing_choices (
   id serial PRIMARY KEY,
   preset text NOT NULL,
@@ -27,4 +30,5 @@ CREATE TABLE IF NOT EXISTS sourcing_choices (
   chosen_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (preset, region)
 );
+--> statement-breakpoint
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS sourcing_recheck jsonb;

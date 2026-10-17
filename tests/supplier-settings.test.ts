@@ -344,7 +344,13 @@ describe("0014 additive supplier migration", () => {
       ]);
       const db = drizzle(client, { schema });
       await db.update(schema.listings).set({ supplier: "gelato", supplierProductId: "fixture-created-id" }).where(eq(schema.listings.id, Number(after.id)));
-      const [stored] = await db.select().from(schema.listings);
+      const [stored] = await db.select({
+        supplier: schema.listings.supplier,
+        supplierProductId: schema.listings.supplierProductId,
+        printifyProductId: schema.listings.printifyProductId,
+        status: schema.listings.status,
+        publishMode: schema.listings.publishMode,
+      }).from(schema.listings);
       expect(stored).toMatchObject({ supplier: "gelato", supplierProductId: "fixture-created-id", printifyProductId: "existing-printify-id", status: "pod_created", publishMode: "dry-run" });
     } finally {
       await client.close();
