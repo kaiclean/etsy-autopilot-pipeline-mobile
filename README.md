@@ -190,6 +190,8 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 
 ---
 
+The Railway daily cron uses `GET /api/cron/daily?async=1` to return a persisted run ID immediately, then polls `GET /api/cron/daily?runId=<id>`. Both requests require the usual cron authorization. This avoids holding one HTTP request open past Railway's five-minute timeout while research, image generation, and listing finish. GitHub Actions waits up to 30 minutes and fails on a failed run, polling error, or timeout. Deploy the updated application before using the updated workflow. Background work runs in the self-hosted Next.js process; a restart interrupts it and the workflow times out rather than reporting success.
+
 ## Getting API credentials
 
 ### Etsy Open API v3

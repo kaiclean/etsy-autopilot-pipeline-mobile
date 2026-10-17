@@ -446,6 +446,30 @@ describe("daily chain force", () => {
     else process.env.RESEARCH_GOOGLE_TRENDS = trends;
   });
 
+  it("persists a deferred daily run and reuses it beyond the HTTP timeout", async () => {
+    const db = await memoryDb();
+    const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
+    let execute: (() => ReturnType<typeof runStage>) | undefined;
+    const defer = vi.fn((work: () => ReturnType<typeof runStage>) => { execute = work; });
+    const run = await runStage("daily", "cron", { db, defer });
+    expect(run.status).toBe("running");
+    expect(defer).toHaveBeenCalledOnce();
+    await db.update(jobRuns).set({ startedAt: new Date(Date.now() - 10 * 60_000) }).where(eq(jobRuns.id, run.id));
+    const duplicate = await runStage("daily", "cron", { db, defer });
+    expect(duplicate.id).toBe(run.id);
+    expect(defer).toHaveBeenCalledOnce();
+    await db.insert(jobRuns).values({
+      shopId: shop.id, stage: "daily", status: "success", trigger: "cron",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+    const done = await execute!();
+    expect(done.id).toBe(run.id);
+    expect(done.status).toBe("success");
+    const [stored] = await db.select().from(jobRuns).where(eq(jobRuns.id, run.id));
+    expect(stored.status).toBe("success");
+    expect(stored.finishedAt).not.toBeNull();
+  });
+
   it("?force=1 bypasses a success already recorded today", async () => {
     process.env.RESEARCH_GOOGLE_TRENDS = "false";
     const db = await memoryDb();
@@ -479,6 +503,11 @@ describe("daily chain force", () => {
     expect(yaml).toContain("?force=1");
     expect(yaml).toContain('"${url}/api/cron/daily${query}"');
     expect(yaml).toContain("FORCE: ${{ inputs.force }}");
+    expect(yaml).toContain('query="?async=1"');
+    expect(yaml).toContain('query="${query}&async=1"');
+    expect(yaml).toContain('/api/cron/daily?runId=${id}');
+    expect(yaml).toContain("--fail-with-body");
+    expect(yaml).toContain("deadline=$((SECONDS + 1800))");
     expect(yaml).not.toMatch(/Bearer [A-Za-z0-9+/=]{8,}/);
   });
 });

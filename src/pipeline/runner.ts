@@ -81,7 +81,13 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean };
+export type RunOptions = {
+  db?: DB;
+  random?: () => number;
+  now?: Date;
+  force?: boolean;
+  defer?: (execute: () => Promise<JobRun>) => void;
+};
 
 async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string, demo: boolean) {
   const [run] = await db
@@ -106,10 +112,10 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
   if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused", shop.id, demo);
 
   const [running] = await db
-    .select({ id: jobRuns.id })
+    .select()
     .from(jobRuns)
-    .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
-  if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
+    .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - (stage === "daily" ? 30 : 5) * 60_000))));
+  if (running) return opts.defer ? running : recordSkip(db, stage, trigger, "Already running", shop.id, demo);
 
   const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();
   const logs: LogLine[] = [];
@@ -137,28 +143,35 @@ export async function runStage(stage: StageName, trigger: StageContext["trigger"
       ctx.log(`maintenance failed: ${message.slice(0, 200)}`, "error");
     }
   };
-  try {
-    const result = asStageResult(await STAGE_FNS[stage](ctx));
-    await afterOrders();
-    const [done] = await db
-      .update(jobRuns)
-      .set({ status: result.status, summary: result.summary, logs, finishedAt: new Date() })
-      .where(eq(jobRuns.id, run.id))
-      .returning();
-    await emitStageOutcome(db, demo, trigger, label, result.status, formatMaintenanceSummary(result.summary));
-    return done;
-  } catch (e) {
-    const msg = writeStageLog(stage, "error", (e as Error).message);
-    logs.push({ t: new Date().toISOString(), level: "error", msg });
-    await afterOrders();
-    const [done] = await db
-      .update(jobRuns)
-      .set({ status: "failed", summary: msg, logs, finishedAt: new Date() })
-      .where(eq(jobRuns.id, run.id))
-      .returning();
-    await emitStageOutcome(db, demo, trigger, label, "failed", msg);
-    return done;
+  const execute = async () => {
+    try {
+      const result = asStageResult(await STAGE_FNS[stage](ctx));
+      await afterOrders();
+      const [done] = await db
+        .update(jobRuns)
+        .set({ status: result.status, summary: result.summary, logs, finishedAt: new Date() })
+        .where(eq(jobRuns.id, run.id))
+        .returning();
+      await emitStageOutcome(db, demo, trigger, label, result.status, formatMaintenanceSummary(result.summary));
+      return done;
+    } catch (e) {
+      const msg = writeStageLog(stage, "error", (e as Error).message);
+      logs.push({ t: new Date().toISOString(), level: "error", msg });
+      await afterOrders();
+      const [done] = await db
+        .update(jobRuns)
+        .set({ status: "failed", summary: msg, logs, finishedAt: new Date() })
+        .where(eq(jobRuns.id, run.id))
+        .returning();
+      await emitStageOutcome(db, demo, trigger, label, "failed", msg);
+      return done;
+    }
+  };
+  if (opts.defer) {
+    opts.defer(execute);
+    return run;
   }
+  return execute();
 }
 
 /** One credits push per run. A nested chain stage stays quiet so the cron parent is the push. */

@@ -227,6 +227,7 @@ jobs:
   daily:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'daily' || github.event.schedule == '20 5 * * *' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - name: Run daily chain
         env:
@@ -245,7 +246,28 @@ jobs:
           if [ "${FORCE:-}" = "true" ]; then
             query="?force=1"
           fi
-          curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/daily${query}"
+          if [ -n "${query}" ]; then
+            query="${query}&async=1"
+          else
+            query="?async=1"
+          fi
+          response=$(curl --fail-with-body -sS --max-time 60 -H "$(printf 'Authorization: %s %s' 'Bearer' "${CRON_SECRET}")" "${url}/api/cron/daily${query}")
+          id=$(jq -er '.id | select(type == "number" and . > 0)' <<< "${response}")
+          deadline=$((SECONDS + 1800))
+          while ((SECONDS < deadline)); do
+            status=$(jq -er '.status' <<< "${response}")
+            case "${status}" in
+              success|warning|skipped) printf '%s\n' "${response}"; exit 0 ;;
+              running) sleep 10 ;;
+              *) printf '%s\n' "${response}"; exit 1 ;;
+            esac
+            response=$(curl --fail-with-body -sS --max-time 60 -H "$(printf 'Authorization: %s %s' 'Bearer' "${CRON_SECRET}")" "${url}/api/cron/daily?runId=${id}") || {
+              printf '%s\n' "${response}"
+              exit 1
+            }
+          done
+          echo "Daily run ${id} did not finish within the polling window."
+          exit 1
 
   health:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'health' || github.event.schedule == '0 9 * * 1' }}
