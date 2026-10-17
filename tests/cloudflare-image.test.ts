@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CloudflareImageProvider, CLOUDFLARE_IMAGE_MODEL } from "@/adapters/image/cloudflare";
+import { CloudflareImageProvider, CLOUDFLARE_IMAGE_MODEL, CLOUDFLARE_PRINT_IMAGE_MODEL } from "@/adapters/image/cloudflare";
 import { getImageProvider } from "@/adapters/image";
 import { RunPodImageProvider } from "@/adapters/image/runpod";
 import { withStoredUrl } from "@/lib/object-storage";
@@ -46,6 +46,29 @@ describe("Cloudflare images", () => {
       }),
     );
     expect(withStoredUrl).toHaveBeenCalledWith({ url: "data:image/jpeg;base64,anBlZw==", costChf: 0, provider: "cloudflare" });
+  });
+
+  it("uses multipart dimensions for the opt-in FLUX.2 Klein print model", async () => {
+    vi.stubEnv("CLOUDFLARE_IMAGE_MODEL", CLOUDFLARE_PRINT_IMAGE_MODEL);
+    const imageBytes = Buffer.from("test-image");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toContain(CLOUDFLARE_PRINT_IMAGE_MODEL);
+      expect(init?.method).toBe("POST");
+      return new Response(imageBytes, { headers: { "Content-Type": "image/png" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new CloudflareImageProvider().generate({ ...request, width: 3000, height: 5000 })).resolves.toEqual(generated);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain(CLOUDFLARE_PRINT_IMAGE_MODEL);
+    expect((init?.body as FormData).get("prompt")).toBe(request.prompt);
+    expect((init?.body as FormData).get("width")).toBe("1920");
+    expect((init?.body as FormData).get("height")).toBe("1920");
+    expect(init?.headers).toEqual({ Authorization: "Bearer " + "test-cloudflare-token" });
+    expect(withStoredUrl).toHaveBeenCalledWith({
+      url: `data:image/png;base64,${imageBytes.toString("base64")}`,
+      costChf: 0,
+      provider: "cloudflare",
+    });
   });
 
   it.each(["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"])("requires %s before making a request", async (key) => {
