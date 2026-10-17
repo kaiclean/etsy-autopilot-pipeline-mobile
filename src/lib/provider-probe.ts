@@ -1,5 +1,7 @@
 import { config } from "@/lib/config";
 import { RunPodImageProvider } from "@/adapters/image/runpod";
+import { CloudflareImageProvider } from "@/adapters/image/cloudflare";
+import { ImageProviderHttpError, imageErrorDetail } from "@/adapters/image/errors";
 
 export type ProbeStatus = "ok" | "401" | "402" | "404" | "model not found" | "skipped" | "error";
 
@@ -114,9 +116,10 @@ async function probeText(): Promise<ProbeResult> {
 }
 
 async function probeImage(): Promise<ProbeResult> {
-  if (config.imageProvider === "runpod") {
+  if (config.imageProvider === "runpod" || config.imageProvider === "cloudflare") {
     try {
-      await new RunPodImageProvider().generate({
+      const provider = config.imageProvider === "cloudflare" ? new CloudflareImageProvider() : new RunPodImageProvider();
+      await provider.generate({
         prompt: "a small red square",
         niche: "alpine",
         seed: 1,
@@ -124,8 +127,9 @@ async function probeImage(): Promise<ProbeResult> {
       });
       return result("image", "ok", 200);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "RunPod image request failed";
-      return result("image", "error", undefined, message);
+      const message = imageErrorDetail(error instanceof Error ? error.message : "Image request failed");
+      const httpStatus = error instanceof ImageProviderHttpError ? error.status : undefined;
+      return result("image", httpStatus ? classifyProviderStatus(httpStatus, message) : "error", httpStatus, message);
     }
   }
   const target = imageTarget();
