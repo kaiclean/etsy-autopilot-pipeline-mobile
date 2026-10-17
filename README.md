@@ -71,6 +71,8 @@ src/
 
 Every stage is a plain async function `(ctx) => summary` that talks to adapters through interfaces. Stages can be triggered by Vercel Cron (`/api/cron/<stage>`), by the Run buttons (server actions), or by `POST /api/pipeline/<stage|all>/run`.
 
+On the long-running Railway/Node server, `/api/cron/daily` and `/api/cron/orders` return **202 Accepted** immediately and execute after the response. GitHub Actions treats 202 as success for accepting the request, not proof that the stages finished. Follow start/progress/outcome events in the activity log and persisted stage logs at `/pipeline/live`; orders still runs maintenance afterward. Concurrent daily or orders runs (including manual and `force=1` requests) are skipped for the full run duration within the server process, not just five minutes. This guard assumes one server process/replica; use a distributed lock before scaling replicas. Background work is not a durable queue: a server restart interrupts it, so inspect the logs and trigger a new run if needed. Serverless platforms still impose their own execution limits. Publish mode, prices, and ads are unchanged.
+
 | Stage | Real today | Mock / dry-run fallback |
 | --- | --- | --- |
 | Research | Seed list, local long-tail modifiers, and `KEYWORD_SEEDS`. Etsy search volume comes from an operator CSV, or `ETSY_DEMAND_SOURCE=fixture` in demo mode only (no etsy.com scraping). `ETSY_API_COMPETITION=true` reads listing counts from Open API v3. Google Trends is tried for 5 keywords per run when no Etsy volume is present. | Seed scores when Trends is blocked and no export is configured |
