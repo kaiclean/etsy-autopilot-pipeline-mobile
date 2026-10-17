@@ -23,9 +23,16 @@ describe("research-to-listing promise filtering", () => {
     try {
       const db = drizzle(client, { schema }) as DB;
       await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      await db.insert(keywords).values({
+        phrase: "swiss travel poster set of 3",
+        niche: "alpine",
+        source: "legacy-test",
+        status: "selected",
+      });
       const research = await runStage("research", "manual", { db, random: () => 0.2 });
       expect(research.status).toBe("success");
-      expect(await db.select().from(keywords).where(eq(keywords.phrase, "swiss travel poster set of 3"))).toEqual([]);
+      expect(await db.select().from(keywords).where(eq(keywords.phrase, "swiss travel poster set of 3")))
+        .toMatchObject([{ status: "rejected" }]);
       const listing = await runStage("listing", "manual", { db });
       expect(listing.summary).toContain("No new designs");
       expect(await db.select().from(listings)).toEqual([]);

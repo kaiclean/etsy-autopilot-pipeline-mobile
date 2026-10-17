@@ -143,9 +143,7 @@ export function removeUndeliverablePromises(text: string, facts: DeliverableFact
   let cleaned = text;
   for (const rule of PROMISE_RULES) {
     if (!rule.pattern.test(cleaned)) continue;
-    const countViolation = ["set", "bundle", "pack", "package"].includes(rule.label) &&
-      promisedCounts(cleaned).some((count) => count > facts.fileCount);
-    if (rule.allowed(facts) && !countViolation) continue;
+    if (!promiseLabels(cleaned, facts).includes(rule.label)) continue;
     const pattern = rule.label === "set" || ["bundle", "pack", "package"].includes(rule.label)
       ? /\b(?:sets?|bundles?|packs?|packages?)(?:\s+of\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten))?\b/gi
       : new RegExp(rule.pattern.source, "gi");

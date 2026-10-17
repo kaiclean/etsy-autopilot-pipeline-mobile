@@ -111,6 +111,7 @@ export async function draftListing(opts: {
       productType: opts.product.type,
     });
   const facts = defaultDeliverable(opts.product.type, opts.deliveryFormat);
+  if (opts.product.type === "pod" && opts.product.pod === "ornament") facts.blank = "ornament";
   if (opts.deliveryPixels) {
     facts.dpi = 300;
     facts.sizes = [

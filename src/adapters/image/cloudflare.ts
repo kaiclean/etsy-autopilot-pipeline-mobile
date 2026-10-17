@@ -26,7 +26,9 @@ export class CloudflareImageProvider implements ImageProvider {
   async generate(req: ImageRequest): Promise<GeneratedImage> {
     const { accountId, apiToken } = config.cloudflare;
     const model = config.cloudflare.imageModel;
-    if (!/^@?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(model)) throw new Error("CLOUDFLARE_IMAGE_MODEL is invalid");
+    if (!/^@?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(model) || model.split("/").some((segment) => segment === "." || segment === "..")) {
+      throw new Error("CLOUDFLARE_IMAGE_MODEL is invalid");
+    }
     if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID missing");
     if (!apiToken) throw new Error("CLOUDFLARE_API_TOKEN missing");
     const signal = AbortSignal.timeout(30_000);
@@ -44,11 +46,12 @@ export class CloudflareImageProvider implements ImageProvider {
         },
       );
       if (!response.ok) throw new ImageProviderHttpError("Cloudflare", response.status, await response.text());
-      const contentType = response.headers?.get("content-type") ?? "";
-      if (contentType.startsWith("image/")) {
+      const contentType = response.headers?.get("content-type")?.split(";")[0]?.trim() ?? "";
+      if (contentType.startsWith("image/") || contentType === "application/octet-stream") {
         const image = Buffer.from(await response.arrayBuffer());
         if (!image.length) throw new Error("Cloudflare completed without an image");
-        return withStoredUrl({ url: `data:${contentType};base64,${image.toString("base64")}`, costChf: 0, provider: this.name });
+        const imageType = contentType === "application/octet-stream" ? "image/png" : contentType;
+        return withStoredUrl({ url: `data:${imageType};base64,${image.toString("base64")}`, costChf: 0, provider: this.name });
       }
       const body = await response.json() as { success?: boolean; result?: { image?: string }; errors?: unknown };
       if (body.success === false) throw new Error(`Cloudflare image generation failed: ${imageErrorDetail(JSON.stringify(body.errors ?? []))}`);

@@ -56,6 +56,16 @@ export const runResearch: StageFn = async (ctx) => {
   // A live run re-scores a seeded demo phrase as real research, so it can be selected.
   const claim = ctx.demo ? {} : { isDemo: false };
   const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
+  const unresolved = await db.select({ id: keywords.id, phrase: keywords.phrase }).from(keywords).where(and(
+    eq(keywords.shopId, ctx.shopId),
+    inArray(keywords.status, ["new", "selected"]),
+    liveOnly,
+  ));
+  for (const keyword of unresolved) {
+    if (!keywordHasUndeliverablePromise(keyword.phrase)) continue;
+    await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, keyword.id));
+    log(`Rejected existing keyword “${keyword.phrase}”: its file claim is not deliverable`, "warn");
+  }
   const rankedCandidates = preferMeasuredDemand(candidates);
   const existingKeywords = rankedCandidates.length
     ? await db

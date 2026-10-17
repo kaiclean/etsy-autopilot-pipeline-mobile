@@ -8,6 +8,7 @@ import { assessArtwork } from "@/lib/design-quality";
 import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import { productKeyword } from "@/lib/product-title";
 import { isPodPreset } from "@/lib/fees";
+import { keywordHasUndeliverablePromise } from "@/lib/delivery";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
@@ -132,6 +133,11 @@ export const runDesign: StageFn = async (ctx) => {
     if (release) log(`Returned “${kw.phrase}” to the backlog after ${next} provider failures`, "warn");
   };
   for (const kw of queue) {
+    if (keywordHasUndeliverablePromise(kw.phrase)) {
+      await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      log(`Skipped “${kw.phrase}”: the requested file claim is not deliverable`, "warn");
+      continue;
+    }
     if (isNichePaused(kw.niche)) {
       await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       log(`Skipped “${kw.phrase}”: ${NICHES[kw.niche].pausedReason}`, "warn");

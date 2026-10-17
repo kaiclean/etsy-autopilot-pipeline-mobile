@@ -105,7 +105,7 @@ describe("listing supplier selection", () => {
       }
       await runStage("listing", "manual", { db });
       const rows = await db.select().from(schema.listings);
-      expect(rows).toHaveLength(caseName === "default" ? 6 : caseName === "quoted" ? 3 : 2);
+      expect(rows).toHaveLength(caseName === "default" ? 5 : caseName === "quoted" ? 2 : 1);
       const pods = rows.filter((row) => row.productType === "pod");
       if (caseName === "default") {
         expect(pods.map((row) => row.podProvider)).toEqual(DEFAULT_POD_PRESETS.map((preset) => `printify:${preset}`));

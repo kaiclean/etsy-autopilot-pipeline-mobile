@@ -2,6 +2,7 @@ import { inArray, eq } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import type { DB } from "@/db";
 import { getDb } from "@/db";
+import { storageBackend } from "@/lib/config";
 import { designBriefs, designs, listings, type FileManifest } from "@/db/schema";
 import { defaultDeliverable, removeUndeliverablePromises } from "@/lib/delivery";
 import { evaluateQualityGate, podPresetFromProvider } from "@/lib/quality-gate";
@@ -9,7 +10,7 @@ import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
 import { buildFileManifest } from "@/lib/file-manifest";
 import { digitalMidPrice } from "@/lib/pricing-ladder";
 import { isPodPreset } from "@/lib/fees";
-import { PRINT_TARGETS, getPrintTarget, hasMinimumPixels, type PrintTargetKey } from "@/lib/print-targets";
+import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { upscaleArtwork } from "@/pipeline/upscale";
 
@@ -26,6 +27,7 @@ type ReprocessedListing = {
 
 export async function upscaleDesigns(db: DB, ids: number[], apply = false) {
   if (!ids.length || ids.some((id) => !Number.isInteger(id) || id < 1)) throw new Error("Provide one or more positive design IDs.");
+  if (apply && storageBackend() === "none") throw new Error("Object storage is required for --apply; preview remains read-only.");
   const rows = await db.select({ design: designs, brief: designBriefs }).from(designs)
     .leftJoin(designBriefs, eq(designs.keywordId, designBriefs.keywordId))
     .where(inArray(designs.id, ids));
@@ -69,15 +71,11 @@ export async function upscaleDesigns(db: DB, ids: number[], apply = false) {
         : listing.productType === "digital"
           ? PRINT_TARGETS.digital
           : design.printTarget ?? PRINT_TARGETS[listingTargetKey];
-      if (listingTargetKey === "digitalLarge" && (!hasMinimumPixels(outputPx.width, outputPx.height, listingTarget) || processed.upscaleMethod === "lanczos")) {
-        report.push({ id, listingId: listing.id, skipped: `Large digital rung requires an actual 6000px-long-edge file; measured ${outputPx.width}×${outputPx.height}px.` });
-        continue;
-      }
-
       const deliverable = defaultDeliverable(
         listing.productType,
         listing.productType === "digital" ? "png" : null,
       );
+      if (listing.productType === "pod" && productPreset === "ornament") deliverable.blank = "ornament";
       if (listing.productType === "digital") {
         deliverable.dpi = 300;
         deliverable.sizes = [`${(outputPx.width / 300).toFixed(1)}×${(outputPx.height / 300).toFixed(1)} in`];

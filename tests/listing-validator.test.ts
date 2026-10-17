@@ -111,6 +111,8 @@ describe("validateListing", () => {
   it("allows a numbered set only when that many files exist", () => {
     const twoFiles = { ...defaultDeliverable("digital"), fileCount: 2 };
     const threeFiles = { ...defaultDeliverable("digital"), fileCount: 3 };
+    const oneFile = defaultDeliverable("digital");
+    expect(promiseLabels("Single art set of 1", oneFile)).not.toContain("set");
     expect(promiseLabels("Swiss travel poster set of 3", twoFiles)).toContain("set");
     expect(promiseLabels("Swiss travel poster set of 3", threeFiles)).not.toContain("set");
     expect(promiseLabels("Three-file bundle of 3", twoFiles)).toContain("bundle");
