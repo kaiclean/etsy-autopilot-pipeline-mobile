@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const runner = vi.hoisted(() => ({ runStage: vi.fn() }));
+const background = vi.hoisted(() => ({ callbacks: [] as Array<() => Promise<void>> }));
 
 vi.mock("@/pipeline/runner", () => ({ runStage: runner.runStage }));
+vi.mock("next/server", async (importOriginal) => ({
+  ...await importOriginal<typeof import("next/server")>(),
+  after: (callback: () => Promise<void>) => background.callbacks.push(callback),
+}));
 
 import { GET } from "@/app/api/cron/[stage]/route";
 
@@ -17,8 +22,48 @@ function call(stage: string, search = "") {
 describe("cron stage route", () => {
   afterEach(() => {
     runner.runStage.mockReset();
+    background.callbacks.length = 0;
+    vi.restoreAllMocks();
     if (savedSecret === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = savedSecret;
+  });
+
+  it.each(["daily", "orders"])("accepts %s without waiting for stage execution", async (stage) => {
+    delete process.env.CRON_SECRET;
+    let finish!: () => void;
+    runner.runStage.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const res = await call(stage);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ stage, status: "accepted" });
+    expect(runner.runStage).not.toHaveBeenCalled();
+    expect(background.callbacks).toHaveLength(1);
+    const work = background.callbacks[0]();
+    expect(runner.runStage).toHaveBeenCalledWith(stage, "cron", { force: false });
+    finish();
+    await work;
+  });
+
+  it("handles unexpected background failures without an unhandled rejection", async () => {
+    delete process.env.CRON_SECRET;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    runner.runStage.mockRejectedValue(new Error("Could not start background run"));
+    expect((await call("daily")).status).toBe(202);
+    await expect(background.callbacks[0]()).resolves.toBeUndefined();
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("Could not start background run"));
+  });
+
+  it.each(["daily", "orders"])("does not schedule unauthorized %s work", async (stage) => {
+    process.env.CRON_SECRET = "unit-test-cron-secret";
+    expect((await call(stage)).status).toBe(401);
+    expect(background.callbacks).toHaveLength(0);
+    expect(runner.runStage).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule an unknown stage", async () => {
+    delete process.env.CRON_SECRET;
+    expect((await call("unknown")).status).toBe(404);
+    expect(background.callbacks).toHaveLength(0);
+    expect(runner.runStage).not.toHaveBeenCalled();
   });
 
   it("accepts the hot stage and preserves cron authorization", async () => {
@@ -75,7 +120,8 @@ describe("cron stage route", () => {
     delete process.env.CRON_SECRET;
     runner.runStage.mockResolvedValue({ status: "success", summary: "Daily chain finished" });
     const open = await call("daily", "?force=1");
-    expect(open.status).toBe(200);
+    expect(open.status).toBe(202);
+    await background.callbacks[0]();
     expect(runner.runStage).toHaveBeenCalledWith("daily", "cron", { force: true });
 
     process.env.CRON_SECRET = "unit-test-cron-secret";
@@ -89,7 +135,8 @@ describe("cron stage route", () => {
     const authed = await GET(new Request("http://localhost/api/cron/daily?force=1", { headers: { authorization: "Bearer unit-test-cron-secret" } }), {
       params: Promise.resolve({ stage: "daily" }),
     });
-    expect(authed.status).toBe(200);
+    expect(authed.status).toBe(202);
+    await background.callbacks[1]();
     expect(runner.runStage).toHaveBeenCalledWith("daily", "cron", { force: true });
   });
 });

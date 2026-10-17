@@ -182,7 +182,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'orders' || github.event.schedule == '0 8 * * *' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Run orders
+      # curl -f accepts HTTP 202; stage outcomes are tracked in the activity log.
+      - name: Start orders sync (HTTP 202 accepted)
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
@@ -200,6 +201,8 @@ jobs:
             query="?force=1"
           fi
           curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/orders${query}"
+
+          echo "Orders request accepted or completed. Follow progress and failures in /pipeline/live and the activity log."
 
   maintenance:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'maintenance' || github.event.schedule == '17 4 * * *' }}
@@ -228,7 +231,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'daily' || github.event.schedule == '20 5 * * *' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Run daily chain
+      # curl -f accepts HTTP 202; stage outcomes are tracked in the activity log.
+      - name: Start daily chain (HTTP 202 accepted)
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
@@ -246,6 +250,8 @@ jobs:
             query="?force=1"
           fi
           curl -fsS -H "Authorization: Bearer ${CRON_SECRET}" "${url}/api/cron/daily${query}"
+
+          echo "Daily request accepted or completed. Follow progress and failures in /pipeline/live and the activity log."
 
   health:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.stage == 'health' || github.event.schedule == '0 9 * * 1' }}
