@@ -202,6 +202,8 @@ async function listRung(
     productType: rung.product.type,
     podProvider,
     imageUrl: image.url,
+    gallery: image.gallery,
+    isDemo: ctx.demo,
     artworkUrl,
     printWidth: design.imageWidth,
     printHeight: design.imageHeight,
@@ -219,6 +221,10 @@ async function listRung(
   if (rung.costIsEstimate) {
     validation.push({ field: "price", code: "sourcing_estimate", severity: "warning", message: "POD cost is a preset estimate; no fresh verified sourcing quote." });
   }
+  const awaitingSupplierPreparation = gate.reasons.length > 0 &&
+    gate.reasons.every((reason) =>
+      reason.code === "supplier_mockups_pending" || reason.code === "missing_provider_timings" ||
+      (reason.code === "supplier_preview_error" && reason.message.startsWith("No Printify blank pinned for ")));
   await ctx.db.insert(listings).values({
     shopId: ctx.shopId,
     designId: design.id,
@@ -250,7 +256,7 @@ async function listRung(
     netChf: fees.netChf,
     marginPct: fees.marginPct,
     validation,
-    status: gate.pass ? "pending_approval" : "quality_failed",
+    status: gate.pass || awaitingSupplierPreparation ? "pending_approval" : "quality_failed",
     isDemo: ctx.demo,
   });
   siblingTitles.push(draft.title);
@@ -266,7 +272,7 @@ async function listRung(
   return {
     fixes,
     errors: issues.filter((issue) => issue.severity === "error").map((issue) => issue.message),
-    passed: gate.pass,
+    passed: gate.pass || awaitingSupplierPreparation,
     hold: gate.reasons.map((reason) => reason.message).join("; "),
     title: draft.title,
     priceChf: draft.priceChf,

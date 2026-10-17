@@ -6,6 +6,7 @@ import { listPrintifyCandidates } from "@/adapters/printify/catalog-cli";
 import { PrintifyDryRunAdapter } from "@/adapters/printify/dryrun";
 import { config, parsePrintifyPresets, resolvePrintifyPin } from "@/lib/config";
 import { POD_PRESETS, type PodPreset } from "@/lib/fees";
+import { PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
 import { PRINT_TARGETS } from "@/lib/print-targets";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -109,6 +110,10 @@ describe("preset-specific Printify configuration", () => {
 });
 
 describe("native-resolution create-only Printify placement", () => {
+  it("preserves the existing A3 native artwork minimum", () => {
+    expect(PRINT_TARGETS.posterA3).toEqual({ width: PRINT_WIDTH, height: PRINT_HEIGHT });
+  });
+
   it("uses the selected variant dimensions and mug wrap position without publishing", async () => {
     setPins();
     const calls = mockCreate();
@@ -159,6 +164,45 @@ describe("native-resolution create-only Printify placement", () => {
   it("does not enlarge artwork to satisfy a larger supplier area", () => {
     expect(() => coverPlacement({ width: 2700, height: 1100 }, { position: "front", width: 2800, height: 1100 })).toThrow("upscaling");
     expect(printPlaceholder("mug", { id: 1, title: "Mug", placeholders: [{ position: "front", width: 2000, height: 1000 }] }).position).toBe("front");
+  });
+
+  it("refreshes existing supplier copy without changing prices, uploading, creating, or publishing", async () => {
+    setPins();
+    const requests: { path: string; method: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
+      const path = new URL(url).pathname;
+      requests.push({ path, method: init.method ?? "GET", body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
+      if (!init.method) return Response.json({
+        blueprint_id: 21, print_provider_id: 31,
+        variants: [{ id: 41, is_enabled: true }, { id: 42, is_enabled: false }],
+      });
+      if (init.method === "PUT") return Response.json({ id: "existing-product" });
+      throw new Error("Unexpected supplier write");
+    }));
+    const result = await new PrintifyLiveClient().createAndPublish({
+      ...baseInput, title: "Latest mug title", description: "Latest verified partner disclosure",
+      tags: ["latest"], priceChf: 24.5, existingProductId: "existing-product", publishToEtsy: false,
+    });
+    expect(result).toEqual({ productId: "existing-product", blueprintId: 21, printProviderId: 31, variantIds: [41] });
+    expect(requests).toEqual([
+      { path: "/v1/shops/fixture-shop/products/existing-product.json", method: "GET", body: undefined },
+      {
+        path: "/v1/shops/fixture-shop/products/existing-product.json", method: "PUT",
+        body: {
+          title: "Latest mug title", description: "Latest verified partner disclosure", tags: ["latest"],
+        },
+      },
+    ]);
+  });
+
+  it("fails closed when existing supplier variant state cannot be read", async () => {
+    setPins();
+    const fetcher = vi.fn(async () => Response.json({ variants: [{ id: 41 }] }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(new PrintifyLiveClient().createAndPublish({
+      ...baseInput, existingProductId: "existing-product", publishToEtsy: false,
+    })).rejects.toThrow("valid supplier variants");
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });
 

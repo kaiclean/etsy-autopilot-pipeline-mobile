@@ -44,7 +44,8 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   const visible = useMemo(() => filterQueue(remaining, { query, niche, status, triage }), [remaining, query, niche, status, triage]);
   const top = visible[0];
   const selectedVisible = visible.filter((l) => selected.has(l.id));
-  const hasErrors = (l: Listing) => listingHasErrors(l.validation.filter((issue) => issue.code !== "supplier_mockups_pending"));
+  const hasErrors = (l: Listing) => listingHasErrors(l.validation.filter((issue) =>
+    issue.code !== "supplier_mockups_pending" && issue.code !== "missing_provider_timings"));
 
   const hide = useCallback((id: number, on: boolean) => {
     setHidden((s) => {

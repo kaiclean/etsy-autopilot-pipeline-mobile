@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   mode: "live" as "live" | "dry-run",
   createAndPublish: vi.fn(),
   getProductImages: vi.fn(),
+  getProviderDetails: vi.fn(),
   getPrintifyAdapter: vi.fn(),
 }));
 vi.mock("@/adapters/printify", () => ({ getPrintifyAdapter: mocks.getPrintifyAdapter }));
@@ -39,6 +40,7 @@ beforeEach(() => {
     blueprintId: 42, printProviderId: 7,
   }));
   mocks.getProductImages.mockResolvedValue(images(3));
+  mocks.getProviderDetails.mockResolvedValue({ processingMin: 2, processingMax: 4, shippingMin: 3, shippingMax: 7 });
 });
 
 async function draft(patch: Partial<typeof listings.$inferInsert> = {}) {
@@ -82,6 +84,9 @@ describe("supplier previews before approval", () => {
     expect(saved).toMatchObject({ status: "pending_approval", printifyProductId: "supplier-product", approvedAt: null, etsyListingId: null, podPublishedAt: null });
     expect(saved.validation).toContainEqual(expect.objectContaining({ message: WAITING_FOR_PRINTIFY_MOCKUPS }));
     expect(mocks.createAndPublish).toHaveBeenCalledWith(expect.objectContaining({ publishToEtsy: false, imageUrl: "https://art.example/print-master.png" }));
+    expect(mocks.createAndPublish).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining("Processing: 2–4 business days.\nShipping: 3–7 business days."),
+    }));
     expect(mocks.getPrintifyAdapter).toHaveBeenCalledWith({ db, intent: "write" });
   });
 
@@ -122,6 +127,37 @@ describe("supplier previews before approval", () => {
     expect(result.ready).toBe(true);
     expect(result.listing.gallery[0]).toMatchObject({ source: "synthetic", label: expect.stringContaining("not supplier proof") });
     expect(supplierMockupCount({ ...result.listing, publishMode: "live" })).toBe(0);
+  });
+
+  it("never approves a non-demo listing using synthetic previews when global writes are disabled", async () => {
+    mocks.mode = "dry-run";
+    mocks.getProductImages.mockResolvedValue([1, 2, 3].map((n) => ({ src: `/api/mockup/posterA3?synthetic=printify&view=${n}` })));
+    const row = await draft({ isDemo: false });
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: false, error: WAITING_FOR_PRINTIFY_MOCKUPS });
+    const saved = await reload(row.id);
+    expect(saved.status).toBe("pending_approval");
+    expect(saved.printifyProductId).toBe("dry-supplier-product");
+    expect(supplierMockupCount(saved)).toBe(0);
+  });
+
+  it("surfaces a safe missing preset reason instead of pretending mockups are rendering", async () => {
+    mocks.getProviderDetails.mockRejectedValue(new Error("No Printify blank pinned for Mug. Configure token secret-value."));
+    const row = await draft({ podProvider: "printify:mug" });
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: false, error: "No Printify blank pinned for Mug" });
+    expect((await reload(row.id)).validation).toContainEqual(expect.objectContaining({
+      code: "supplier_preview_error", message: "No Printify blank pinned for Mug",
+    }));
+    expect(mocks.createAndPublish).not.toHaveBeenCalled();
+  });
+
+  it("keeps an undersized-art error actionable and clears it after a corrected retry", async () => {
+    const row = await draft();
+    const message = "Printify mug artwork is 600×800; minimum 2700×1125 native pixels required (no upscaling)";
+    mocks.createAndPublish.mockRejectedValueOnce(new Error(message));
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: false, error: message });
+    expect((await reload(row.id)).validation).toContainEqual(expect.objectContaining({ code: "supplier_preview_error", message }));
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
+    expect((await reload(row.id)).validation.some((issue) => issue.code === "supplier_preview_error")).toBe(false);
   });
 
   it("persists creation before an image read failure so retries reuse its id", async () => {
@@ -168,6 +204,26 @@ describe("supplier previews before approval", () => {
     expect(await bulkSetListingStatus([bulk.id], "approved")).toMatchObject({ changed: [bulk.id], skipped: [] });
     expect((await reload(edited.id)).status).toBe("approved");
     expect((await reload(bulk.id)).status).toBe("approved");
+  });
+
+  it("refreshes missing or stale timing copy from the provider before validation", async () => {
+    const row = await draft({ description: `${template.description}\n\nProcessing: 99–100 business days.\nShipping: 100–200 business days.` });
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
+    const saved = await reload(row.id);
+    expect(saved.description).toContain("Processing: 2–4 business days.\nShipping: 3–7 business days.");
+    expect(saved.description).not.toContain("99–100");
+    expect(saved.copyProvenance).toMatchObject({ providerDetails: { processingMin: 2, processingMax: 4, shippingMin: 3, shippingMax: 7 } });
+  });
+
+  it("does not reuse cached timing proof when the provider refresh fails", async () => {
+    const row = await draft();
+    expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
+    await setListingStatus(row.id, "pending_approval");
+    mocks.getProviderDetails.mockRejectedValue(new Error("provider unavailable"));
+    mocks.createAndPublish.mockClear();
+    expect(await setListingStatus(row.id, "approved")).toMatchObject({ ok: false, error: expect.stringContaining("Verified production-provider") });
+    expect(mocks.createAndPublish).not.toHaveBeenCalled();
+    expect((await reload(row.id)).status).toBe("pending_approval");
   });
 
   it("blocks the automatic quality path without three actual supplier views", async () => {

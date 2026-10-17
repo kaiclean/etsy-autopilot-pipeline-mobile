@@ -12,10 +12,11 @@ export const MIN_SUPPLIER_MOCKUPS = 3;
 export function supplierMockupCount(input: {
   gallery?: ArtworkGalleryView[] | null;
   publishMode?: string | null;
+  isDemo?: boolean;
 }) {
   return new Set((input.gallery ?? []).filter((view) => {
     if (view.role !== "product-mockup" || !view.url.trim()) return false;
-    if (view.source === "synthetic") return input.publishMode === "dry-run";
+    if (view.source === "synthetic") return input.isDemo === true && input.publishMode === "dry-run";
     if (view.source !== "supplier" || isPlaceholderUrl(view.url)) return false;
     try {
       const url = new URL(view.url);
@@ -58,6 +59,7 @@ export type QualityGateInput = {
   colorVariance?: number | null;
   gallery?: ArtworkGalleryView[] | null;
   publishMode?: string | null;
+  isDemo?: boolean;
 };
 
 export function podPresetFromProvider(provider: string | null | undefined): PodPreset | null {

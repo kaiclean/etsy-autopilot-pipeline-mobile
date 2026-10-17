@@ -5,6 +5,7 @@ import type { DB } from "@/db";
 import { designs, listings, type Listing, type ValidationIssue } from "@/db/schema";
 import { publicAppUrl } from "@/lib/config";
 import { appendProviderDetails, validProviderDetails } from "@/lib/disclosures";
+import { validateListing } from "@/lib/listing-validator";
 import { MIN_SUPPLIER_MOCKUPS, podPresetFromProvider, supplierMockupCount, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/lib/quality-gate";
 import type { ArtworkGalleryView } from "./mockup";
 
@@ -14,16 +15,35 @@ function absoluteUrl(url: string) {
   return new URL(url, `${publicAppUrl()}/`).toString();
 }
 
+function fixedSupplierError(error: unknown): ValidationIssue | undefined {
+  const message = error instanceof Error ? error.message : "";
+  const pin = /^(No Printify blank pinned for [^.\r\n]+)\./.exec(message)?.[1];
+  const nativeSize = /^Printify \w+ artwork is \d+×\d+; minimum \d+×\d+ native pixels required \(no upscaling\)$/.test(message);
+  const decoded = message === "Printify artwork could not be decoded; a real print file is required";
+  if (!pin && !nativeSize && !decoded) return undefined;
+  return { field: "image", severity: "error", code: "supplier_preview_error", message: pin ?? message };
+}
+
+export function validateSupplierApproval(listing: Listing) {
+  const check = validateListing(listing);
+  const fixed = listing.validation.filter((issue) => issue.code === "supplier_preview_error");
+  return { valid: check.valid && fixed.length === 0, issues: [...check.issues, ...fixed] };
+}
+
 /** Replace timing claims with current provider facts before copy validation. */
 export async function refreshSupplierDescription(db: DB, listing: Listing): Promise<Listing> {
   if (listing.productType !== "pod") return listing;
+  const unavailable = {
+    ...listing,
+    copyProvenance: listing.copyProvenance ? { ...listing.copyProvenance, providerDetails: null } : null,
+  };
   const preset = podPresetFromProvider(listing.podProvider);
-  if (!preset || (listing.supplier && listing.supplier !== "printify")) return listing;
+  if (!preset || (listing.supplier && listing.supplier !== "printify")) return unavailable;
   try {
     const adapter = await getPrintifyAdapter({ db, intent: "read" });
-    if (adapter.mode === "dry-run" && listing.printifyProductId && !listing.printifyProductId.startsWith("dry-")) return listing;
+    if (adapter.mode === "dry-run" && listing.printifyProductId && !listing.printifyProductId.startsWith("dry-")) return unavailable;
     const providerDetails = await adapter.getProviderDetails?.(preset);
-    if (!validProviderDetails(providerDetails)) return listing;
+    if (!validProviderDetails(providerDetails)) return unavailable;
     const description = appendProviderDetails(listing.description, providerDetails);
     const copyProvenance = {
       ...(listing.copyProvenance ?? {
@@ -32,22 +52,33 @@ export async function refreshSupplierDescription(db: DB, listing: Listing): Prom
       }),
       providerDetails,
     };
-    const [saved] = await db.update(listings).set({ description, copyProvenance, updatedAt: new Date() })
+    const [saved] = await db.update(listings).set({
+      description, copyProvenance,
+      validation: listing.validation.filter((issue) => issue.code !== "supplier_preview_error"),
+      updatedAt: new Date(),
+    })
       .where(eq(listings.id, listing.id)).returning();
     return { ...saved, title: listing.title, tags: listing.tags, priceChf: listing.priceChf };
-  } catch {
-    return listing;
+  } catch (error) {
+    const fixed = fixedSupplierError(error);
+    return fixed ? { ...unavailable, validation: [...listing.validation.filter((issue) => issue.code !== fixed.code), fixed] } : unavailable;
   }
 }
 
 /** Approval prepares supplier proofs only. It never publishes a product to Etsy. */
-export async function prepareSupplierPreview(db: DB, listing: Listing) {
-  if (listing.productType !== "pod") return { ready: true, listing };
+export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { timingsRefreshed?: boolean } = {}) {
+  if (listing.productType !== "pod") return { ready: true, listing, error: undefined };
+  if (!opts.timingsRefreshed) listing = await refreshSupplierDescription(db, listing);
   let current = listing;
   const waiting: ValidationIssue = {
     field: "image", severity: "error", code: "supplier_mockups_pending", message: WAITING_FOR_PRINTIFY_MOCKUPS,
   };
   try {
+    const fixed = listing.validation.find((issue) => issue.code === "supplier_preview_error");
+    if (fixed) throw new Error(`${fixed.message}${fixed.message.startsWith("No Printify blank pinned for ") ? "." : ""}`);
+    if (validateSupplierApproval(listing).issues.some((issue) => issue.code === "missing_provider_timings")) {
+      throw new Error("Verified provider timings are required before creating a supplier product");
+    }
     const preset = podPresetFromProvider(listing.podProvider);
     if (!preset || (listing.supplier && listing.supplier !== "printify")) throw new Error("A Printify product preset is required");
     let adapter = await getPrintifyAdapter({ db, intent: "write" });
@@ -91,8 +122,8 @@ export async function prepareSupplierPreview(db: DB, listing: Listing) {
     const illustrative = (listing.gallery ?? []).filter((view) => view.source !== "supplier" && view.source !== "synthetic" && !seen.has(view.url))
       .map((view) => ({ ...view, source: "illustrative" as const }));
     const gallery = [...supplierViews, ...illustrative].slice(0, 10);
-    const ready = supplierMockupCount({ gallery, publishMode: adapter.mode }) >= MIN_SUPPLIER_MOCKUPS;
-    const validation = listing.validation.filter((issue) => issue.code !== waiting.code);
+    const ready = supplierMockupCount({ gallery, publishMode: adapter.mode, isDemo: listing.isDemo }) >= MIN_SUPPLIER_MOCKUPS;
+    const validation = listing.validation.filter((issue) => issue.code !== waiting.code && issue.code !== "supplier_preview_error");
     const [saved] = await db.update(listings).set({
       gallery, ...(supplierViews[0] ? { imageUrl: supplierViews[0].url } : {}),
       publishMode: adapter.mode,
@@ -100,13 +131,14 @@ export async function prepareSupplierPreview(db: DB, listing: Listing) {
       ...(!ready ? { status: "pending_approval" as const, approvedAt: null } : {}),
       updatedAt: new Date(),
     }).where(eq(listings.id, listing.id)).returning();
-    return { ready, listing: saved };
-  } catch {
+    return { ready, listing: saved, error: ready ? undefined : WAITING_FOR_PRINTIFY_MOCKUPS };
+  } catch (error) {
+    const failure = fixedSupplierError(error) ?? waiting;
     const [saved] = await db.update(listings).set({
       status: "pending_approval", approvedAt: null,
-      validation: [...current.validation.filter((issue) => issue.code !== waiting.code), waiting],
+      validation: [...current.validation.filter((issue) => issue.code !== waiting.code && issue.code !== "supplier_preview_error"), failure],
       updatedAt: new Date(),
     }).where(eq(listings.id, listing.id)).returning();
-    return { ready: false, listing: saved };
+    return { ready: false, listing: saved, error: failure.message };
   }
 }

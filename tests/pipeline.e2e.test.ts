@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getDb, type DB } from "@/db";
 import { designs, events, keywords, listings, orders } from "@/db/schema";
@@ -7,6 +7,7 @@ import { getSetting, setSetting } from "@/lib/settings";
 import { getAnalytics } from "@/lib/queries";
 import { publishPodListingToEtsy, recordPodSample } from "@/pipeline/human-publish";
 import { runStage } from "@/pipeline/runner";
+import { prepareSupplierPreview, refreshSupplierDescription } from "@/pipeline/supplier-preview";
 
 function seeded(seed: number) {
   let a = seed;
@@ -61,8 +62,15 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
 
   it("approve → dry-run publish → fake order → analytics update", async () => {
     const pending = await db.select().from(listings).where(eq(listings.status, "pending_approval"));
-    const target = pending.find((p) => validateListing(p).valid)!;
-    expect(target).toBeDefined();
+    const pod = pending.find((p) => p.productType === "pod");
+    expect(pod).toBeDefined();
+    const refreshed = await refreshSupplierDescription(db, pod!);
+    expect(validateListing(refreshed).valid).toBe(true);
+    const preview = await prepareSupplierPreview(db, refreshed);
+    expect(preview.ready).toBe(true);
+    const target = preview.listing;
+    expect(target.gallery.filter((view) => view.source === "synthetic").length).toBeGreaterThanOrEqual(3);
+    await db.update(listings).set({ status: "rejected" }).where(inArray(listings.status, ["approved", "failed"]));
     await db.update(listings).set({ status: "approved", approvedAt: new Date() }).where(eq(listings.id, target.id));
 
     const before = await getAnalytics();
@@ -128,6 +136,7 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
   });
 
   it("a publish run that publishes nothing is failed, not success", async () => {
+    await db.update(listings).set({ status: "rejected" }).where(inArray(listings.status, ["approved", "failed"]));
     const [src] = await db.select().from(listings).limit(1);
     const [row] = await db
       .insert(listings)

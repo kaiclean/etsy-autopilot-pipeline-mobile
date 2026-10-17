@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { ArtworkProvenance } from "@/lib/artwork-provenance";
 import type { ArtworkPackManifest } from "@/lib/artwork-pack";
+import type { ProviderDetails } from "@/lib/disclosures";
 import type { ArtworkGalleryView } from "@/pipeline/mockup";
 import {
   boolean,
@@ -219,7 +220,7 @@ export const listings = pgTable("listings", {
   deliveryPack: jsonb("delivery_pack").$type<ArtworkPackManifest>(),
   etsyDeliveryFingerprint: text("etsy_delivery_fingerprint"),
   gallery: jsonb("gallery").$type<ArtworkGalleryView[]>().notNull().default([]),
-  copyProvenance: jsonb("copy_provenance").$type<{ version: 1; provider: string; inputSha256: string }>(),
+  copyProvenance: jsonb("copy_provenance").$type<{ version: 1; provider: string; inputSha256: string; providerDetails?: ProviderDetails | null }>(),
   fileVerifiedAt: timestamp("file_verified_at", { withTimezone: true }),
   fileVerifiedBy: text("file_verified_by"),
   /** Set only by the per-listing Activate action. Cron never sets this. */

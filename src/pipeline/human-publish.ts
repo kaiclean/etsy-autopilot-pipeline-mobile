@@ -11,6 +11,7 @@ import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { resolvePodPublish } from "@/lib/pod-etsy-id";
 import { isMockPlaceholder, digitalActivationRefusal, podEtsyPublishRefusal } from "@/lib/publish-gates";
 import { absoluteUrl, podPreset } from "./publish";
+import { refreshSupplierDescription, validateSupplierApproval } from "./supplier-preview";
 
 async function designProvider(db: DB, designId: number | null) {
   if (!designId) return null;
@@ -143,7 +144,7 @@ export async function recordPodSample(
 
 /** Human step: publish one Printify product to Etsy after a sample exists for its blueprint + provider. */
 export async function publishPodListingToEtsy(db: DB, listingId: number, now = new Date()) {
-  const [l] = await db.select().from(listings).where(eq(listings.id, listingId));
+  let [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "pod") return { ok: false as const, error: "Not a print-on-demand listing" };
   const [sample] =
     l.podBlueprintId && l.podPrintProviderId
@@ -160,6 +161,13 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
     alreadyPublished: l.podPublishedAt != null,
   });
   if (refusal) return { ok: false as const, error: refusal };
+  l = await refreshSupplierDescription(db, l);
+  const check = validateSupplierApproval(l);
+  if (!check.valid) {
+    await db.update(listings).set({ validation: check.issues, updatedAt: now }).where(eq(listings.id, listingId));
+    return { ok: false as const, error: check.issues.find((issue) => issue.code === "supplier_preview_error")?.message ??
+      check.issues.find((issue) => issue.severity === "error")?.message ?? "Invalid listing" };
+  }
   const printify = await getPrintifyAdapter({ db });
   const result = await printify.createAndPublish({
     title: l.title,

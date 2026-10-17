@@ -41,7 +41,8 @@ export interface PrintifyAdapter {
   /**
    * Uploads the design and creates the Printify product.
    * Calls publish.json only when `publishToEtsy` is set (a per-listing human action).
-   * After that call, a live client may GET `external.id`. Create-only does not.
+   * Reusing an existing live product synchronizes copy without changing supplier prices.
+   * After publishing, a live client may GET `external.id`. Create-only does not.
    */
   createAndPublish(input: PrintifyProductInput): Promise<{
     productId: string;

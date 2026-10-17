@@ -57,7 +57,7 @@ async function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     let message = error instanceof Error ? error.message : "Catalog discovery failed";
-    const token = process.env.PRINTIFY_API_TOKEN;
+    const token = process.env.PRINTIFY_API_TOKEN?.trim();
     if (token) message = message.split(token).join("[redacted]");
     console.error(message);
     process.exitCode = 1;

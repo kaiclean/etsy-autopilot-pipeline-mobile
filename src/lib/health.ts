@@ -107,6 +107,7 @@ function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
   let p: typeof config.printify;
   try {
     p = config.printify;
+    if (p.pinConfigError) throw new Error("Invalid Printify pins");
   } catch {
     return {
       id: "printify",

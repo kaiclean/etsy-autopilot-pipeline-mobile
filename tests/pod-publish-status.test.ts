@@ -2,7 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
 import { costs, listings } from "@/db/schema";
-import { validateListing } from "@/lib/listing-validator";
+import { appendProviderDetails } from "@/lib/disclosures";
 import { publishPodListingToEtsy, recordPodSample } from "@/pipeline/human-publish";
 import { runStage } from "@/pipeline/runner";
 
@@ -10,6 +10,8 @@ const adapters = vi.hoisted(() => ({
   getEtsyAdapter: vi.fn(),
   getPrintifyAdapter: vi.fn(),
 }));
+const providerDetails = { processingMin: 2, processingMax: 4, shippingMin: 3, shippingMax: 7 };
+const copyProvenance = { version: 1 as const, provider: "synthetic-test-fixture", inputSha256: "test", providerDetails };
 
 vi.mock("@/adapters/etsy", () => ({ getEtsyAdapter: adapters.getEtsyAdapter }));
 vi.mock("@/adapters/printify", () => ({ getPrintifyAdapter: adapters.getPrintifyAdapter }));
@@ -34,7 +36,7 @@ describe("publish stage POD status", () => {
 
   async function approvePod() {
     const seeded = await db.select().from(listings);
-    const src = seeded.find((row) => row.productType === "pod" && validateListing(row).valid);
+    const src = seeded.find((row) => row.productType === "pod");
     if (!src) throw new Error("seed has no valid POD listing");
     const [row] = await db
       .insert(listings)
@@ -44,7 +46,8 @@ describe("publish stage POD status", () => {
         podProvider: "printify:posterA3",
         title: src.title,
         tags: src.tags,
-        description: src.description,
+        description: appendProviderDetails(src.description, providerDetails),
+        copyProvenance,
         imageUrl: src.imageUrl,
         deliveryUrl: "https://art.example/print-master.png",
         priceChf: src.priceChf,
@@ -63,7 +66,7 @@ describe("publish stage POD status", () => {
 
   async function createdPod(productId: string) {
     const seeded = await db.select().from(listings);
-    const src = seeded.find((row) => row.productType === "pod" && validateListing(row).valid);
+    const src = seeded.find((row) => row.productType === "pod");
     if (!src) throw new Error("seed has no valid POD listing");
     const [row] = await db
       .insert(listings)
@@ -73,7 +76,8 @@ describe("publish stage POD status", () => {
         podProvider: "printify:posterA3",
         title: src.title,
         tags: src.tags,
-        description: src.description,
+        description: appendProviderDetails(src.description, providerDetails),
+        copyProvenance,
         imageUrl: src.imageUrl,
         priceChf: src.priceChf,
         podCostChf: src.podCostChf,
@@ -99,6 +103,7 @@ describe("publish stage POD status", () => {
       mode: "live",
       createAndPublish,
       getProductImages: vi.fn(async () => [1, 2, 3].map((n) => ({ src: `https://images.printify.example/product-${n}.png` }))),
+      getProviderDetails: vi.fn(async () => providerDetails),
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });
@@ -114,20 +119,44 @@ describe("publish stage POD status", () => {
     expect(after.printifyProductId).toBe("pfy-created-only");
   });
 
+  it("does not overwrite real supplier metadata with dry-run fixtures when writes are disabled", async () => {
+    const row = await approvePod();
+    await db.update(listings).set({
+      printifyProductId: "real-existing-product", podBlueprintId: 42, podPrintProviderId: 7, publishMode: "live",
+    }).where(eq(listings.id, row.id));
+    const createAndPublish = vi.fn();
+    adapters.getPrintifyAdapter.mockResolvedValue({ mode: "dry-run", createAndPublish });
+    await runStage("publish", "manual", { db, random: () => 0.5, now: new Date() });
+    expect(createAndPublish).not.toHaveBeenCalled();
+    expect(await db.select().from(listings).where(eq(listings.id, row.id))).toEqual([
+      expect.objectContaining({ status: "approved", printifyProductId: "real-existing-product", podBlueprintId: 42, podPrintProviderId: 7, publishMode: "live" }),
+    ]);
+    await db.update(listings).set({ status: "pending_approval" }).where(eq(listings.id, row.id));
+  });
+
   it("human publish without an Etsy id enters publishing and does not charge another listing fee", async () => {
     const row = await createdPod("pfy-human-wait");
+    await db.update(listings).set({ description: row.description.replace("Processing: 2–4", "Processing: 20–40") })
+      .where(eq(listings.id, row.id));
     const before = (await db.select().from(costs)).length;
     const now = new Date("2026-10-05T12:00:00.000Z");
     const createAndPublish = vi.fn(async () => ({ productId: "pfy-human-wait", blueprintId: 42, printProviderId: 7 }));
     adapters.getPrintifyAdapter.mockResolvedValue({
       mode: "live",
       createAndPublish,
+      getProviderDetails: vi.fn(async () => providerDetails),
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });
     const result = await publishPodListingToEtsy(db, row.id, now);
     expect(result).toEqual({ ok: true, status: "publishing", etsyListingId: null });
     expect(createAndPublish).toHaveBeenCalledWith(expect.objectContaining({ publishToEtsy: true, existingProductId: "pfy-human-wait" }));
+    expect(createAndPublish).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining("Processing: 2–4 business days."),
+    }));
+    expect(createAndPublish).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.not.stringContaining("Processing: 20–40"),
+    }));
     const [after] = await db.select().from(listings).where(eq(listings.id, row.id));
     expect(after.status).toBe("publishing");
     expect(after.etsyListingId).toBeNull();
@@ -142,6 +171,7 @@ describe("publish stage POD status", () => {
     adapters.getPrintifyAdapter.mockResolvedValue({
       mode: "live",
       createAndPublish: vi.fn(async () => ({ productId: "pfy-human-id", externalEtsyId: "1234567890", blueprintId: 42, printProviderId: 7 })),
+      getProviderDetails: vi.fn(async () => providerDetails),
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });
@@ -158,6 +188,7 @@ describe("publish stage POD status", () => {
     adapters.getPrintifyAdapter.mockResolvedValue({
       mode: "dry-run",
       createAndPublish: vi.fn(async () => ({ productId: "dry-pfy-status", blueprintId: 42, printProviderId: 7 })),
+      getProviderDetails: vi.fn(async () => providerDetails),
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });

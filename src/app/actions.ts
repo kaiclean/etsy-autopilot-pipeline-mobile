@@ -13,7 +13,6 @@ import { calculateFees, DEFAULT_POD_PRESETS, isPodPreset, MARGIN_TARGETS } from 
 import { artRegenerationBlocker } from "@/lib/art-queue";
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { planBulkStatus } from "@/lib/catalog-filters";
-import { validateListing } from "@/lib/listing-validator";
 import { probeConnections } from "@/lib/provider-probe";
 import { getLastRuns } from "@/lib/queries";
 import { requireAuth } from "@/lib/session";
@@ -30,7 +29,7 @@ import {
 } from "@/pipeline/human-publish";
 import { runFullPipeline, runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
-import { prepareSupplierPreview, refreshSupplierDescription, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/pipeline/supplier-preview";
+import { prepareSupplierPreview, refreshSupplierDescription, validateSupplierApproval, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/pipeline/supplier-preview";
 
 export async function login(_prev: { error?: string } | undefined, form: FormData) {
   const password = String(form.get("password") ?? "");
@@ -82,10 +81,10 @@ export async function updateListing(id: number, edit: ListingEdit, approve = fal
   if (approve && isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
   const edited = { ...l, ...edit, description: edit.description ?? l.description };
   const next = approve ? await refreshSupplierDescription(db, edited) : edited;
-  const { valid, issues } = validateListing(next);
+  const { valid, issues } = validateSupplierApproval(next);
   const automation = await getSetting(db, "automation");
   const fees = calculateFees({ priceChf: next.priceChf, podCostChf: l.podCostChf, offsiteAds: automation.assumeOffsiteAds });
-  const preview = approve && valid ? await prepareSupplierPreview(db, next) : null;
+  const preview = approve && valid ? await prepareSupplierPreview(db, next, { timingsRefreshed: true }) : null;
   const canApprove = approve && valid && preview?.ready;
   await db
     .update(listings)
@@ -96,14 +95,15 @@ export async function updateListing(id: number, edit: ListingEdit, approve = fal
       priceChf: next.priceChf,
       netChf: fees.netChf,
       marginPct: fees.marginPct,
-      validation: preview && !preview.ready ? [...issues, ...preview.listing.validation.filter((issue) => issue.code === "supplier_mockups_pending")] : issues,
+      validation: preview && !preview.ready ? [...issues, ...preview.listing.validation.filter((issue) =>
+        issue.code === "supplier_mockups_pending" || issue.code === "supplier_preview_error")] : issues,
       updatedAt: new Date(),
       ...(canApprove ? { status: "approved" as const, approvedAt: new Date() } : {}),
     })
     .where(eq(listings.id, id));
   revalidateAll();
-  if (approve && !valid) return { ok: false as const, error: "Fix validation errors before approving", issues };
-  if (preview && !preview.ready) return { ok: false as const, error: WAITING_FOR_PRINTIFY_MOCKUPS };
+  if (approve && !valid) return { ok: false as const, error: issues.find((issue) => issue.code === "supplier_preview_error")?.message ?? "Fix validation errors before approving", issues };
+  if (preview && !preview.ready) return { ok: false as const, error: preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS };
   return { ok: true as const, issues };
 }
 
@@ -115,16 +115,16 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   if (status === "approved") {
     if (isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
     const refreshed = await refreshSupplierDescription(db, l);
-    const { valid, issues } = validateListing(refreshed);
+    const { valid, issues } = validateSupplierApproval(refreshed);
     if (!valid) {
       await db.update(listings).set({ validation: issues }).where(eq(listings.id, id));
       revalidateAll();
-      return { ok: false as const, error: issues.find((i) => i.severity === "error")?.message ?? "Invalid listing" };
+      return { ok: false as const, error: issues.find((i) => i.code === "supplier_preview_error")?.message ?? issues.find((i) => i.severity === "error")?.message ?? "Invalid listing" };
     }
-    const preview = await prepareSupplierPreview(db, refreshed);
+    const preview = await prepareSupplierPreview(db, refreshed, { timingsRefreshed: true });
     if (!preview.ready) {
       revalidateAll();
-      return { ok: false as const, error: WAITING_FOR_PRINTIFY_MOCKUPS };
+      return { ok: false as const, error: preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS };
     }
   }
   await db
@@ -168,11 +168,11 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
       if (heldIds.has(row.id)) continue;
       const refreshed = await refreshSupplierDescription(db, row);
       Object.assign(row, refreshed);
-      if (!validateListing(refreshed).valid) continue;
-      const preview = await prepareSupplierPreview(db, refreshed);
+      if (!validateSupplierApproval(refreshed).valid) continue;
+      const preview = await prepareSupplierPreview(db, refreshed, { timingsRefreshed: true });
       if (!preview.ready) {
         heldIds.add(row.id);
-        waiting.push({ id: row.id, title: row.title, error: WAITING_FOR_PRINTIFY_MOCKUPS });
+        waiting.push({ id: row.id, title: row.title, error: preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS });
       }
     }
   }
@@ -180,14 +180,16 @@ export async function bulkSetListingStatus(ids: number[], status: "approved" | "
     known.filter((row) => !heldIds.has(row.id)).map((row) => ({
       id: row.id,
       title: row.title,
-      hasErrors: status === "approved" && !validateListing(row).valid,
+      hasErrors: status === "approved" && !validateSupplierApproval(row).valid,
     })),
     status,
   );
   for (const skip of plan.skipped) {
     const row = byId.get(skip.id);
     if (!row) continue;
-    const { issues } = validateListing(row);
+    const { issues } = validateSupplierApproval(row);
+    const fixed = issues.find((issue) => issue.code === "supplier_preview_error");
+    if (fixed) skip.error = fixed.message;
     await db.update(listings).set({ validation: issues, updatedAt: new Date() }).where(eq(listings.id, row.id));
   }
   if (plan.changed.length > 0) {

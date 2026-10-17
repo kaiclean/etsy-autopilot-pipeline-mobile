@@ -51,7 +51,6 @@ export type ListingDraft = {
   podPreset?: PodPreset;
   podProvider?: string | null;
   providerDetails?: ProviderDetails | null;
-  supplierPreview?: { providerDetails?: ProviderDetails | null } | null;
   copyProvenance?: { version: 1; provider: string; inputSha256: string; providerDetails?: ProviderDetails | null } | null;
   fileManifest?: { delivery: { width: number; height: number; format?: "png" | "jpeg" | "webp" } } | null;
 };
@@ -237,7 +236,7 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
       }
     }
   } else {
-    const details = d.providerDetails ?? d.supplierPreview?.providerDetails ?? d.copyProvenance?.providerDetails;
+    const details = d.providerDetails ?? d.copyProvenance?.providerDetails;
     if (!validProviderDetails(details)) {
       push({ field: "description", severity: "error", code: "missing_provider_timings", message: "Verified production-provider processing and shipping times are required before approval." });
     } else if (!description.includes(providerTimingBlurb(details))) {

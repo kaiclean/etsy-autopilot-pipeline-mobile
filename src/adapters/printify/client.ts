@@ -130,16 +130,40 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     }
   }
 
+  private async syncExistingProduct(shopId: string, input: PrintifyProductInput) {
+    const path = `/shops/${encodeURIComponent(shopId)}/products/${encodeURIComponent(input.existingProductId!)}.json`;
+    const current = await this.request<{
+      blueprint_id?: number;
+      print_provider_id?: number;
+      variants?: { id: number; is_enabled: boolean }[];
+    }>(path);
+    if (!Array.isArray(current.variants) || !current.variants.length
+      || current.variants.some((variant) => !Number.isSafeInteger(variant?.id) || variant.id <= 0 || typeof variant.is_enabled !== "boolean")) {
+      throw new Error("Cannot synchronize existing Printify product: valid supplier variants are required");
+    }
+    await this.request(path, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: input.title,
+        description: input.description,
+        tags: input.tags,
+      }),
+    });
+    return {
+      productId: input.existingProductId!,
+      blueprintId: current.blueprint_id ?? input.blueprintId,
+      printProviderId: current.print_provider_id ?? input.printProviderId,
+      variantIds: current.variants.filter((variant) => variant.is_enabled).map((variant) => variant.id),
+    };
+  }
+
   async createAndPublish(input: PrintifyProductInput) {
     const shopId = config.printify.shopId;
     if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
     if (input.existingProductId) {
+      const existing = await this.syncExistingProduct(shopId, input);
       if (!input.publishToEtsy) {
-        return {
-          productId: input.existingProductId,
-          blueprintId: input.blueprintId,
-          printProviderId: input.printProviderId,
-        };
+        return existing;
       }
       try {
         await this.publishProduct(shopId, input.existingProductId);
@@ -149,9 +173,7 @@ export class PrintifyLiveClient implements PrintifyAdapter {
       }
       const externalEtsyId = await this.externalIdAfterPublish(shopId, input.existingProductId);
       return {
-        productId: input.existingProductId,
-        blueprintId: input.blueprintId,
-        printProviderId: input.printProviderId,
+        ...existing,
         ...(externalEtsyId ? { externalEtsyId } : {}),
       };
     }

@@ -1,8 +1,9 @@
 import type { PodPreset } from "./fees";
+import { PRINT_WIDTH, PRINT_HEIGHT } from "./design-quality";
 
 /** Minimum native artwork pixels, before cover cropping. Never enlarge a source to pass. */
 export const PRINT_TARGETS: Record<PodPreset, { width: number; height: number }> = {
-  posterA3: { width: 2480, height: 3508 },
+  posterA3: { width: PRINT_WIDTH, height: PRINT_HEIGHT },
   mug: { width: 2700, height: 1100 },
   tshirt: { width: 3600, height: 4800 },
   sweatshirt: { width: 3600, height: 4800 },
