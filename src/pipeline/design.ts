@@ -222,7 +222,7 @@ export const runDesign: StageFn = async (ctx) => {
         const imageUrl = await persistableImageUrl(prepared.url).catch(() => `/api/placeholder/${kw.id}?niche=${kw.niche}`);
         await db.insert(designs).values({
           shopId: ctx.shopId, keywordId: kw.id, niche: kw.niche, prompt, provider: img.provider,
-          imageUrl, imageWidth: prepared.width, imageHeight: prepared.height,
+          imageUrl, provenance: img.provenance ?? null, imageWidth: prepared.width, imageHeight: prepared.height,
           colorVariance: prepared.variance, costChf: img.costChf,
           qualityScore: result.score, qualityReasons: result.reasons, status: result.review ? "needs_review" : "rejected", isDemo: ctx.demo,
         });
@@ -252,6 +252,7 @@ export const runDesign: StageFn = async (ctx) => {
         const refreshed = {
           imageUrl,
           provider: img.provider,
+          provenance: img.provenance ?? null,
           imageWidth: prepared.width,
           imageHeight: prepared.height,
           colorVariance: prepared.variance,
@@ -296,6 +297,7 @@ export const runDesign: StageFn = async (ctx) => {
         niche: kw.niche,
         prompt,
         provider: img.provider,
+        provenance: img.provenance ?? null,
         imageUrl,
         imageWidth: prepared.width,
         imageHeight: prepared.height,

@@ -43,20 +43,20 @@ function encodePng(width: number, height: number, paint: (fill: (x: number, y: n
   };
   const blit = (image: RgbImage, x: number, y: number, w: number, h: number) => {
     if (w <= 0 || h <= 0 || image.width < 1 || image.height < 1) return;
-    const scale = Math.max(w / image.width, h / image.height);
-    const sw = w / scale;
-    const sh = h / scale;
-    const sx0 = (image.width - sw) / 2;
-    const sy0 = (image.height - sh) / 2;
-    const x0 = Math.max(0, x);
-    const y0 = Math.max(0, y);
-    const x1 = Math.min(width, x + w);
-    const y1 = Math.min(height, y + h);
+    const scale = Math.min(w / image.width, h / image.height);
+    const dw = Math.max(1, Math.round(image.width * scale));
+    const dh = Math.max(1, Math.round(image.height * scale));
+    const dx = x + Math.floor((w - dw) / 2);
+    const dy = y + Math.floor((h - dh) / 2);
+    const x0 = Math.max(0, dx);
+    const y0 = Math.max(0, dy);
+    const x1 = Math.min(width, dx + dw);
+    const y1 = Math.min(height, dy + dh);
     for (let yy = y0; yy < y1; yy++) {
-      const sy = Math.min(image.height - 1, Math.max(0, Math.floor(sy0 + ((yy - y) / h) * sh)));
+      const sy = Math.min(image.height - 1, Math.max(0, Math.floor(((yy - dy) / dh) * image.height)));
       let i = yy * stride + 1 + x0 * 3;
       for (let xx = x0; xx < x1; xx++) {
-        const sx = Math.min(image.width - 1, Math.max(0, Math.floor(sx0 + ((xx - x) / w) * sw)));
+        const sx = Math.min(image.width - 1, Math.max(0, Math.floor(((xx - dx) / dw) * image.width)));
         const o = (sy * image.width + sx) * 3;
         raw[i] = image.rgb[o] ?? 0;
         raw[i + 1] = image.rgb[o + 1] ?? 0;
@@ -133,8 +133,8 @@ const ACCENT: Record<string, RGB> = {
 };
 
 /**
- * Lifestyle product PNG. When `artwork` is set, it is cover-cropped into the print
- * window (mug, garment chest, poster opening). Without it, the window stays a flat accent.
+ * Illustrative product PNG. Artwork fits inside the print window without silently
+ * cropping its composition. This is not a supplier proof of physical print placement.
  */
 export function podMockupPng(preset: PodPreset, niche: string, artwork?: RgbImage | null) {
   const accent = ACCENT[niche] ?? ACCENT.alpine!;
@@ -309,30 +309,40 @@ function paeth(a: number, b: number, c: number) {
 
 /** 8-bit RGB or RGBA PNG, non-interlaced. Returns null for other encodings. */
 export function decodePng(buf: Buffer): RgbImage | null {
-  if (buf.length < 8 || buf[0] !== 137 || buf[1] !== 80 || buf[2] !== 78 || buf[3] !== 71) return null;
+  if (buf.length < 8 || !buf.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return null;
   let offset = 8;
   let width = 0;
   let height = 0;
   let bitDepth = 0;
   let colorType = 0;
   let interlace = 0;
+  let headerFound = false;
+  let endFound = false;
   const idat: Buffer[] = [];
   while (offset + 12 <= buf.length) {
     const len = buf.readUInt32BE(offset);
     if (offset + 12 + len > buf.length) return null;
     const type = buf.toString("ascii", offset + 4, offset + 8);
     const data = buf.subarray(offset + 8, offset + 8 + len);
+    if (crc32(buf.subarray(offset + 4, offset + 8 + len)) !== buf.readUInt32BE(offset + 8 + len)) return null;
+    if (!headerFound && type !== "IHDR") return null;
     offset += 12 + len;
     if (type === "IHDR") {
+      if (headerFound || len !== 13) return null;
+      headerFound = true;
       width = data.readUInt32BE(0);
       height = data.readUInt32BE(4);
       bitDepth = data[8] ?? 0;
       colorType = data[9] ?? 0;
       interlace = data[12] ?? 0;
     } else if (type === "IDAT") idat.push(Buffer.from(data));
-    else if (type === "IEND") break;
+    else if (type === "IEND") {
+      if (len !== 0) return null;
+      endFound = true;
+      break;
+    }
   }
-  if (!width || !height || width > 8000 || height > 8000 || width * height > 26_000_000 || bitDepth !== 8 || interlace !== 0) return null;
+  if (!endFound || !idat.length || !width || !height || width > 8000 || height > 8000 || width * height > 26_000_000 || bitDepth !== 8 || interlace !== 0) return null;
   if (colorType !== 2 && colorType !== 6) return null;
   const channels = colorType === 6 ? 4 : 3;
   const stride = width * channels;

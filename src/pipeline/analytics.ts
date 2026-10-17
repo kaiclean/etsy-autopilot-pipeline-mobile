@@ -1,14 +1,15 @@
-import { and, eq, inArray, like, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
 import { analyticsOrdersWhere, publishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 
 export const runAnalytics: StageFn = async (ctx) => {
   const { db, log } = ctx;
-  const etsy = await getEtsyAdapter(db, ctx.random, "read");
+  const etsy = await getEtsyAdapter(db, ctx.random, "read", ctx.shopId);
+  if (!ctx.demo && etsy.mode !== "live") throw new Error("Live Etsy analytics unavailable: connect this shop before syncing");
   const published = await db
     .select({
       id: listings.id,
@@ -24,38 +25,41 @@ export const runAnalytics: StageFn = async (ctx) => {
   );
   let dViews = 0;
   let dFavs = 0;
-  const checkedIds: number[] = [];
+  let unavailable = 0;
   for (const l of published) {
     const s = stats[l.etsyListingId!];
-    if (!s) continue;
-    checkedIds.push(l.id);
-    const dv = Math.max(0, s.views - l.views);
-    const df = Math.max(0, s.favorites - l.favorites);
-    if (s.views !== l.views || s.favorites !== l.favorites) {
-      await db.update(listings).set({ views: s.views, favorites: s.favorites }).where(eq(listings.id, l.id));
-      dViews += dv;
-      dFavs += df;
+    if (!s) {
+      unavailable++;
+      await db.update(listings).set({ analyticsCheckedAt: null })
+        .where(and(eq(listings.id, l.id), eq(listings.shopId, ctx.shopId)));
+      continue;
     }
-  }
-  if (checkedIds.length) {
-    await db.update(listings).set({ analyticsCheckedAt: ctx.now }).where(inArray(listings.id, checkedIds));
+    const hasViews = typeof s.views === "number" && Number.isSafeInteger(s.views) && s.views >= 0;
+    const hasFavorites = typeof s.favorites === "number" && Number.isSafeInteger(s.favorites) && s.favorites >= 0;
+    if (!hasViews || !hasFavorites) unavailable++;
+    // Keep last known counters, but do not advertise partial observations as fresh conversion evidence.
+    await db.update(listings).set({
+      ...(hasViews ? { views: s.views! } : {}),
+      ...(hasFavorites ? { favorites: s.favorites! } : {}),
+      analyticsCheckedAt: hasViews && hasFavorites ? ctx.now : null,
+    }).where(and(eq(listings.id, l.id), eq(listings.shopId, ctx.shopId)));
+    if (hasViews) dViews += Math.max(0, s.views! - l.views);
+    if (hasFavorites) dFavs += Math.max(0, s.favorites! - l.favorites);
   }
 
   const today = dayKey(ctx.now);
-  const demo = ctx.demo;
-  const [row] = await db
-    .select()
-    .from(dailyStats)
-    .where(and(eq(dailyStats.date, today), eq(dailyStats.isDemo, demo)));
-  if (row) {
-    await db
-      .update(dailyStats)
-      .set({ views: row.views + dViews, favorites: row.favorites + dFavs })
-      .where(eq(dailyStats.id, row.id));
-  } else {
-    await db.insert(dailyStats).values({ date: today, views: dViews, favorites: dFavs, isDemo: demo });
+  if ((unavailable === 0 && published.length > 0) || dViews > 0 || dFavs > 0) {
+    const [row] = await db.select().from(dailyStats)
+      .where(and(eq(dailyStats.date, today), eq(dailyStats.isDemo, ctx.demo)));
+    if (row) {
+      await db.update(dailyStats).set({ views: row.views + dViews, favorites: row.favorites + dFavs })
+        .where(eq(dailyStats.id, row.id));
+    } else {
+      await db.insert(dailyStats).values({ date: today, views: dViews, favorites: dFavs, isDemo: ctx.demo });
+    }
   }
   log(`Views +${dViews}, favorites +${dFavs} across ${published.length} live listings (${etsy.mode})`);
+  if (unavailable) log(`${unavailable} listing(s) have unavailable metrics; historical counters preserved and conversion feedback disabled`, "warn");
 
   const automation = await getSetting(db, "automation");
   if (automation.adsEnabled && automation.dailyAdsCapChf > 0) {
@@ -65,7 +69,7 @@ export const runAnalytics: StageFn = async (ctx) => {
       .from(costs)
       .where(and(eq(costs.shopId, ctx.shopId), eq(costs.kind, "ads_estimate"), like(costs.note, `${note}%`)));
     if (!already) {
-      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: demo });
+      await db.insert(costs).values({ shopId: ctx.shopId, kind: "ads_estimate", amountChf: automation.dailyAdsCapChf, note, isDemo: ctx.demo });
       log(`Recorded estimated Etsy Ads budget CHF ${automation.dailyAdsCapChf.toFixed(2)} (actual spend is not available from the Etsy Ads API)`);
     }
   }
@@ -79,5 +83,6 @@ export const runAnalytics: StageFn = async (ctx) => {
     })
     .from(orders)
     .where(analyticsOrdersWhere(ctx.shopId, since));
-  return `30d: ${agg.n} orders, revenue CHF ${Number(agg.revenue).toFixed(2)}, profit after fees CHF ${Number(agg.profit).toFixed(2)} · +${dViews} views`;
+  const summary = `30d: ${agg.n} orders, revenue CHF ${Number(agg.revenue).toFixed(2)}, profit after fees CHF ${Number(agg.profit).toFixed(2)} · +${dViews} views`;
+  return unavailable ? stageResult(`${summary} · ${unavailable} listing(s) with unavailable metrics`, "warning") : summary;
 };

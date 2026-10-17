@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
-import { alignDeliveryCopy, leadPhrase } from "@/lib/delivery";
+import { alignDeliveryCopy, defaultDeliverable, leadPhrase } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
@@ -72,6 +73,7 @@ export async function draftListing(opts: {
   llm?: LLMProvider;
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
+  deliveryFormat?: "png" | "jpeg" | "webp" | null;
   artDirection?: string;
   siblingTitles?: readonly string[];
 }) {
@@ -110,9 +112,10 @@ export async function draftListing(opts: {
     {
       title,
       tags,
-      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type), opts.product.type),
+      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat), opts.product.type),
       priceChf,
       productType: opts.product.type,
+      deliverable: defaultDeliverable(opts.product.type, opts.deliveryFormat),
     },
     { keyword, product: opts.product },
   );
@@ -143,6 +146,16 @@ async function listRung(
 ) {
   const podProvider = rung.product.type === "pod" && rung.product.pod ? `${supplierId}:${rung.product.pod}` : null;
   const dryRunOnly = rung.product.type === "pod" && (supplierId !== "printify" || !DEFAULT_POD_PRESETS.includes(rung.product.pod!));
+  const image = await listingImageForProduct({
+    productType: rung.product.type,
+    artworkUrl,
+    preset: rung.product.pod,
+    niche: design.niche,
+    sourceDimensions: design.imageWidth && design.imageHeight ? { width: design.imageWidth, height: design.imageHeight } : undefined,
+  });
+  if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
+  const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
+  const fileManifest = deliveryUrl ? await buildFileManifest(deliveryUrl, image.url) : null;
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
     keyword: keywordForRung(phrase, rung),
@@ -154,18 +167,10 @@ async function listRung(
     priceChf: rung.priceChf,
     podCostChf: rung.podCostChf,
     llm,
+    deliveryFormat: fileManifest?.delivery.format ?? null,
     artDirection: design.prompt,
     siblingTitles,
   });
-  const image = await listingImageForProduct({
-    productType: rung.product.type,
-    artworkUrl,
-    preset: rung.product.pod,
-    niche: design.niche,
-  });
-  if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
-  const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
-  const fileManifest = deliveryUrl ? await buildFileManifest(deliveryUrl, image.url) : null;
   const gate = evaluateQualityGate({
     title: draft.title,
     tags: draft.tags,
@@ -202,6 +207,14 @@ async function listRung(
     tags: draft.tags,
     description: draft.description,
     imageUrl: image.url,
+    gallery: image.gallery ?? [],
+    copyProvenance: {
+      version: 1, provider,
+      inputSha256: createHash("sha256").update(JSON.stringify({
+        version: "listing-input-v1", phrase: keywordForRung(phrase, rung),
+        niche: design.niche, product: rung.product, seed: design.id, artDirection: design.prompt,
+      })).digest("hex"),
+    },
     deliveryUrl,
     fileManifest,
     priceChf: draft.priceChf,

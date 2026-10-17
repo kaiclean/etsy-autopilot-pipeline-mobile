@@ -3,7 +3,7 @@ import { keywords, listings, orders } from "@/db/schema";
 import { config } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
-import { notFakeReceiptWhere, realPublishedListingsWhere } from "@/lib/real-orders";
+import { notFakeReceiptWhere, realPublishedListingsWhere, revenueEligibleOrderWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
@@ -93,6 +93,7 @@ export const runResearch: StageFn = async (ctx) => {
               eq(orders.shopId, ctx.shopId),
               eq(orders.matchStatus, "matched"),
               eq(orders.isDemo, false),
+              revenueEligibleOrderWhere(),
               lte(orders.createdAt, ctx.now),
             ),
           )

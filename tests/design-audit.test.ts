@@ -5,6 +5,7 @@ import { buildProductTitle } from "@/lib/product-title";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { rgbPng } from "@/lib/png";
 import { draftListing } from "@/pipeline/listing";
+import { validateListing } from "@/lib/listing-validator";
 
 describe("design audit", () => {
   it("keeps every prompt clean, full bleed and contrast-aware", () => {
@@ -76,5 +77,31 @@ describe("design audit", () => {
     expect(draft.tags.every((tag) => tag.length <= 20)).toBe(true);
     expect(draft.tags.join(" ")).not.toMatch(/engraving|watercolor|shirt/i);
     expect(draft.title).toContain("Thorn Garden");
+  });
+
+  it.each([
+    ["jpeg", "JPEG"],
+    ["webp", "WebP"],
+  ] as const)("describes a measured %s delivery and validates its format", async (deliveryFormat, label) => {
+    const { draft, issues } = await draftListing({
+      niche: "alpine", keyword: "alpine wall art", product: { type: "digital" },
+      seed: 1, assumeOffsiteAds: false, deliveryFormat,
+      llm: {
+        name: "test",
+        writeListing: async () => ({
+          title: "Alpine Printable Wall Art",
+          tags: Array.from({ length: 13 }, (_, index) => `alpine art ${index}`),
+          body: "A quiet alpine landscape.",
+          costChf: 0, provider: "test",
+        }),
+      },
+    });
+    expect(draft.description).toContain(`One ${label} of this artwork`);
+    expect(draft.deliverable?.format).toBe(deliveryFormat);
+    expect(issues.some((issue) => issue.code === "undeliverable_promise")).toBe(false);
+    expect(validateListing({
+      ...draft,
+      description: draft.description.replace(`One ${label}`, "One PNG"),
+    }).issues.some((issue) => issue.code === "undeliverable_promise")).toBe(true);
   });
 });

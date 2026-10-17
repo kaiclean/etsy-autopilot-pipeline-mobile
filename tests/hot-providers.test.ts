@@ -310,7 +310,7 @@ describe("guarded network access", () => {
       fixture.fetcher.json(PINTEREST_GROWING_URL, { log: vi.fn() }),
     ]);
     expect(fixture.times).toEqual([1000, 3000]);
-    await fixture.fetcher.json("https://openapi.etsy.com/v3/application/listings/active", { log: vi.fn() });
+    await fixture.fetcher.json("https://openapi.etsy.com/v3/application/listings/active", { log: vi.fn(), init: { headers: { "x-api-key": "fixture" } } });
     expect(fixture.sleeps).toEqual([2000]);
   });
 
@@ -454,11 +454,9 @@ describe("provider controls and failure propagation", () => {
     expect(fixture.times).toEqual([1000, 3000, 5000, 7000, 9000]);
   });
 
-  it.each(["amazon", "etsy"])("stops %s HTML collection on HTTP 403 after an allowed robots policy", async (provider) => {
+  it("stops Amazon HTML collection on HTTP 403 after an allowed robots policy", async () => {
     const fixture = fixtureFetcher(["User-agent: *\nAllow: /", new Response("fixture-secret-key", { status: 403 })]);
-    const source = provider === "amazon"
-      ? createAmazonSource({ settings: () => ({ scrapeEnabled: true, amazonMarketplace: "US" }), fetcher: fixture.fetcher })
-      : createEtsyBadgesSource({ apiKey: () => undefined, scrapeEnabled: () => true, fetcher: fixture.fetcher });
+    const source = createAmazonSource({ settings: () => ({ scrapeEnabled: true, amazonMarketplace: "US" }), fetcher: fixture.fetcher });
     await expect(source.collectSignals(options())).rejects.toThrow("HTTP 403");
     expect(fixture.fetchImpl).toHaveBeenCalledTimes(2);
     expect(fixture.times).toEqual([1000, 3000]);
@@ -479,10 +477,11 @@ describe("provider controls and failure propagation", () => {
     }
   });
 
-  it("Etsy HTML remains off by default and robots disallow does not fetch search results", async () => {
-    const fixture = fixtureFetcher(["User-agent: *\nDisallow: /search"]);
+  it("Etsy HTML is disabled even when scraping is enabled and robots would allow it", async () => {
+    const fixture = fixtureFetcher(["User-agent: *\nAllow: /"]);
     expect(await createEtsyBadgesSource({ apiKey: () => undefined, scrapeEnabled: () => true, fetcher: fixture.fetcher }).collectSignals(options())).toEqual([]);
-    expect(fixture.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await fixture.fetcher.html("https://www.etsy.com/search?q=poster", { scrapeEnabled: true, log: vi.fn() })).toBeNull();
+    expect(fixture.fetchImpl).not.toHaveBeenCalled();
   });
 
   it.each(["etsy", "pinterest"])("%s propagates a blocking provider failure without another request", async (provider) => {

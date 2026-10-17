@@ -18,6 +18,10 @@ vi.mock("@/components/analytics/charts", () => ({
   NicheChart: () => null, RevenueChart: () => null, TrafficChart: () => null,
 }));
 vi.mock("@/components/analytics/export-csv", () => ({ AnalyticsExport: () => null }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/lib/etsy-finance", () => ({
+  getFinancialEvidence: async () => ({ rows: [], profitStatus: "unavailable", incompleteComponents: ["all fees", "refunds", "supplier costs"] }),
+}));
 
 describe("actual dashboard costs", () => {
   const now = new Date();
@@ -67,5 +71,10 @@ describe("actual dashboard costs", () => {
     expect(html).not.toContain(chf(-analytics.costByKind.ads_estimate));
     expect(html).toContain(chf(-analytics.costByKind.ads_actual));
     expect(html).toContain("estimates are not deducted");
+    expect(html).toContain("actual profit unavailable");
+    expect(html).toContain("Estimated net profit");
+    expect(html).toContain("not independent API verification");
+    expect(html).toContain("Unavailable");
+    expect(html).toContain("Not a measured conversion rate");
   });
 });

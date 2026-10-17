@@ -1,0 +1,1 @@
+export const FINANCE_IMPORT_MAX_BYTES = 256_000;

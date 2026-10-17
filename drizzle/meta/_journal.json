@@ -113,6 +113,41 @@
       "when": 1791674402000,
       "tag": "0017_marketplace_listings",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792089000000,
+      "tag": "0018_etsy_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792089000001,
+      "tag": "0019_etsy_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792089000002,
+      "tag": "0020_etsy_financial_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792089000003,
+      "tag": "0021_artwork_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792089000004,
+      "tag": "0022_etsy_delivery_proof",
+      "breakpoints": true
     }
   ]
 }

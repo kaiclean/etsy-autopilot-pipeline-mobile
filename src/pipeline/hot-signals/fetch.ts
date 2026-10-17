@@ -1,4 +1,5 @@
 import type { HotCollectOptions } from "./types";
+import { etsyRequest } from "@/adapters/etsy/transport";
 
 export const HOT_USER_AGENT = "EtsyAutopilotHotSignals/1.0";
 export const AMAZON_POD_PAGES = [
@@ -150,6 +151,17 @@ export function createHotFetcher(deps: FetchDeps = {}) {
     waitForHost,
     async json(url: string | URL, opts: { log: Log; init?: RequestInit }): Promise<unknown> {
       const approved = approvedUrl(url, "api");
+      if (approved.hostname === "openapi.etsy.com") {
+        const headers = new Headers(opts.init?.headers);
+        const apiKey = headers.get("x-api-key") ?? "";
+        headers.delete("x-api-key");
+        return etsyRequest(approved, { ...opts.init, headers }, {
+          apiKey, priority: "research", fetchImpl: deps.fetchImpl, now: clock, sleep,
+          onResponse: ({ status }) => {
+            if (status >= 400) opts.log(`Hot signals: openapi.etsy.com HTTP ${status}`, "warn");
+          },
+        });
+      }
       const text = await request(approved, opts.init ?? {}, opts.log);
       try {
         return JSON.parse(text) as unknown;
@@ -162,6 +174,10 @@ export function createHotFetcher(deps: FetchDeps = {}) {
     async html(url: string | URL, opts: { scrapeEnabled: boolean; log: Log }): Promise<string | null> {
       if (!opts.scrapeEnabled) return null;
       const approved = approvedUrl(url, "html");
+      if (approved.hostname === "www.etsy.com") {
+        opts.log("Etsy HTML scraping is disabled; use the official Open API", "warn");
+        return null;
+      }
       let policy = robots.get(approved.hostname);
       if (!policy || policy.expires <= clock()) {
         const robotsUrl = approvedUrl(new URL("/robots.txt", approved), "robots");

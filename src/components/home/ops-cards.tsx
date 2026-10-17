@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Panel, SectionTitle, Thumb } from "@/components/common";
 import type { HealthReportPayload, ValidationIssue } from "@/db/schema";
 import { chf } from "@/lib/format";
+import { recommendationsAreReviewable } from "@/lib/operator-recommendations";
 
 type Failure = {
   id: number;
@@ -40,6 +41,7 @@ export function OpsCards({
   stalled: Stalled[];
 }) {
   const payload = report?.payload;
+  const reviewable = payload && recommendationsAreReviewable(payload);
   return (
     <div className="space-y-6">
       <div>
@@ -109,22 +111,26 @@ export function OpsCards({
               Week of {payload.weekStart}
             </div>
             <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
-              <Stat label="Views" value={String(payload.views)} />
-              <Stat label="Favorites" value={String(payload.favorites)} />
-              <Stat label="Sales" value={String(payload.sales)} />
-              <Stat label="Profit after fees" value={chf(payload.profitChf)} />
-              <Stat label="VAT" value={chf(payload.vatChf)} />
-              <Stat label="POD cost" value={chf(payload.podCostChf)} />
+              <Stat label="View snapshots" value={String(payload.views)} />
+              <Stat label="Favorite snapshots" value={String(payload.favorites)} />
+              <Stat label="Eligible paid sales" value={String(payload.sales)} />
+              <Stat label="Estimated profit" value={chf(payload.profitChf)} />
+              <Stat label="Estimated VAT" value={chf(payload.vatChf)} />
+              <Stat label="Estimated POD cost" value={chf(payload.podCostChf)} />
               <Stat label="Ad estimate" value={chf(payload.adsEstimateChf ?? payload.adsChf ?? 0)} />
               <Stat label="Actual ads" value={chf(payload.adsActualChf ?? 0)} />
             </div>
-            {payload.suggestions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No refresh or retire suggestions. Demo and dry-run rows are excluded.</p>
+            <p className="text-xs text-muted-foreground">Views and favorites are cumulative listing snapshots, not weekly traffic or a conversion rate. Recommendations require a check within 36h and human approval. No listing, inventory or ad changes are applied.</p>
+            <p className="text-xs text-muted-foreground">Canceled and refund-pending receipts are excluded from sales and financial totals; their recorded values remain in the order audit list.</p>
+            {!reviewable ? (
+              <p className="text-xs text-muted-foreground">Recommendations withheld: regenerate the health report with fresh, shop-owned analytics evidence.</p>
+            ) : payload.suggestions.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No supported refresh or retire candidates. Missing or stale analytics, demo and dry-run rows are excluded.</p>
             ) : (
               <ul className="space-y-2">
                 {payload.suggestions.map((item) => (
                   <li key={`${item.action}-${item.listingId}`} className="text-sm">
-                    <span className="font-semibold capitalize">{item.action}</span>
+                    <span className="font-semibold">Review {item.action}</span>
                     <span className="text-muted-foreground"> · {item.title}</span>
                     <div className="text-xs text-muted-foreground">{item.reason}</div>
                   </li>

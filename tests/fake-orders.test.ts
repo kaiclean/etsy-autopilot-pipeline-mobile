@@ -206,6 +206,7 @@ describe("analytics ignores demo and dry-run orders", () => {
       listingId: otherListing.id,
     });
 
+    etsyState.mode = "live";
     const summary = await runAnalytics(stageCtx(db, shop.id));
     expect(summary).toBe("30d: 1 orders, revenue CHF 12.50, profit after fees CHF 4.25 · +4 views");
     expect(etsyState.statsIds).toEqual([["445566"]]);
@@ -254,8 +255,8 @@ describe("analytics ignores demo and dry-run orders", () => {
   });
 });
 
-describe("receipt cursor ignores fake rows", () => {
-  it("starts from the newest real order for this shop", async () => {
+describe("updated receipt cursor ignores fake rows", () => {
+  it("backfills existing shops independently of their newest stored receipt creation time", async () => {
     const db = await memoryDb();
     const shop = await omnishop(db);
     const [other] = await db
@@ -299,7 +300,7 @@ describe("receipt cursor ignores fake rows", () => {
     etsyState.mode = "live";
     await runOrders(stageCtx(db, shop.id, { trigger: "manual" }));
     expect(etsyState.calls).toHaveLength(1);
-    expect(etsyState.calls[0].since.toISOString()).toBe(realAt.toISOString());
+    expect(etsyState.calls[0].since.toISOString()).toBe(receiptLookback(NOW, shop.createdAt).toISOString());
     expect(etsyState.calls[0].simulateAtLeastOne).toBe(false);
     expect(etsyState.calls[0].candidateIds).toEqual(["445566"]);
   });
@@ -326,8 +327,8 @@ describe("receipt cursor ignores fake rows", () => {
     const recentOpen = new Date("2026-09-27T00:00:00.000Z");
     await db.update(shops).set({ createdAt: recentOpen }).where(eq(shops.id, shop.id));
     await runOrders(stageCtx(db, shop.id, { trigger: "manual" }));
-    expect(etsyState.calls[1].since.toISOString()).toBe(receiptLookback(NOW, recentOpen).toISOString());
-    expect(etsyState.calls[1].since.toISOString()).toBe("2026-08-07T12:00:00.000Z");
+    expect(etsyState.calls[1].since.toISOString()).toBe("2026-10-06T11:55:00.000Z");
+    expect(receiptLookback(NOW, recentOpen).toISOString()).toBe("2026-08-07T12:00:00.000Z");
     expect(shouldSimulateReceipts("live", "manual")).toBe(false);
     expect(shouldSimulateReceipts("dry-run", "manual")).toBe(true);
     expect(shouldSimulateReceipts("dry-run", "cron")).toBe(false);
