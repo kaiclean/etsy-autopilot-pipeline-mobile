@@ -1,13 +1,15 @@
 import type { PodPreset } from "@/lib/fees";
 import { isSafeArtworkUrl } from "@/lib/art-quality";
-import { loadArtworkBytes, ownMediaKey } from "@/lib/artwork-source";
-import { config } from "@/lib/config";
+import { validateArtwork } from "@/lib/artwork-codec";
+import { loadArtworkBytes } from "@/lib/artwork-source";
+import { config, resolvePrintifyPin } from "@/lib/config";
+import { POD_PRESETS } from "@/lib/fees";
 import { describeFetchError } from "@/lib/http-error";
 import { externalEtsyIdFromProduct } from "@/lib/pod-etsy-id";
-import { localAssetPng } from "@/lib/png";
+import { PRINT_TARGETS } from "@/lib/print-targets";
 import { LIVE_PROVIDER_PIN_ERROR } from "@/lib/publish-gates";
-import type { CatalogChoice } from "./catalog";
-import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductInput } from "./types";
+import { coverPlacement, printPlaceholder, providerDetails, variantRows, type CatalogChoice } from "./catalog";
+import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductImage, PrintifyProductInput } from "./types";
 
 const API = "https://api.printify.com/v1";
 
@@ -79,27 +81,32 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     return JSON.parse(text) as T;
   }
 
-  private envChoice(): CatalogChoice | undefined {
-    const { blueprintId, printProviderId, variantIds } = config.printify;
-    if (!blueprintId || !printProviderId || variantIds.length === 0) return undefined;
-    return { blueprintId, printProviderId, variantIds };
+  private choiceFor(preset: PodPreset): CatalogChoice {
+    const pin = resolvePrintifyPin(preset);
+    if (!pin) throw new Error(`No Printify blank pinned for ${POD_PRESETS[preset].label}. ${LIVE_PROVIDER_PIN_ERROR} Configure PRINTIFY_PRESETS_JSON (or PRINTIFY_PIN_PRESET and legacy IDs).`);
+    return pin;
   }
 
-  /** Catalog scoring stays in catalog.ts. Live creation never calls pickProvider. */
-  private async choiceFor(preset: PodPreset): Promise<CatalogChoice> {
-    throw new Error(`${LIVE_PROVIDER_PIN_ERROR} Blocked preset: ${preset}.`);
-  }
-
-  /** Printify cannot fetch `data:` URLs or this app's non-public media, so those bytes are sent inline. */
-  private async uploadDesign(imageUrl: string) {
-    const unreachable = imageUrl.startsWith("data:") || (ownMediaKey(imageUrl) != null && !isSafeArtworkUrl(imageUrl));
-    const inline = unreachable ? await loadArtworkBytes(imageUrl) : null;
-    const png = inline ?? localAssetPng(imageUrl);
-    if (!png && imageUrl.startsWith("data:")) throw new Error("Print file is an unreadable data URL");
-    const body = png
-      ? { file_name: "design.png", contents: png.toString("base64") }
-      : { file_name: `design-${Date.now()}.png`, url: imageUrl };
+  /** Upload exactly the bytes validated locally, including public URL sources. */
+  private async uploadDesign(bytes: Buffer, format: string) {
+    const body = { file_name: `design.${format}`, contents: bytes.toString("base64") };
     return this.request<{ id: string }>("/uploads/images.json", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async getProviderDetails(preset: PodPreset) {
+    const choice = this.choiceFor(preset);
+    const [provider, shipping] = await Promise.all([
+      this.request<unknown>(`/catalog/print_providers/${choice.printProviderId}.json`),
+      this.request<unknown>(`/catalog/blueprints/${choice.blueprintId}/print_providers/${choice.printProviderId}/shipping.json`),
+    ]);
+    return providerDetails(provider, shipping, choice.variantIds);
+  }
+
+  async getProductImages(productId: string): Promise<PrintifyProductImage[]> {
+    const shopId = config.printify.shopId;
+    if (!shopId) throw new Error("PRINTIFY_SHOP_ID missing");
+    const product = await this.request<{ images?: PrintifyProductImage[] }>(`/shops/${encodeURIComponent(shopId)}/products/${encodeURIComponent(productId)}.json`);
+    return (product.images ?? []).filter((image) => typeof image?.src === "string" && isSafeArtworkUrl(image.src));
   }
 
   private async publishProduct(shopId: string, productId: string) {
@@ -148,9 +155,24 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         ...(externalEtsyId ? { externalEtsyId } : {}),
       };
     }
-    const choice = this.envChoice() ?? (input.preset ? await this.choiceFor(input.preset) : undefined);
-    if (!choice) throw new Error("POD listing is missing its Printify preset");
-    const upload = await this.uploadDesign(input.imageUrl);
+    if (!input.preset) throw new Error("POD listing is missing its Printify preset");
+    const choice = this.choiceFor(input.preset);
+    const path = `/catalog/blueprints/${choice.blueprintId}/print_providers/${choice.printProviderId}`;
+    const variants = variantRows(await this.request<unknown>(`${path}/variants.json`));
+    const areas = choice.variantIds.map((id) => {
+      const variant = variants.find((row) => row.id === id);
+      if (!variant) throw new Error(`Pinned Printify variant ${id} is not in the selected blueprint/provider catalog`);
+      return { id, area: printPlaceholder(input.preset!, variant) };
+    });
+    const bytes = await loadArtworkBytes(input.imageUrl);
+    const art = bytes ? await validateArtwork(bytes) : null;
+    if (!art || !bytes) throw new Error("Printify artwork could not be decoded; a real print file is required");
+    const minimum = PRINT_TARGETS[input.preset];
+    if (art.width < minimum.width || art.height < minimum.height) {
+      throw new Error(`Printify ${input.preset} artwork is ${art.width}×${art.height}; minimum ${minimum.width}×${minimum.height} native pixels required (no upscaling)`);
+    }
+    const placements = areas.map(({ id, area }) => ({ id, area, placement: coverPlacement(art, area) }));
+    const upload = await this.uploadDesign(bytes, art.format);
     const priceCents = Math.round(input.priceChf * 100);
     const product = await this.request<{ id: string }>(`/shops/${shopId}/products.json`, {
       method: "POST",
@@ -161,12 +183,10 @@ export class PrintifyLiveClient implements PrintifyAdapter {
         blueprint_id: choice.blueprintId,
         print_provider_id: choice.printProviderId,
         variants: choice.variantIds.map((id) => ({ id, price: priceCents, is_enabled: true })),
-        print_areas: [
-          {
-            variant_ids: choice.variantIds,
-            placeholders: [{ position: "front", images: [{ id: upload.id, x: 0.5, y: 0.5, scale: 1, angle: 0 }] }],
-          },
-        ],
+        print_areas: placements.map(({ id, area, placement }) => ({
+          variant_ids: [id],
+          placeholders: [{ position: area.position, images: [{ id: upload.id, ...placement }] }],
+        })),
       }),
     });
     let externalEtsyId: string | undefined;
@@ -183,6 +203,7 @@ export class PrintifyLiveClient implements PrintifyAdapter {
       productId: product.id,
       blueprintId: choice.blueprintId,
       printProviderId: choice.printProviderId,
+      variantIds: choice.variantIds,
       ...(externalEtsyId ? { externalEtsyId } : {}),
     };
   }

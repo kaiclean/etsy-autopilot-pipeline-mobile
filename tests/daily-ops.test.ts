@@ -36,6 +36,10 @@ function gateBase(overrides: Partial<Parameters<typeof evaluateQualityGate>[0]> 
     productType: "pod" as const,
     podProvider: "printify:mug",
     imageUrl: "/api/mockup/mug?niche=christmas",
+    gallery: [1, 2, 3].map((n) => ({
+      url: `https://images.printify.example/mockup-${n}.png`, role: "product-mockup" as const,
+      source: "supplier" as const, label: `Supplier mockup ${n}`,
+    })),
     ...overrides,
   };
 }
@@ -55,7 +59,7 @@ describe("quality gate", () => {
     const price = evaluateQualityGate(gateBase({ priceChf: 29.9 }));
     expect(price.reasons.map((reason) => reason.code)).toContain("price_mismatch");
 
-    const mockup = evaluateQualityGate(gateBase({ imageUrl: "/api/placeholder/1" }));
+    const mockup = evaluateQualityGate(gateBase({ imageUrl: "/api/placeholder/1", gallery: [] }));
     expect(mockup.reasons.map((reason) => reason.code)).toContain("missing_mockup");
 
     const disclosure = evaluateQualityGate(gateBase({ description: "No notes." }));

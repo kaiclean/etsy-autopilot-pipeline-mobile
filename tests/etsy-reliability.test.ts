@@ -79,6 +79,13 @@ describe("shared Etsy request safety", () => {
 describe("validated taxonomy mappings", () => {
   const input = { title: "Example", description: "Example", priceChf: 8, tags: ["example"], type: "download" as const };
 
+  it("rejects direct physical draft creation before any Etsy requests", async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    await expect(client().createDraftListing({ ...input, type: "physical" })).rejects.toThrow(/through Printify/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("requires an explicit existing leaf taxonomy before sending a draft write", async () => {
     vi.stubEnv("ETSY_TAXONOMY_ID_DIGITAL", "");
     const fetchImpl = vi.fn();

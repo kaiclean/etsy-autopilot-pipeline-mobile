@@ -1,11 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
+import { getPrintifyAdapter } from "@/adapters/printify";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
-import { alignDeliveryCopy, defaultDeliverable, leadPhrase } from "@/lib/delivery";
-import { withDisclosures } from "@/lib/disclosures";
+import { alignDeliveryCopy, defaultDeliverable, leadPhrase, measuredDigitalDeliverable } from "@/lib/delivery";
+import { appendProviderDetails, validProviderDetails, withDisclosures, type ProviderDetails } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { quoteLadder, type LadderRung } from "@/lib/pricing-ladder";
@@ -74,11 +75,13 @@ export async function draftListing(opts: {
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
   deliveryFormat?: "png" | "jpeg" | "webp" | null;
+  deliveryDimensions?: { width: number; height: number } | null;
+  providerDetails?: ProviderDetails | null;
   artDirection?: string;
   siblingTitles?: readonly string[];
 }) {
   const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
-  const keyword = leadPhrase(productKeyword(opts.keyword) || "original art", opts.niche, opts.product.type);
+  const keyword = leadPhrase(productKeyword(opts.keyword) ? opts.keyword : "", opts.niche, opts.product.type, opts.product.pod);
   const copy = await llm.writeListing({
     keyword,
     niche: opts.niche,
@@ -88,7 +91,7 @@ export async function draftListing(opts: {
     artDirection: opts.artDirection,
   });
   const product = opts.product.type === "digital" ? "digital" : opts.product.pod ?? "posterA3";
-  const title = buildProductTitle(opts.keyword, copy.title, product, opts.siblingTitles, opts.artDirection);
+  const title = buildProductTitle(keyword, copy.title, product, opts.siblingTitles, opts.artDirection);
   const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
   const tags = copy.tags.filter((tag) => !styleClaims.test(tag));
   const preset = opts.product.pod ?? "posterA3";
@@ -108,16 +111,25 @@ export async function draftListing(opts: {
       competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
       productType: opts.product.type,
     });
+  const deliverable = opts.product.type === "digital"
+    ? measuredDigitalDeliverable(opts.deliveryFormat ?? null, opts.deliveryDimensions)
+    : defaultDeliverable("pod");
+  let description = withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat ?? null, deliverable), opts.product.type);
+  if (opts.product.type === "pod" && validProviderDetails(opts.providerDetails)) {
+    description = appendProviderDetails(description, opts.providerDetails);
+  }
   const repaired = repairTrivialCopy(
     {
       title,
       tags,
-      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat), opts.product.type),
+      description,
       priceChf,
       productType: opts.product.type,
-      deliverable: defaultDeliverable(opts.product.type, opts.deliveryFormat),
+      deliverable,
+      podPreset: opts.product.pod,
+      providerDetails: opts.providerDetails,
     },
-    { keyword, product: opts.product },
+    { keyword: productKeyword(keyword), product: opts.product },
   );
   const draft = repaired.draft;
   const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.priceChf != null ? true : opts.assumeOffsiteAds });
@@ -156,6 +168,15 @@ async function listRung(
   if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
   const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
   const fileManifest = deliveryUrl ? await buildFileManifest(deliveryUrl, image.url) : null;
+  let providerDetails: ProviderDetails | undefined;
+  if (rung.product.type === "pod" && supplierId === "printify" && rung.product.pod) {
+    try {
+      const adapter = await getPrintifyAdapter({ db: ctx.db, intent: "read" });
+      if (ctx.demo || adapter.mode === "live") providerDetails = await adapter.getProviderDetails?.(rung.product.pod);
+    } catch {
+      // Unavailable provider facts hold the draft; never replace them with estimates.
+    }
+  }
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
     keyword: keywordForRung(phrase, rung),
@@ -168,6 +189,8 @@ async function listRung(
     podCostChf: rung.podCostChf,
     llm,
     deliveryFormat: fileManifest?.delivery.format ?? null,
+    deliveryDimensions: fileManifest?.delivery,
+    providerDetails,
     artDirection: design.prompt,
     siblingTitles,
   });
@@ -184,6 +207,10 @@ async function listRung(
     printHeight: design.imageHeight,
     colorVariance: design.colorVariance,
   });
+  for (const issue of issues.filter((issue) => issue.severity === "error")) {
+    gate.pass = false;
+    if (!gate.reasons.some((reason) => reason.code === issue.code && reason.message === issue.message)) gate.reasons.push(issue);
+  }
   if (dryRunOnly) {
     gate.pass = false;
     gate.reasons.push({ field: "description", code: "supplier_dry_run", severity: "error", message: "This supplier/product type is dry-run only; live fulfillment is not enabled." });
@@ -210,6 +237,7 @@ async function listRung(
     gallery: image.gallery ?? [],
     copyProvenance: {
       version: 1, provider,
+      ...(validProviderDetails(providerDetails) ? { providerDetails } : {}),
       inputSha256: createHash("sha256").update(JSON.stringify({
         version: "listing-input-v1", phrase: keywordForRung(phrase, rung),
         niche: design.niche, product: rung.product, seed: design.id, artDirection: design.prompt,

@@ -13,6 +13,10 @@ const ENV_KEYS = [
   "PRINTIFY_API_TOKEN",
   "PRINTIFY_SHOP_ID",
   "PRINTIFY_BLUEPRINT_ID",
+  "PRINTIFY_PRINT_PROVIDER_ID",
+  "PRINTIFY_VARIANT_IDS",
+  "PRINTIFY_PIN_PRESET",
+  "PRINTIFY_PRESETS_JSON",
   "LLM_PROVIDER",
   "IMAGE_PROVIDER",
   "OPENAI_API_KEY",
@@ -48,6 +52,38 @@ afterEach(() => {
 });
 
 describe("connection health", () => {
+  it("shows named preset pins and webhook registration without configuration values", () => {
+    clearModeEnv();
+    process.env.PRINTIFY_API_TOKEN = "private-test-token";
+    process.env.PRINTIFY_SHOP_ID = "private-shop-id";
+    process.env.PRINTIFY_BLUEPRINT_ID = "123456";
+    process.env.PRINTIFY_PRINT_PROVIDER_ID = "234567";
+    process.env.PRINTIFY_VARIANT_IDS = "345678";
+    process.env.PRINTIFY_PRESETS_JSON = JSON.stringify({
+      mug: { blueprintId: 456789, printProviderId: 567890, variantIds: [678901] },
+    });
+    const check = connectionHealth({ etsyConnected: false, webhooksRegistered: 2 })
+      .find((row) => row.id === "printify")!;
+    expect(check.detail).toContain("Mug 11oz: pinned");
+    expect(check.detail).toContain("Poster A3 (matte): pinned");
+    expect(check.detail).toContain("Crewneck sweatshirt: missing");
+    expect(check.detail).toContain("2 registered");
+    expect(check.detail).not.toMatch(/123456|456789|private-test-token|private-shop-id/);
+    expect(connectionHealth({ etsyConnected: false, webhooksRegistered: 0 })
+      .find((row) => row.id === "printify")?.detail).toContain("none registered");
+    expect(connectionHealth({ etsyConnected: false })
+      .find((row) => row.id === "printify")?.detail).toContain("registration not checked");
+  });
+
+  it("shows invalid pin configuration without exposing its contents", () => {
+    clearModeEnv();
+    process.env.PRINTIFY_PRESETS_JSON = "private-invalid-configuration";
+    const check = connectionHealth({ etsyConnected: false }).find((row) => row.id === "printify")!;
+    expect(check.label).toBe("Invalid pins");
+    expect(check.level).toBe("red");
+    expect(check.detail).not.toContain("private-invalid-configuration");
+  });
+
   it("reports the dry-run demo defaults without secret values", () => {
     clearModeEnv();
     process.env.DATABASE_URL = "postgres://autopilot:s3cret-db-password@ep-example.neon.tech/shop";

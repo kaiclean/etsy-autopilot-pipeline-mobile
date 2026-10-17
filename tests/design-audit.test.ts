@@ -85,7 +85,7 @@ describe("design audit", () => {
   ] as const)("describes a measured %s delivery and validates its format", async (deliveryFormat, label) => {
     const { draft, issues } = await draftListing({
       niche: "alpine", keyword: "alpine wall art", product: { type: "digital" },
-      seed: 1, assumeOffsiteAds: false, deliveryFormat,
+      seed: 1, assumeOffsiteAds: false, deliveryFormat, deliveryDimensions: { width: 3000, height: 4500 },
       llm: {
         name: "test",
         writeListing: async () => ({

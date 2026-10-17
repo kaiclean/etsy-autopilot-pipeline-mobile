@@ -1,4 +1,31 @@
 import type { ProviderCreditSignal } from "./provider-errors";
+import { isPodPreset, type PodPreset } from "./fees";
+
+export type PrintifyPin = { blueprintId: number; printProviderId: number; variantIds: number[] };
+
+function positiveId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Invalid pins must never silently fall back to a different physical product. */
+export function parsePrintifyPresets(raw: string | undefined): Partial<Record<PodPreset, PrintifyPin>> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("PRINTIFY_PRESETS_JSON must be a JSON object of preset pins"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("PRINTIFY_PRESETS_JSON must be a JSON object of preset pins");
+  const out: Partial<Record<PodPreset, PrintifyPin>> = {};
+  for (const [preset, value] of Object.entries(parsed)) {
+    if (!isPodPreset(preset)) throw new Error("PRINTIFY_PRESETS_JSON has an unknown preset key");
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid Printify pin for ${preset}`);
+    const pin = value as Record<string, unknown>;
+    if (Object.keys(pin).some((key) => !["blueprintId", "printProviderId", "variantIds"].includes(key))
+      || !positiveId(pin.blueprintId) || !positiveId(pin.printProviderId)
+      || !Array.isArray(pin.variantIds) || !pin.variantIds.length || !pin.variantIds.every(positiveId)
+      || new Set(pin.variantIds).size !== pin.variantIds.length) throw new Error(`Invalid Printify pin for ${preset}: positive blueprintId, printProviderId and unique variantIds required`);
+    out[preset] = { blueprintId: pin.blueprintId, printProviderId: pin.printProviderId, variantIds: [...pin.variantIds] };
+  }
+  return out;
+}
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -30,17 +57,36 @@ export const config = {
     };
   },
   get printify() {
+    const requestedPreset = env("PRINTIFY_PIN_PRESET") ?? "posterA3";
+    const pinPreset: PodPreset = isPodPreset(requestedPreset) ? requestedPreset : "posterA3";
+    let pinConfigError: string | undefined = isPodPreset(requestedPreset) ? undefined : "PRINTIFY_PIN_PRESET must be a supported POD preset";
+    let presets: Partial<Record<PodPreset, PrintifyPin>> = {};
+    try { presets = parsePrintifyPresets(env("PRINTIFY_PRESETS_JSON")); } catch (error) {
+      pinConfigError = error instanceof Error ? error.message : "Invalid PRINTIFY_PRESETS_JSON";
+    }
+    const blueprint = env("PRINTIFY_BLUEPRINT_ID");
+    const provider = env("PRINTIFY_PRINT_PROVIDER_ID");
+    const variants = env("PRINTIFY_VARIANT_IDS");
+    const blueprintId = blueprint === undefined ? undefined : Number(blueprint);
+    const printProviderId = provider === undefined ? undefined : Number(provider);
+    const variantIds = variants === undefined ? [] : variants.split(",").map((s) => Number(s.trim()));
+    if ((blueprintId !== undefined && !positiveId(blueprintId))
+      || (printProviderId !== undefined && !positiveId(printProviderId))
+      || (variants !== undefined && (!variantIds.every(positiveId) || new Set(variantIds).size !== variantIds.length))) {
+      pinConfigError = "Invalid legacy Printify pin: positive IDs and unique PRINTIFY_VARIANT_IDS required";
+    }
     return {
       token: env("PRINTIFY_API_TOKEN"),
       shopId: env("PRINTIFY_SHOP_ID"),
-      blueprintId: Number(env("PRINTIFY_BLUEPRINT_ID") ?? 0) || undefined,
-      printProviderId: Number(env("PRINTIFY_PRINT_PROVIDER_ID") ?? 0) || undefined,
-      variantIds: (env("PRINTIFY_VARIANT_IDS") ?? "")
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter(Boolean),
+      blueprintId: positiveId(blueprintId) ? blueprintId : undefined,
+      printProviderId: positiveId(printProviderId) ? printProviderId : undefined,
+      variantIds: variantIds.every(positiveId) && new Set(variantIds).size === variantIds.length ? variantIds : [],
+      pinPreset,
+      presets,
+      pinConfigError,
       webhookSecret: env("PRINTIFY_WEBHOOK_SECRET"),
     };
+
   },
   get gelato() {
     return { apiKey: env("GELATO_API_KEY") };
@@ -172,6 +218,15 @@ export const config = {
     return env("PUBLISH_MODE") === "live" ? "live" : "dry-run";
   },
 };
+
+export function resolvePrintifyPin(preset: PodPreset): PrintifyPin | undefined {
+  const p = config.printify;
+  if (p.pinConfigError) throw new Error(p.pinConfigError);
+  const mapped = p.presets[preset];
+  if (mapped) return mapped;
+  if (p.pinPreset !== preset || !p.blueprintId || !p.printProviderId || !p.variantIds.length) return undefined;
+  return { blueprintId: p.blueprintId, printProviderId: p.printProviderId, variantIds: p.variantIds };
+}
 
 /** Public origin used for media URLs and the Printify callback. */
 export function publicAppUrl() {

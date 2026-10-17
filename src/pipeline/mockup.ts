@@ -25,6 +25,7 @@ export type ArtworkGalleryView = {
   url: string;
   role: "artwork-preview" | "product-mockup";
   label: string;
+  source?: "supplier" | "illustrative" | "synthetic";
   sourceDimensions?: { width: number; height: number };
 };
 
@@ -44,6 +45,7 @@ function withGallery(image: MockupResult, opts: ListingImageOptions): MockupResu
     Number.isSafeInteger(measured.height) && measured.height > 0 ? measured : undefined;
   const primary: ArtworkGalleryView = {
     url: image.url,
+    source: image.provider === "printify-mockup" ? "supplier" : "illustrative",
     role: image.provider === "preview" ? "artwork-preview" : "product-mockup",
     label: image.provider === "preview" ? "Artwork preview; not the full-resolution delivery file" :
       image.provider === "printify-mockup" ? "Supplier-generated product mockup" :
@@ -54,7 +56,7 @@ function withGallery(image: MockupResult, opts: ListingImageOptions): MockupResu
   if (opts.productType === "pod" && !isPlaceholderUrl(opts.artworkUrl)) {
     const preview = digitalPreviewUrl(opts.artworkUrl, String(opts.niche));
     if (new URL(preview, "http://localhost").searchParams.has("src") && preview !== image.url) {
-      gallery.push({ url: preview, role: "artwork-preview", label: "Artwork composition preview; product mockup shown separately",
+      gallery.push({ url: preview, role: "artwork-preview", source: "illustrative", label: "Artwork composition preview; product mockup shown separately",
         ...(sourceDimensions ? { sourceDimensions } : {}) });
     }
   }

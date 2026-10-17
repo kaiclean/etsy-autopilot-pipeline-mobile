@@ -38,6 +38,10 @@ describe("artwork compositing and the art gate", () => {
       productType: "pod" as const,
       podProvider: "printify:mug",
       imageUrl: "/api/mockup/mug?niche=christmas",
+      gallery: [1, 2, 3].map((n) => ({
+        url: `https://images.printify.example/mockup-${n}.png`, role: "product-mockup" as const,
+        source: "supplier" as const, label: `Supplier mockup ${n}`,
+      })),
     };
     const solid = decodePng(rgbPng(64, 64, [180, 20, 20]))!;
     expect(colorVariance(solid)).toBeLessThan(8);

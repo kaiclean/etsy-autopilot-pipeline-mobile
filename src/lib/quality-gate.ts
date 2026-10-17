@@ -4,6 +4,28 @@ import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures"
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { POD_PRESETS, type PodPreset } from "@/lib/fees";
 import { PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
+import type { ArtworkGalleryView } from "@/pipeline/mockup";
+
+export const WAITING_FOR_PRINTIFY_MOCKUPS = "Waiting for Printify mockups";
+export const MIN_SUPPLIER_MOCKUPS = 3;
+
+export function supplierMockupCount(input: {
+  gallery?: ArtworkGalleryView[] | null;
+  publishMode?: string | null;
+}) {
+  return new Set((input.gallery ?? []).filter((view) => {
+    if (view.role !== "product-mockup" || !view.url.trim()) return false;
+    if (view.source === "synthetic") return input.publishMode === "dry-run";
+    if (view.source !== "supplier" || isPlaceholderUrl(view.url)) return false;
+    try {
+      const url = new URL(view.url);
+      return (url.protocol === "https:" || url.protocol === "http:") &&
+        !url.pathname.startsWith("/api/mockup/") && !url.searchParams.has("synthetic");
+    } catch {
+      return false;
+    }
+  }).map((view) => view.url.trim())).size;
+}
 
 /**
  * Competitive CHF bands already used by the shop (mug CHF 15–25, A3 poster CHF 18–33).
@@ -34,6 +56,8 @@ export type QualityGateInput = {
   printWidth?: number | null;
   printHeight?: number | null;
   colorVariance?: number | null;
+  gallery?: ArtworkGalleryView[] | null;
+  publishMode?: string | null;
 };
 
 export function podPresetFromProvider(provider: string | null | undefined): PodPreset | null {
@@ -122,13 +146,17 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
     reasons.push(issue("description", "missing_ai_disclosure", "AI disclosure is missing."));
   }
   if (input.productType === "pod") {
+    if (supplierMockupCount(input) < MIN_SUPPLIER_MOCKUPS) {
+      reasons.push(issue("image", "supplier_mockups_pending", WAITING_FOR_PRINTIFY_MOCKUPS));
+    }
     const hasPartner = description.includes(PRODUCTION_PARTNER_DISCLOSURE) || description.includes("production partner");
     if (!hasPartner) {
       reasons.push(issue("description", "missing_production_disclosure", "Production-partner disclosure is missing."));
     }
   }
 
-  if (!mockupOk(input.imageUrl ?? "", input.productType, preset)) {
+  if (!mockupOk(input.imageUrl ?? "", input.productType, preset) &&
+    !(input.productType === "pod" && supplierMockupCount(input) >= MIN_SUPPLIER_MOCKUPS)) {
     reasons.push(
       issue(
         "image",

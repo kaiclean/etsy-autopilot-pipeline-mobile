@@ -13,6 +13,7 @@ import type { Listing } from "@/db/schema";
 import { calculateFees } from "@/lib/fees";
 import { ETSY_LIMITS, validateListing } from "@/lib/listing-validator";
 import { cn } from "@/lib/utils";
+import { SupplierGallery } from "./supplier-gallery";
 
 type Props = {
   listing: Listing | null;
@@ -79,6 +80,7 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
         <DrawerTitle>Edit listing</DrawerTitle>
       </DrawerHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pt-3 pb-4">
+        <SupplierGallery listing={listing} />
         <Field label="Title" counter={`${title.length}/${ETSY_LIMITS.titleMax}`} over={title.length > ETSY_LIMITS.titleMax}>
           <Textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={3} className="min-h-0 resize-none rounded-xl text-[15px]" />
         </Field>

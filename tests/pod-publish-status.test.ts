@@ -46,6 +46,7 @@ describe("publish stage POD status", () => {
         tags: src.tags,
         description: src.description,
         imageUrl: src.imageUrl,
+        deliveryUrl: "https://art.example/print-master.png",
         priceChf: src.priceChf,
         podCostChf: src.podCostChf,
         netChf: src.netChf,
@@ -97,6 +98,7 @@ describe("publish stage POD status", () => {
     adapters.getPrintifyAdapter.mockResolvedValue({
       mode: "live",
       createAndPublish,
+      getProductImages: vi.fn(async () => [1, 2, 3].map((n) => ({ src: `https://images.printify.example/product-${n}.png` }))),
       getExternalEtsyIds: vi.fn(async () => ({})),
       getOrderStatuses: vi.fn(async () => ({})),
     });

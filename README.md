@@ -176,13 +176,28 @@ All configuration comes from environment variables. See [`.env.example`](.env.ex
 | `DEMO_MODE` | — | `true`/`false` to force. Default: on until Etsy keys exist. |
 | `PUBLISH_MODE` | — | Leave `dry-run`. The dashboard Go live control is the switch. Webhooks and image storage do not turn publishing on. |
 | `ETSY_API_KEY`, `ETSY_SHARED_SECRET`, `ETSY_SHOP_ID`, `ETSY_REDIRECT_URI` | live Etsy | Etsy Open API v3 app |
-| `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`, `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID`, `PRINTIFY_VARIANT_IDS` | live POD | Printify API |
+| `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`, `PRINTIFY_PRESETS_JSON` | live POD | Printify credentials and explicit per-preset blueprint/provider/variant pins |
+| `PRINTIFY_PIN_PRESET`, `PRINTIFY_BLUEPRINT_ID`, `PRINTIFY_PRINT_PROVIDER_ID`, `PRINTIFY_VARIANT_IDS` | legacy POD pin | Single pin applies only to `PRINTIFY_PIN_PRESET` (default `posterA3`), never to every product |
 | `PRINTIFY_WEBHOOK_SECRET` | production webhooks | HMAC secret you send as `secret` when creating Printify webhooks. Callback: `POST $APP_URL/api/webhooks/printify` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | background push | Web Push keys. `npm run vapid:generate`. Subject is `mailto:you@example.com`. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `S3_BUCKET` | stored art | S3-compatible upload (Railway, AWS, R2). Optional `S3_PUBLIC_BASE_URL`, `S3_URL_MODE`, `S3_FORCE_PATH_STYLE`. |
 | `BLOB_READ_WRITE_TOKEN` | stored art | Vercel Blob, used only when the S3 variables are not all set. |
 | `IMAGE_PROVIDER` + `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET`, or `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_IMAGE_MODEL`), or `REPLICATE_API_TOKEN` | real art | Image generation (OpenAI or OpenRouter) |
 | `LLM_PROVIDER=openai` + `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`, `OPENAI_MODEL`) | real copy | Listing writer (OpenAI or OpenRouter) |
+
+### Printify blanks and supplier previews
+
+Run `npm run printify:catalog -- --preset mug` for **read-only** candidate blueprints, providers, shipping coverage and variant placeholder dimensions. Choose real catalog IDs and configure only the presets you intend to offer, for example:
+
+```json
+{"mug":{"blueprintId":123,"printProviderId":45,"variantIds":[678]}}
+```
+
+The IDs above are examples, not a recommended blank. Put the selected mapping in `PRINTIFY_PRESETS_JSON`. JSON pins override the legacy pin for the same preset. Missing pins hold the product rather than substitute the poster blank. The health card shows pin status by product name and the last known webhook-registration status, without exposing credentials.
+
+POD approval prepares a Printify **supplier preview without publishing**. Catalog placeholders determine placement; undersized artwork is refused against shared print targets. The queue labels supplier and illustrative views separately and requires at least three supplier mockups before approval, with up to ten gallery images. If Printify is still rendering, retry approval after “Waiting for Printify mockups”. Provider processing/shipping times and the Printify production-partner disclosure are required; missing provider timing is held rather than guessed.
+
+The physical-sample gate remains required for the separate human Publish to Etsy action. Direct physical Etsy draft creation is disabled; Printify remains the physical fulfillment path. Digital descriptions disclose AI assistance, file format, measured pixels and print size. None of these checks enables live mode, publishes a Printify product or activates an Etsy listing.
 
 ---
 

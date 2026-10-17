@@ -1,4 +1,5 @@
 import type { Niche, ProductType } from "@/db/schema";
+import type { PodPreset } from "./fees";
 
 /**
  * Wall-art ratios buyers expect from a finished printable pack.
@@ -8,9 +9,13 @@ import type { Niche, ProductType } from "@/db/schema";
 export const PLANNED_WALL_ART_RATIOS = ["2:3", "3:4", "4:5", "11x14", "ISO A"] as const;
 
 /** Buyer-facing file list. Must match the single file `runPublish` uploads for digital listings. */
-export function digitalFileBlurb(format: "png" | "jpeg" | "webp" | null = "png") {
+export function digitalFileBlurb(format: "png" | "jpeg" | "webp" | null = "png", facts?: DeliverableFacts) {
   const file = format ? `One ${{ png: "PNG", jpeg: "JPEG", webp: "WebP" }[format]} of this artwork` : "One image file of this artwork";
-  return ["WHAT YOU GET", `• ${file}`, "• Instant download after purchase"].join("\n");
+  const measured = facts?.pixels && facts.dpi && facts.sizes.length
+    ? [`• Pixel size: ${facts.pixels.width} × ${facts.pixels.height} pixels`,
+      `• Print size at ${facts.dpi} DPI: up to ${facts.sizes[0]} (no additional exports included)`]
+    : [];
+  return ["WHAT YOU GET", `• ${file}`, ...measured, "• Instant download after purchase"].join("\n");
 }
 
 export const DIGITAL_FILE_BLURB = digitalFileBlurb();
@@ -27,8 +32,9 @@ export type DeliverableFacts = {
   editable: boolean;
   personalized: boolean;
   commercialUse: boolean;
-  /** Set only when the file was exported at a real DPI we can stand behind. */
+  /** Recommended printing density, derived from measured pixels; not an invented export. */
   dpi: number | null;
+  pixels?: { width: number; height: number };
   ratios: string[];
   sizes: string[];
   blank: "poster" | "mug" | "shirt" | "sweatshirt" | "ornament" | null;
@@ -51,6 +57,18 @@ export function defaultDeliverable(productType: ProductType, format: "png" | "jp
     blank: null,
     includes: [],
   };
+}
+
+export function measuredDigitalDeliverable(
+  format: "png" | "jpeg" | "webp" | null,
+  pixels?: { width: number; height: number } | null,
+): DeliverableFacts {
+  const facts = defaultDeliverable("digital", format);
+  if (!pixels || !Number.isSafeInteger(pixels.width) || !Number.isSafeInteger(pixels.height) ||
+    pixels.width <= 0 || pixels.height <= 0 || !format) return facts;
+  const dpi = 300;
+  const inches = (value: number) => (Math.floor(value / dpi * 100) / 100).toFixed(2);
+  return { ...facts, pixels, dpi, sizes: [`${inches(pixels.width)} × ${inches(pixels.height)} inches`] };
 }
 
 type PromiseRule = {
@@ -119,25 +137,32 @@ const LEAD_FALLBACK: Record<Niche, string> = {
   stream: "neon stream art",
 };
 
-export function leadPhrase(phrase: string, niche: Niche, productType: ProductType = "digital") {
+export function leadPhrase(phrase: string, niche: Niche, productType: ProductType = "digital", preset?: PodPreset) {
   const trimmed = phrase.trim().toLowerCase().replace(/\s+/g, " ");
   if (trimmed && !keywordHasUndeliverablePromise(trimmed, productType)) return trimmed;
-  return LEAD_FALLBACK[niche];
+  if (productType === "digital") return LEAD_FALLBACK[niche];
+  const nouns: Record<PodPreset, string> = {
+    posterA3: "poster", mug: "mug", tshirt: "t-shirt", sweatshirt: "sweatshirt", tote: "tote bag",
+    phoneCase: "phone case", canvas: "canvas", sticker: "sticker", blanket: "blanket", hoodie: "hoodie", ornament: "ornament",
+  };
+  return `${LEAD_FALLBACK[niche].replace(/ wall art$| art$/, "")} ${nouns[preset ?? "posterA3"]}`;
 }
 
 /**
  * Drop lines that promise files, ratios, or formats the shop does not ship,
  * then state the one image file digital buyers actually get.
  */
-export function alignDeliveryCopy(body: string, productType: ProductType, format: "png" | "jpeg" | "webp" | null = "png") {
+export function alignDeliveryCopy(body: string, productType: ProductType, format: "png" | "jpeg" | "webp" | null = "png", measured?: DeliverableFacts) {
   const facts = defaultDeliverable(productType, format);
   const withoutPack = productType === "digital" ? body.replace(/\n*WHAT YOU GET[\s\S]*$/i, "") : body;
   const kept = withoutPack
     .split("\n")
-    .filter((line) => promiseLabels(line, facts).length === 0)
+    .filter((line) => promiseLabels(line, facts).length === 0 &&
+      !/\b\d+(?:\.\d+)?\s*(?:×|x)\s*\d+(?:\.\d+)?\s*(?:pixels?|px|inches?|cm|mm)\b/i.test(line) &&
+      !(productType === "pod" && /\b(?:days?|weeks?|hours?|closest|nearest|downloads?)\b/i.test(line)))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (productType !== "digital") return kept;
-  return `${kept}\n\n${digitalFileBlurb(format)}`.trim();
+  return `${kept}\n\n${digitalFileBlurb(format, measured)}`.trim();
 }

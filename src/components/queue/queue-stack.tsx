@@ -18,6 +18,7 @@ import { chf } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
 import { cn } from "@/lib/utils";
 import { ListingEditor } from "./listing-editor";
+import { SupplierGallery } from "./supplier-gallery";
 
 const THRESHOLD = 100;
 type Decision = "approved" | "rejected";
@@ -43,7 +44,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   const visible = useMemo(() => filterQueue(remaining, { query, niche, status, triage }), [remaining, query, niche, status, triage]);
   const top = visible[0];
   const selectedVisible = visible.filter((l) => selected.has(l.id));
-  const hasErrors = (l: Listing) => listingHasErrors(l.validation);
+  const hasErrors = (l: Listing) => listingHasErrors(l.validation.filter((issue) => issue.code !== "supplier_mockups_pending"));
 
   const hide = useCallback((id: number, on: boolean) => {
     setHidden((s) => {
@@ -73,18 +74,21 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
       }
       vibrate(12);
       setExit({ id: l.id, dir: d === "approved" ? 1 : -1 });
-      setTimeout(() => {
+      const exitTimer = setTimeout(() => {
         hide(l.id, true);
         setExit(null);
         setDrag({ x: 0, y: 0, active: false });
       }, 220);
       const r = await setListingStatus(l.id, d);
       if (!r.ok) {
+        clearTimeout(exitTimer);
+        setExit(null);
+        setDrag({ x: 0, y: 0, active: false });
         hide(l.id, false);
         toast.error(r.error);
         return;
       }
-      toast.success(d === "approved" ? "Approved: publishes on next run" : "Rejected", {
+      toast.success(d === "approved" ? "Approved: draft preparation on next run; not activated" : "Rejected", {
         description: l.title.slice(0, 60),
         action: {
           label: "Undo",
@@ -95,7 +99,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
         },
       });
     },
-    [],
+    [hide],
   );
 
   const bulk = useCallback(
@@ -209,7 +213,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   const approveOpacity = Math.min(1, Math.max(0, x / THRESHOLD));
   const rejectOpacity = Math.min(1, Math.max(0, -x / THRESHOLD));
   const next = visible[1];
-  const errors = top ? top.validation.filter((i) => i.severity === "error") : [];
+  const errors = top ? top.validation.filter((i) => i.severity === "error" && i.code !== "supplier_mockups_pending") : [];
 
   const clearFilters = () => {
     setQuery("");
@@ -329,6 +333,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
               </div>
             </div>
             <div className="space-y-3 p-4 pt-1">
+              <SupplierGallery listing={top} />
               <h2 className="line-clamp-2 text-[15px] leading-snug font-semibold">{top.title}</h2>
               <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4">
                 {top.tags.map((t) => (

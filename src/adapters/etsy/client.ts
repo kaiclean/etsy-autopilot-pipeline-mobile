@@ -98,7 +98,8 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   async createDraftListing(input: EtsyDraftInput) {
-    const name = input.type === "download" ? "ETSY_TAXONOMY_ID_DIGITAL" : "ETSY_TAXONOMY_ID_POSTER";
+    if (input.type !== "download") throw new Error("Physical listings must be created through Printify; direct Etsy physical draft creation is disabled.");
+    const name = "ETSY_TAXONOMY_ID_DIGITAL";
     const taxonomyId = Number(process.env[name]);
     if (!Number.isSafeInteger(taxonomyId) || taxonomyId <= 0) throw new Error(`${name} must explicitly select a seller taxonomy before live draft creation`);
     const taxonomy = await this.request<components["schemas"]["SellerTaxonomyNodes"]>("/seller-taxonomy/nodes");

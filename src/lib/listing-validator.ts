@@ -1,6 +1,7 @@
 import type { ValidationIssue } from "@/db/schema";
-import { defaultDeliverable, promiseLabels, type DeliverableFacts } from "./delivery";
-import { requiredDisclosures } from "./disclosures";
+import { defaultDeliverable, digitalFileBlurb, measuredDigitalDeliverable, promiseLabels, type DeliverableFacts } from "./delivery";
+import { providerTimingBlurb, requiredDisclosures, validProviderDetails, type ProviderDetails } from "./disclosures";
+import type { PodPreset } from "./fees";
 
 export const ETSY_LIMITS = {
   titleMax: 140,
@@ -47,6 +48,12 @@ export type ListingDraft = {
   productType: "digital" | "pod";
   /** Defaults to one opaque PNG (digital) or one physical blank (POD). */
   deliverable?: DeliverableFacts;
+  podPreset?: PodPreset;
+  podProvider?: string | null;
+  providerDetails?: ProviderDetails | null;
+  supplierPreview?: { providerDetails?: ProviderDetails | null } | null;
+  copyProvenance?: { version: 1; provider: string; inputSha256: string; providerDetails?: ProviderDetails | null } | null;
+  fileManifest?: { delivery: { width: number; height: number; format?: "png" | "jpeg" | "webp" } } | null;
 };
 
 /** Empty praise. Warnings only: they do not block approval. */
@@ -88,6 +95,20 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
   const issues: ValidationIssue[] = [];
   const push = (i: ValidationIssue) => issues.push(i);
   const title = d.title ?? "";
+  const preset = d.podPreset ?? d.podProvider?.split(":").pop();
+  if (d.productType === "pod" && preset !== "posterA3" && preset !== "canvas" &&
+    /\b(?:wall[ -]+art|prints?|printables?|digital|downloads?)\b/i.test(title)) {
+    push({ field: "title", severity: "error", code: "variant_mismatch", message: "Only posters and canvases may use wall-art or print titles for POD." });
+  }
+  if (d.productType === "pod" && preset) {
+    const matching = FAMILIES.find((family) => (family.presets as readonly string[]).includes(preset));
+    if (matching && !matching.pattern.test(title)) {
+      push({ field: "title", severity: "error", code: "missing_product_noun", message: "Title must name the physical product being sold." });
+    }
+    const mismatches = FAMILIES.filter((family) =>
+      !(family.presets as readonly string[]).includes(preset) && family.pattern.test(title));
+    if (mismatches.length) push({ field: "title", severity: "error", code: "variant_mismatch", message: "Title names a different product variant." });
+  }
 
   if (title.trim().length === 0) {
     push({ field: "title", severity: "error", code: "title_empty", message: "Title is required." });
@@ -183,7 +204,46 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
     push({ field: "price", severity: "error", code: "price_low", message: "Price must be at least CHF 0.20." });
   }
 
-  const facts = d.deliverable ?? defaultDeliverable(d.productType);
+  const measured = d.fileManifest?.delivery;
+  let facts = d.productType === "digital" && measured
+    ? measuredDigitalDeliverable(measured.format ?? null, measured)
+    : d.deliverable ?? defaultDeliverable(d.productType);
+  if (d.productType === "digital" && facts.pixels &&
+    (facts.format === "png" || facts.format === "jpeg" || facts.format === "webp")) {
+    const derived = measuredDigitalDeliverable(facts.format, facts.pixels);
+    facts = { ...facts, pixels: derived.pixels, dpi: derived.dpi, sizes: derived.sizes };
+  }
+  if (d.productType === "digital") {
+    const format = facts.format === "png" || facts.format === "jpeg" || facts.format === "webp" ? facts.format : null;
+    if (!facts.pixels || !facts.dpi || !format) {
+      push({ field: "description", severity: "error", code: "missing_delivery_measurements", message: "Measured digital file format and pixel dimensions are required." });
+    } else if (!description.includes(digitalFileBlurb(format, facts))) {
+      push({ field: "description", severity: "error", code: "missing_delivery_details", message: "Description must state the actual file format, pixel dimensions and derived print size at its stated DPI." });
+    }
+    if (facts.pixels && facts.dpi) {
+      const copy = `${title}\n${tags.join("\n")}\n${description}`;
+      const falseDpi = [...copy.matchAll(/\b(\d+(?:\.\d+)?)\s*dpi\b/gi)]
+        .some((match) => Number(match[1]) !== facts.dpi);
+      const falseSize = [...copy.matchAll(/\b(\d+(?:\.\d+)?)\s*[×x]\s*(\d+(?:\.\d+)?)\s*(pixels?|px|inches?|cm|mm)\b/gi)]
+        .some((match) => {
+          const unit = match[3].toLowerCase();
+          const factor = /^(?:pixels?|px)$/.test(unit) ? 1 : facts.dpi! / (unit === "cm" ? 2.54 : unit === "mm" ? 25.4 : 1);
+          const actual = [Number(match[1]) * factor, Number(match[2]) * factor].sort((a, b) => a - b);
+          const available = [facts.pixels!.width, facts.pixels!.height].sort((a, b) => a - b);
+          return actual.some((value, index) => value > available[index] + 0.01);
+        });
+      if (falseDpi || falseSize) {
+        push({ field: "description", severity: "error", code: "undeliverable_promise", message: "Copy claims a print size or DPI that does not match the measured digital file." });
+      }
+    }
+  } else {
+    const details = d.providerDetails ?? d.supplierPreview?.providerDetails ?? d.copyProvenance?.providerDetails;
+    if (!validProviderDetails(details)) {
+      push({ field: "description", severity: "error", code: "missing_provider_timings", message: "Verified production-provider processing and shipping times are required before approval." });
+    } else if (!description.includes(providerTimingBlurb(details))) {
+      push({ field: "description", severity: "error", code: "missing_provider_timings", message: "Description must state the verified production-provider processing and shipping times." });
+    }
+  }
   const promiseOn = (field: ValidationIssue["field"], text: string) => {
     const labels = promiseLabels(text, facts);
     if (!labels.length) return;
@@ -303,7 +363,7 @@ const NEUTRAL_TAGS = [
   "styled print",
 ];
 
-const PRODUCT_FAMILY = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|mugs?|posters?|sweatshirts?|t-?shirts?|tees?)\b/i;
+const PRODUCT_FAMILY = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|mugs?|posters?|sweatshirts?|(?:t[ -]?)?shirts?|tees?)\b/i;
 
 function rememberTag(tags: string[], seen: Set<string>, raw: string) {
   if (tags.length >= ETSY_LIMITS.tagCount) return;
@@ -317,7 +377,7 @@ const FAMILIES = [
   { family: "mug", pattern: /\bmugs?\b/i, presets: ["mug"] },
   { family: "poster", pattern: /\bposters?\b/i, presets: ["posterA3"] },
   { family: "sweatshirt", pattern: /\bsweatshirts?\b/i, presets: ["sweatshirt"] },
-  { family: "shirt", pattern: /\b(?:t-?shirts?|tees?)\b/i, presets: ["tshirt"] },
+  { family: "shirt", pattern: /\b(?:(?:t[ -]?)?shirts?|tees?)\b/i, presets: ["tshirt"] },
   { family: "tote", pattern: /\btote(?: bags?)?\b/i, presets: ["tote"] },
   { family: "phoneCase", pattern: /\bphone cases?\b/i, presets: ["phoneCase"] },
   { family: "canvas", pattern: /\b(?:canvas|canvases)\b/i, presets: ["canvas"] },
@@ -351,7 +411,7 @@ function stripPraise(text: string) {
   if (!re.test(text)) return { text, changed: false };
   const next = text
     .replace(new RegExp(PRAISE_SOURCE, "gi"), " ")
-    .replace(/\s+/g, " ")
+    .replace(/[^\S\n]+/g, " ")
     .replace(/\s+([,.;!?])/g, "$1")
     .trim();
   return { text: next, changed: true };
@@ -396,6 +456,9 @@ export function repairTrivialCopy<T extends ListingDraft>(
     for (const family of FAMILIES) {
       if (allowed.has(family.family)) continue;
       stripped = stripped.replace(new RegExp(family.pattern.source, "gi"), " ");
+    }
+    if (opts.product.type === "pod" && opts.product.pod !== "posterA3" && opts.product.pod !== "canvas") {
+      stripped = stripped.replace(/\b(?:wall[ -]+art|prints?|printables?|digital|downloads?)\b/gi, " ");
     }
     stripped = stripped.replace(/\s+/g, " ").replace(/\s+\|/g, " |").trim();
     if (stripped !== title) {
