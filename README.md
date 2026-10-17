@@ -131,6 +131,13 @@ The shared transport emits OpenTelemetry API request spans, status counts and la
 
 `drizzle/0016_sourcing.sql` is journaled and applied automatically on database connection. Its `IF NOT EXISTS` statements safely support databases where it was already applied manually. Preset costs remain estimates until fresh qualifying quotes are available.
 
+**Upgrading an already-migrated database:** Drizzle only runs migrations newer than its latest recorded timestamp. If `0018` or later ran before `0016`/`0017` were restored to the journal, those earlier entries are skipped. Apply the existing idempotent SQL explicitly on that database if their tables are missing:
+
+```sh
+psql "$DATABASE_URL" -f drizzle/0016_sourcing.sql
+psql "$DATABASE_URL" -f drizzle/0017_marketplace_listings.sql
+```
+
 When generating future Drizzle migrations, preserve the sourcing tables with idempotent SQL rather than recreating them. `orders.sourcing_recheck` is accessed with explicit SQL so existing order queries still work if that column is unavailable.
 
 Products → **Compare suppliers** shows each enabled product across CH, EU (Germany representative), and US. The existing daily Maintenance cron refreshes quotes from every connected Printify provider and Gelato. Quotes are reused for at most 24 hours. Only explicit in-stock quotes with complete USD base and shipping costs qualify; the cheapest landed CHF cost wins, with production days breaking ties. Unknown stock, cost, or production time displays `—`. No qualifying quote preserves the current choice and records an alert.

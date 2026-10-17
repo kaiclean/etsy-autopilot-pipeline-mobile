@@ -92,6 +92,8 @@ The CSV is an operator worksheet, **not** an Amazon bulk-import format or API pa
 
 `drizzle/0017_marketplace_listings.sql` is additive and journaled after `0016_sourcing.sql`. The app applies it automatically on database connection. Its `IF NOT EXISTS` statement safely supports databases where it was already applied manually. The dry-run adapters do not write to this table.
 
+Databases that already recorded `0018` or later skip these restored, earlier journal entries. If the table is missing, apply this SQL explicitly; see the **Supplier sourcing** upgrade instructions in the README.
+
 ```sql
 CREATE TABLE IF NOT EXISTS marketplace_listings (
   id serial PRIMARY KEY,
