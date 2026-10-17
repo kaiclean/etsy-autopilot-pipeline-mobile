@@ -107,6 +107,9 @@ export const SETUP_STEPS: SetupStep[] = [
       "RUNPOD_API_KEY",
       "RUNPOD_ENDPOINT_ID",
       "RUNPOD_COMFY_WORKFLOW",
+      "IMAGE_FALLBACK_PROVIDER",
+      "CLOUDFLARE_ACCOUNT_ID",
+      "CLOUDFLARE_API_TOKEN",
     ],
     bullets: [
       "Ollama Cloud: LLM_PROVIDER=ollama, OLLAMA_API_KEY, and a vision-capable OLLAMA_MODEL. The base is fixed at https://ollama.com/v1. Design sends images for visual assessment through /chat/completions; this is distinct from image generation.",
@@ -114,7 +117,9 @@ export const SETUP_STEPS: SetupStep[] = [
       "OmniRoute for both: LLM_PROVIDER=omniroute and IMAGE_PROVIDER=omniroute, plus OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY, OMNIROUTE_MODEL, and OMNIROUTE_IMAGE_MODEL. Text POSTs /chat/completions. Images POST /images/generations and accept url or b64_json.",
       "OpenAI or OpenRouter still work with LLM_PROVIDER=openai and IMAGE_PROVIDER=openai. OpenRouter uses OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
       "RunPod Serverless ComfyUI: set IMAGE_PROVIDER=runpod, RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW to the endpoint ID and ComfyUI API-format workflow JSON. Use {{PROMPT}} in the positive prompt node; {{SEED}}, {{WIDTH}}, and {{HEIGHT}} are optional placeholders. Print briefs use the worker's 4x-UltraSharp.pth model (override RUNPOD_UPSCALE_MODEL) before SaveImage; digital keeps native size. Use a vision-capable LLM_PROVIDER, optionally VISION_MODEL, for design assessment. Keep keys in deployment secrets.",
-      "Connections → Test connection sends one tiny text request and one image request for OpenAI-compatible image providers. For RunPod it runs the configured workflow, which may incur GPU charges. Keys are not shown.",
+      "Cloudflare Workers AI: set IMAGE_PROVIDER=cloudflare, CLOUDFLARE_ACCOUNT_ID, and CLOUDFLARE_API_TOKEN (Workers AI Run permission). Uses @cf/black-forest-labs/flux-1-schnell and the free allocation, subject to Cloudflare quotas/billing. Native-resolution JPEG output; requested aspect ratio and seed are not supported. Poster quality gates still apply.",
+      "Optional IMAGE_FALLBACK_PROVIDER selects a real provider to try once if the primary fails; empty disables fallback. Configure that provider's credentials too. Both attempts count toward the estimated AI budget; no mock fallback is allowed.",
+      "Connections → Test connection sends one tiny text request and one image request for OpenAI-compatible or Cloudflare image providers. For RunPod it runs the configured workflow, which may incur GPU charges. It tests the primary directly, without fallback. Keys are not shown.",
     ],
   },
   {
@@ -189,7 +194,7 @@ export function stepStatus(step: SetupStep, presence: Record<string, boolean>, e
   }
   if (step.id === "llm") {
     const keys = ["OPENAI_API_KEY", "OLLAMA_API_KEY", "OMNIROUTE_API_KEY", "RUNPOD_API_KEY"];
-    if (keys.some((name) => presence[name])) return "ready";
+    if (keys.some((name) => presence[name]) || (presence.CLOUDFLARE_ACCOUNT_ID && presence.CLOUDFLARE_API_TOKEN)) return "ready";
     if (step.optionalEnvVars.some((name) => presence[name])) return "partial";
     return "missing";
   }
@@ -229,6 +234,9 @@ export function setupChecklist(): string {
     "BLOB_READ_WRITE_TOKEN=",
     "LLM_PROVIDER=mock",
     "IMAGE_PROVIDER=mock",
+    "IMAGE_FALLBACK_PROVIDER=",
+    "CLOUDFLARE_ACCOUNT_ID=",
+    "CLOUDFLARE_API_TOKEN=",
     "OPENAI_API_KEY=",
     "OPENAI_BASE_URL=",
     "OPENAI_MODEL=",

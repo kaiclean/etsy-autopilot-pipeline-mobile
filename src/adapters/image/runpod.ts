@@ -1,6 +1,7 @@
 import { config } from "@/lib/config";
 import { modelReferences, workflowSha256, type ArtworkProvenance } from "@/lib/artwork-provenance";
 import { materializeImageUrl, type MaterializeDeps } from "@/lib/object-storage";
+import { ImageProviderHttpError, imageErrorDetail } from "./errors";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
 
 type RunPodResponse = {
@@ -15,13 +16,9 @@ type RunPodResponse = {
 };
 
 function diagnostic(job: RunPodResponse) {
-  const redact = (value: string) => value
-    .replace(/data:[^\s"\\]+/gi, "[image data redacted]")
-    .replace(/https?:\/\/[^\s"\\]+/gi, "[URL redacted]")
-    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "[encoded data redacted]");
   const errors = JSON.stringify(job.output?.errors ?? job.error ?? [], (key, value) =>
     /data|image|url|base64|b64|signature|secret|token|key/i.test(key) ? "[redacted]" : value);
-  return `job ${redact(job.id ?? "unknown").slice(0, 100)}; output keys: ${Object.keys(job.output ?? {}).map((key) => /^[a-zA-Z_]{1,40}$/.test(key) ? key : "[redacted]").join(", ")}; errors: ${redact(errors).slice(0, 500)}`;
+  return `job ${imageErrorDetail(job.id ?? "unknown").slice(0, 100)}; output keys: ${Object.keys(job.output ?? {}).map((key) => /^[a-zA-Z_]{1,40}$/.test(key) ? key : "[redacted]").join(", ")}; errors: ${imageErrorDetail(errors).slice(0, 500)}`;
 }
 
 const POLL_MS = 2_000;
@@ -98,6 +95,31 @@ export class RunPodImageProvider implements ImageProvider {
   constructor(private readonly opts: { pollMs?: number; deadlineMs?: number; upload?: MaterializeDeps["upload"] } = {}) {}
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
+    try {
+      return await this.generateImage(req);
+    } catch (error) {
+      console.error(imageErrorDetail(error instanceof Error ? error.message : String(error)));
+      throw error;
+    }
+  }
+
+  private async request(url: string, init: RequestInit, phase: string, deadline: number): Promise<RunPodResponse> {
+    const timeout = Math.min(20_000, deadline - Date.now());
+    if (timeout <= 0) throw new Error(`RunPod ${phase} timed out: image generation deadline exceeded`);
+    const signal = AbortSignal.timeout(timeout);
+    try {
+      const response = await fetch(url, { ...init, signal });
+      if (!response.ok) throw new ImageProviderHttpError(`RunPod ${phase}`, response.status, await response.text());
+      return await response.json() as RunPodResponse;
+    } catch (error) {
+      if (signal.aborted || (error instanceof Error && /^(TimeoutError|AbortError)$/.test(error.name))) {
+        throw new Error(`RunPod ${phase} timed out after ${timeout / 1000} seconds; check endpoint workers, queue, and RunPod logs`);
+      }
+      throw error;
+    }
+  }
+
+  private async generateImage(req: ImageRequest): Promise<GeneratedImage> {
     const { apiKey, endpointId, workflow } = config.runpod;
     if (!apiKey) throw new Error("RUNPOD_API_KEY missing");
     if (!endpointId) throw new Error("RUNPOD_ENDPOINT_ID missing");
@@ -116,33 +138,31 @@ export class RunPodImageProvider implements ImageProvider {
       printRequested: Boolean(req.print),
       modelReferences: modelReferences(submittedWorkflow),
     };
-    const submitted = await fetch(`${base}/run`, {
+    const deadline = Date.now() + (this.opts.deadlineMs ?? DEADLINE_MS);
+    let job = await this.request(`${base}/run`, {
       method: "POST",
       headers,
       body: JSON.stringify({ input: { workflow: submittedWorkflow } }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!submitted.ok) throw new Error(`RunPod submit ${submitted.status}`);
-    let job = (await submitted.json()) as RunPodResponse;
+    }, "submit", deadline);
     if (job.status === "COMPLETED") return this.saveImage(job, provenance);
+    if (job.status === "FAILED" || job.status === "CANCELLED" || job.status === "TIMED_OUT") {
+      throw new Error(`RunPod ${job.status.toLowerCase()}: ${diagnostic(job)}`);
+    }
     if (!job.id) throw new Error("RunPod response did not include a job id");
     const jobId = job.id;
 
-    const deadline = Date.now() + (this.opts.deadlineMs ?? DEADLINE_MS);
     while (Date.now() < deadline) {
       if (job.status === "FAILED" || job.status === "CANCELLED" || job.status === "TIMED_OUT") {
         throw new Error(`RunPod ${job.status.toLowerCase()}: ${diagnostic({ ...job, id: jobId })}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, this.opts.pollMs ?? POLL_MS));
-      const polled = await fetch(`${base}/status/${encodeURIComponent(jobId)}`, {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(this.opts.pollMs ?? POLL_MS, Math.max(0, deadline - Date.now()))));
+      if (Date.now() >= deadline) break;
+      job = await this.request(`${base}/status/${encodeURIComponent(jobId)}`, {
         headers,
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!polled.ok) throw new Error(`RunPod status ${polled.status}: ${diagnostic({ ...job, id: jobId })}`);
-      job = (await polled.json()) as RunPodResponse;
+      }, `status (job ${imageErrorDetail(jobId)})`, deadline);
       if (job.status === "COMPLETED") return this.saveImage({ ...job, id: jobId }, provenance);
     }
-    throw new Error(`RunPod image job timed out: ${diagnostic({ ...job, id: jobId })}`);
+    throw new Error(`RunPod image job timed out after ${(this.opts.deadlineMs ?? DEADLINE_MS) / 1000} seconds: ${diagnostic({ ...job, id: jobId })}. Check endpoint workers, queue, and RunPod logs.`);
   }
 
   private async saveImage(job: RunPodResponse, provenance: ArtworkProvenance): Promise<GeneratedImage> {

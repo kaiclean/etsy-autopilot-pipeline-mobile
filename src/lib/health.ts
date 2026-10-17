@@ -318,6 +318,9 @@ function llmProviderCheck(): HealthCheck {
 function imageProviderCheck(): HealthCheck {
   const envVars = [
     "IMAGE_PROVIDER",
+    "IMAGE_FALLBACK_PROVIDER",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
     "IMAGE_API_KEY",
     "IMAGE_BASE_URL",
     "IMAGE_MODEL",
@@ -335,6 +338,19 @@ function imageProviderCheck(): HealthCheck {
     "RUNPOD_COMFY_WORKFLOW",
   ];
   const provider = config.imageProvider;
+  if (provider === "cloudflare") {
+    const ready = Boolean(config.cloudflare.accountId && config.cloudflare.apiToken);
+    return {
+      id: "images",
+      name: "Image provider",
+      level: ready ? "green" : "red",
+      label: ready ? "Ready" : "Incomplete",
+      detail: ready
+        ? "Cloudflare Workers AI · FLUX.1 schnell · free allocation subject to Cloudflare quotas."
+        : "Cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN. Secret values are hidden.",
+      envVars,
+    };
+  }
   if (provider === "openai") {
     if (!config.imageApiKey) {
       return {

@@ -118,6 +118,12 @@ export const config = {
   get replicateToken() {
     return env("REPLICATE_API_TOKEN");
   },
+  get cloudflare() {
+    return {
+      accountId: env("CLOUDFLARE_ACCOUNT_ID"),
+      apiToken: env("CLOUDFLARE_API_TOKEN"),
+    };
+  },
   get runpod() {
     const cost = Number(env("RUNPOD_COST_PER_IMAGE_CHF") ?? "0.05");
     return {
@@ -128,9 +134,12 @@ export const config = {
       costPerImageChf: Number.isFinite(cost) && cost > 0 ? cost : 0.05,
     };
   },
-  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" | "omniroute" | "runpod" {
+  get imageFallbackProvider() {
+    return env("IMAGE_FALLBACK_PROVIDER");
+  },
+  get imageProvider(): "mock" | "higgsfield" | "openai" | "replicate" | "omniroute" | "runpod" | "cloudflare" {
     const p = env("IMAGE_PROVIDER");
-    if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute" || p === "runpod") return p;
+    if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute" || p === "runpod" || p === "cloudflare") return p;
     return "mock";
   },
   get llmProvider(): "mock" | "openai" | "ollama" | "omniroute" {
@@ -316,10 +325,12 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
             : config.imageProvider === "runpod" &&
                 (!config.runpod.apiKey || !config.runpod.endpointId || !config.runpod.workflow)
               ? "missing"
-              : "configured",
+              : config.imageProvider === "cloudflare" && (!config.cloudflare.accountId || !config.cloudflare.apiToken)
+                ? "missing"
+                : "configured",
         detail:
           config.imageProvider === "mock"
-            ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute|runpod."
+            ? "Mock placeholder art. Set IMAGE_PROVIDER=higgsfield|openai|replicate|omniroute|runpod|cloudflare."
             : config.imageProvider === "openai"
               ? `OpenAI-compatible · ${config.imageModel} · ${config.imageBaseUrl}`
               : config.imageProvider === "omniroute"
@@ -328,9 +339,16 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
                 ? !config.runpod.apiKey || !config.runpod.endpointId || !config.runpod.workflow
                   ? "RunPod needs RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW. Secret values are hidden."
                   : `RunPod Serverless · endpoint ${config.runpod.endpointId}. API key and workflow are hidden.`
-                : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
+                : config.imageProvider === "cloudflare"
+                  ? !config.cloudflare.accountId || !config.cloudflare.apiToken
+                    ? "Cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN. Secret values are hidden."
+                    : "Cloudflare Workers AI · FLUX.1 schnell · free allocation subject to Cloudflare quotas."
+                  : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
         envVars: [
           "IMAGE_PROVIDER",
+          "IMAGE_FALLBACK_PROVIDER",
+          "CLOUDFLARE_ACCOUNT_ID",
+          "CLOUDFLARE_API_TOKEN",
           "IMAGE_API_KEY",
           "IMAGE_BASE_URL",
           "IMAGE_MODEL",
