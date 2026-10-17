@@ -69,7 +69,7 @@ export function buildPrompt(phrase: string, style: string, niche?: string, conce
 export const runDesign: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const automation = await getSetting(db, "automation");
-  const provider = getImageProvider({ demo: ctx.demo });
+  const provider = getImageProvider({ demo: ctx.demo, log });
   log(`Image provider: ${provider.name}${provider.name === "mock" ? " (DEMO placeholder — not queued for approval)" : ""} (est. CHF ${provider.estimatedCostChf.toFixed(2)}/image)`);
 
   // Seeded demo keywords are never sent to a paid image provider for a live shop.

@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setImageProviderForTests } from "@/adapters/image";
+import { CloudflareImageProvider } from "@/adapters/image/cloudflare";
 import { setLLMProviderForTests } from "@/adapters/llm";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
@@ -26,6 +27,50 @@ afterEach(() => {
 });
 
 describe("live visual gate", () => {
+  it.each([false, true])("persists RunPod HTTP diagnostics in activity with fallback=%s", async (fallback) => {
+    vi.stubEnv("DEMO_MODE", "false");
+    vi.stubEnv("IMAGE_PROVIDER", "runpod");
+    vi.stubEnv("IMAGE_FALLBACK_PROVIDER", fallback ? "cloudflare" : "");
+    vi.stubEnv("RUNPOD_API_KEY", "private-runpod-token");
+    vi.stubEnv("RUNPOD_ENDPOINT_ID", "endpoint");
+    vi.stubEnv("RUNPOD_COMFY_WORKFLOW", JSON.stringify({ "6": { inputs: { text: "{{PROMPT}}" } } }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new PGlite("memory://");
+    try {
+      const db = drizzle(client, { schema }) as DB;
+      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      await db.insert(keywords).values({ phrase: "swiss alps wall art", niche: "alpine", source: "test", status: "selected", isDemo: false });
+      const rgb = Uint8Array.from({ length: 12 * 18 * 3 }, (_, index) => index % 2 ? 220 : 30);
+      const bytes = encodeRgbPng({ width: 12, height: 18, rgb });
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("api.runpod.ai")
+        ? Response.json({ error: "No workers available private-runpod-token" }, { status: 409 })
+        : new Response(new Uint8Array(bytes))));
+      const cloudflare = vi.spyOn(CloudflareImageProvider.prototype, "generate").mockResolvedValue({
+        url: "https://cdn.example/alpine.jpg", costChf: 0, provider: "cloudflare",
+      });
+      const writer = new MockLLMProvider();
+      setLLMProviderForTests({
+        name: "test", writeListing: writer.writeListing.bind(writer),
+        assessImage: async () => ({ score: 9, defects: [], text: false, empty: false, frameOnly: false, artifacts: false }),
+      });
+      const run = await runStage("design", "manual", { db, random: () => 0.1 });
+      const logs = JSON.stringify(run.logs);
+      expect(logs).toContain("HTTP 409");
+      expect(logs).toContain("No workers available");
+      expect(logs).not.toContain("private-runpod-token");
+      if (fallback) {
+        expect(run.logs.some((line) => line.level === "warn" && line.msg.includes("fallback cloudflare"))).toBe(true);
+        expect((await db.select().from(designs))[0].provider).toBe("cloudflare");
+        expect(cloudflare).toHaveBeenCalledOnce();
+      } else {
+        expect(run.status).toBe("failed");
+        expect(await db.select().from(designs)).toHaveLength(0);
+        expect(cloudflare).not.toHaveBeenCalled();
+      }
+    } finally { await client.close(); }
+  });
+
   it("accepts string praise notes in Design and Listing and holds unscored legacy art for review", async () => {
     process.env.DEMO_MODE = "false";
     const client = new PGlite("memory://");

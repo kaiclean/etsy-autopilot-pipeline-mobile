@@ -22,7 +22,55 @@ beforeEach(() => {
     "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } },
   }));
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+describe("RunPod diagnostics", () => {
+  it.each(["submit", "status"])("logs the real %s HTTP status and error body without secrets", async (phase) => {
+    vi.stubEnv("RUNPOD_API_KEY", "private-runpod-token");
+    const fetchMock = vi.fn();
+    if (phase === "status") fetchMock.mockResolvedValueOnce(Response.json({ id: "job-1", status: "IN_QUEUE" }));
+    fetchMock.mockResolvedValueOnce(Response.json({
+      error: "No workers available",
+      token: "private-runpod-token",
+      detail: "private-runpod-token",
+      url: "https://bucket.example/art?signature=private",
+    }, { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = await new RunPodImageProvider({ pollMs: 0 }).generate(request).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toMatch(new RegExp(`RunPod ${phase}.*HTTP 409`));
+    expect(message).toContain("No workers available");
+    expect(message).not.toMatch(/private-runpod-token|signature=private|https:/);
+    expect(log).toHaveBeenCalledWith(message);
+  });
+
+  it.each(["submit", "status"])("fails fast on %s timeout without retrying", async (phase) => {
+    const fetchMock = vi.fn();
+    if (phase === "status") fetchMock.mockResolvedValueOnce(Response.json({ id: "job-1", status: "IN_QUEUE" }));
+    fetchMock.mockRejectedValueOnce(new DOMException("operation aborted", "TimeoutError"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(new RunPodImageProvider({ pollMs: 0 }).generate(request)).rejects.toThrow(new RegExp(`RunPod ${phase}.*timed out.*check endpoint workers`));
+    expect(fetchMock).toHaveBeenCalledTimes(phase === "submit" ? 1 : 2);
+  });
+
+  it("bounds queue polling by the overall deadline", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => Response.json({ id: "queued-job", status: "IN_QUEUE" }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const pending = expect(new RunPodImageProvider({ pollMs: 2_000, deadlineMs: 100 }).generate(request)).rejects.toThrow(/timed out after 0.1 seconds.*queued-job/);
+      await vi.advanceTimersByTimeAsync(100);
+      await pending;
+      expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("RunPod output", () => {
   it("uses the stable media proxy even when app S3 storage normally returns signed URLs", async () => {
