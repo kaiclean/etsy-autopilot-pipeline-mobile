@@ -12,7 +12,7 @@ export type PreparedArt = {
 
 /**
  * Measure a generated print file. Placeholder URLs are left as-is so the gate can reject them.
- * Print output is upscaled by the image provider; this measures its actual dimensions.
+ * This measures the stored file after the shared upscale stage.
  */
 export async function preparePrintFile(url: string): Promise<PreparedArt> {
   const bytes = placeholderPng(url) ?? previewPng(url) ?? await loadArtworkBytes(url);

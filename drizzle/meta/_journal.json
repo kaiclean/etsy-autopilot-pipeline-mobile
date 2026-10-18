@@ -148,6 +148,13 @@
       "when": 1792089000004,
       "tag": "0022_etsy_delivery_proof",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792267200000,
+      "tag": "0023_design_upscale",
+      "breakpoints": true
     }
   ]
 }

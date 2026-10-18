@@ -15,6 +15,15 @@ import { OpenAILLMProvider } from "@/adapters/llm/openai";
 import { reassessDesigns, sanitizeReassessmentError } from "@/pipeline/reassess-designs";
 import { runStage } from "@/pipeline/runner";
 
+vi.mock("@/pipeline/upscale", () => ({
+  upscaleArtwork: async (url: string) => ({
+    url: url.startsWith("data:") ? "https://cdn.example/upscaled.png" : url,
+    upscaleMethod: "native",
+    sourcePx: { width: 3510, height: 5265 },
+    outputPx: { width: 3510, height: 5265 },
+  }),
+}));
+
 const originalDemo = process.env.DEMO_MODE;
 afterEach(() => {
   setImageProviderForTests(null);

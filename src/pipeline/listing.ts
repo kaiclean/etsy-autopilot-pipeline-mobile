@@ -4,7 +4,7 @@ import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
-import { alignDeliveryCopy, defaultDeliverable, leadPhrase } from "@/lib/delivery";
+import { alignDeliveryCopy, defaultDeliverable, leadPhrase, removeUndeliverablePromises } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
@@ -20,6 +20,7 @@ import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
 import { buildProductTitle, productKeyword } from "@/lib/product-title";
 import { MIN_DESIGN_SCORE } from "@/lib/design-quality";
+import { hasMinimumPixels, PRINT_TARGETS, type PrintTargetKey } from "@/lib/print-targets";
 import { stageResult, type StageContext, type StageFn } from "./types";
 import { sourcedListingCosts } from "./sourcing";
 
@@ -74,6 +75,7 @@ export async function draftListing(opts: {
   /** Demo shops may use the template writer. Live shops require a real LLM provider. */
   demo?: boolean;
   deliveryFormat?: "png" | "jpeg" | "webp" | null;
+  deliveryPixels?: { width: number; height: number } | null;
   artDirection?: string;
   siblingTitles?: readonly string[];
 }) {
@@ -108,21 +110,46 @@ export async function draftListing(opts: {
       competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
       productType: opts.product.type,
     });
+  const facts = defaultDeliverable(opts.product.type, opts.deliveryFormat);
+  if (opts.product.type === "pod" && opts.product.pod === "ornament") facts.blank = "ornament";
+  if (opts.deliveryPixels) {
+    facts.dpi = 300;
+    facts.sizes = [
+      `${(opts.deliveryPixels.width / 300).toFixed(1)}×${(opts.deliveryPixels.height / 300).toFixed(1)} in`,
+      `${(opts.deliveryPixels.width / 150).toFixed(1)}×${(opts.deliveryPixels.height / 150).toFixed(1)} in`,
+    ];
+  }
   const repaired = repairTrivialCopy(
     {
       title,
       tags,
-      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat), opts.product.type),
+      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat, opts.deliveryPixels), opts.product.type),
       priceChf,
       productType: opts.product.type,
-      deliverable: defaultDeliverable(opts.product.type, opts.deliveryFormat),
+      deliverable: facts,
     },
     { keyword, product: opts.product },
   );
-  const draft = repaired.draft;
+  const stripped = repairTrivialCopy({
+    ...repaired.draft,
+    title: removeUndeliverablePromises(repaired.draft.title, facts),
+    tags: repaired.draft.tags.filter((tag) => !removeUndeliverablePromises(tag, facts).trim() || removeUndeliverablePromises(tag, facts) === tag)
+      .map((tag) => removeUndeliverablePromises(tag, facts))
+      .filter(Boolean),
+    description: repaired.draft.description.split("\n").filter((line) => !removeUndeliverablePromises(line, facts).trim() || removeUndeliverablePromises(line, facts) === line).join("\n"),
+  }, { keyword, product: opts.product });
+  const draft = stripped.draft;
   const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.priceChf != null ? true : opts.assumeOffsiteAds });
   const { issues } = validateListing(draft);
-  return { draft, fees, issues, pod, llmCost: copy.costChf, provider: copy.provider, fixes: repaired.fixes };
+  return {
+    draft,
+    fees,
+    issues,
+    pod,
+    llmCost: copy.costChf,
+    provider: copy.provider,
+    fixes: [...repaired.fixes, ...stripped.fixes, ...(repaired.draft.title !== draft.title ? ["removed undeliverable title claims"] : [])],
+  };
 }
 
 function keywordForRung(phrase: string, rung: LadderRung) {
@@ -167,7 +194,12 @@ async function listRung(
     priceChf: rung.priceChf,
     podCostChf: rung.podCostChf,
     llm,
-    deliveryFormat: fileManifest?.delivery.format ?? null,
+    deliveryFormat: fileManifest?.delivery.format ?? (rung.product.type === "digital" ? "png" : null),
+    deliveryPixels: fileManifest?.delivery
+      ? { width: fileManifest.delivery.width, height: fileManifest.delivery.height }
+      : design.imageWidth && design.imageHeight
+        ? { width: design.imageWidth, height: design.imageHeight }
+        : null,
     artDirection: design.prompt,
     siblingTitles,
   });
@@ -183,12 +215,18 @@ async function listRung(
     printWidth: design.imageWidth,
     printHeight: design.imageHeight,
     colorVariance: design.colorVariance,
+    printTargetKey: (rung.id === "digital-mid" ? "digitalLarge" : rung.product.type === "digital" ? "digital" : rung.product.pod) as PrintTargetKey,
+    printTarget: rung.product.type === "pod" && rung.product.pod ? design.printTarget ?? undefined : undefined,
+    upscaleMethod: design.upscaleMethod,
   });
   if (dryRunOnly) {
     gate.pass = false;
     gate.reasons.push({ field: "description", code: "supplier_dry_run", severity: "error", message: "This supplier/product type is dry-run only; live fulfillment is not enabled." });
   }
   const validation = [...issues, ...gate.reasons.filter((reason) => !issues.some((item) => item.code === reason.code && item.message === reason.message))];
+  if (validation.some((item) => item.code === "undeliverable_promise")) {
+    throw new Error("Refusing to create a listing with an undeliverable promise.");
+  }
   if (rung.costIsEstimate) {
     validation.push({ field: "price", code: "sourcing_estimate", severity: "warning", message: "POD cost is a preset estimate; no fresh verified sourcing quote." });
   }
@@ -291,6 +329,15 @@ export const runListing: StageFn = async (ctx) => {
     let listed = 0;
     const siblingTitles: string[] = [];
     for (const rung of quoteLadder(design.niche, podSettings.enabledPresets, quoted.costs, quoted.estimates)) {
+      if (rung.id === "digital-mid") {
+        const target = PRINT_TARGETS.digitalLarge;
+        const largeEnough = hasMinimumPixels(design.imageWidth, design.imageHeight, target);
+        const hasAiUpscale = design.upscaleMethod === "realesrgan" || design.upscaleMethod === "native";
+        if (!largeEnough || !hasAiUpscale) {
+          log(`Skipped Large digital print for design #${design.id}: file is ${design.imageWidth ?? "?"}×${design.imageHeight ?? "?"}px; an AI-upscaled file of at least ${target.minW}×${target.minH}px is required.`, "warn");
+          continue;
+        }
+      }
       try {
         const preset = rung.product.pod;
         const made = await listRung(ctx, design, phraseText, rung, artworkUrl, automation, llm, siblingTitles,

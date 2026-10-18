@@ -122,6 +122,13 @@ export const config = {
     return {
       accountId: env("CLOUDFLARE_ACCOUNT_ID"),
       apiToken: env("CLOUDFLARE_API_TOKEN"),
+      imageModel: env("CLOUDFLARE_IMAGE_MODEL") ?? "@cf/black-forest-labs/flux-1-schnell",
+    };
+  },
+  get upscale() {
+    return {
+      modelPath: env("REALESRGAN_MODEL_PATH"),
+      modelKey: env("REALESRGAN_MODEL_KEY"),
     };
   },
   get runpod() {
@@ -342,13 +349,14 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
                 : config.imageProvider === "cloudflare"
                   ? !config.cloudflare.accountId || !config.cloudflare.apiToken
                     ? "Cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN. Secret values are hidden."
-                    : "Cloudflare Workers AI · FLUX.1 schnell · free allocation subject to Cloudflare quotas."
+                    : `Cloudflare Workers AI · ${config.cloudflare.imageModel} · estimated 1,000 neurons/image; free allocation subject to Cloudflare quotas.`
                   : `Provider: ${config.imageProvider}${config.imageProvider === "higgsfield" && !h.apiKey ? " (missing key)" : ""}`,
         envVars: [
           "IMAGE_PROVIDER",
           "IMAGE_FALLBACK_PROVIDER",
           "CLOUDFLARE_ACCOUNT_ID",
           "CLOUDFLARE_API_TOKEN",
+          "CLOUDFLARE_IMAGE_MODEL",
           "IMAGE_API_KEY",
           "IMAGE_BASE_URL",
           "IMAGE_MODEL",

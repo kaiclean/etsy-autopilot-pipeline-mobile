@@ -29,6 +29,7 @@ export function getImageProvider(opts?: { demo?: boolean; log?: (message: string
   return {
     name: primary.name,
     estimatedCostChf: primary.estimatedCostChf + fallback.estimatedCostChf,
+    estimatedNeuronsPerImage: (primary.estimatedNeuronsPerImage ?? 0) + (fallback.estimatedNeuronsPerImage ?? 0) || undefined,
     async generate(req) {
       try {
         return await primary.generate(req);

@@ -29,7 +29,7 @@ describe("artwork compositing and the art gate", () => {
     expect(podMockupUrl("mug", "christmas", "https://cdn.example/art.png")).toContain("src=");
   });
 
-  it("rejects placeholder, flat, and sub-2000px print files", () => {
+  it("rejects placeholders, flat art, and files below the product minimum", () => {
     const base = {
       title: "Cozy Christmas Ceramic Mug",
       tags: tags(["holiday mug"]),
@@ -49,7 +49,9 @@ describe("artwork compositing and the art gate", () => {
     const small = evaluateQualityGate({ ...base, podProvider: "printify:posterA3", imageUrl: "/api/mockup/posterA3?niche=christmas", artworkUrl: "https://cdn.example/art.png", printWidth: 1024, printHeight: 1536, colorVariance: 30 });
     expect(small.reasons.map((reason) => reason.code)).toContain("low_res_art");
     const smallMug = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 1024, printHeight: 1536, colorVariance: 30 });
-    expect(smallMug.reasons.map((reason) => reason.code)).not.toContain("low_res_art");
+    expect(smallMug.reasons.map((reason) => reason.code)).toContain("low_res_art");
+    const mugTarget = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 1200, printHeight: 1120, colorVariance: 30 });
+    expect(mugTarget.reasons.map((reason) => reason.code)).not.toContain("low_res_art");
 
     const flat = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 2400, printHeight: 3000, colorVariance: colorVariance(solid) });
     expect(flat.reasons.map((reason) => reason.code)).toContain("flat_art");

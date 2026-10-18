@@ -1,11 +1,14 @@
-import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
 import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl } from "@/lib/art-quality";
 import { assessArtwork } from "@/lib/design-quality";
+import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import { productKeyword } from "@/lib/product-title";
+import { isPodPreset } from "@/lib/fees";
+import { keywordHasUndeliverablePromise } from "@/lib/delivery";
 import { persistableImageUrl } from "@/lib/compact-image-url";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
@@ -15,6 +18,7 @@ import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile, type PreparedArt } from "./artwork";
 import { stageSucceededToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
+import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
 
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
@@ -99,6 +103,15 @@ export const runDesign: StageFn = async (ctx) => {
   const monthStart = new Date(Date.UTC(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), 1));
   let spentToday = await aiSpend(db, dayStart);
   let spentMonth = await aiSpend(db, monthStart);
+  let estimatedNeuronsToday = 0;
+  if (provider.estimatedNeuronsPerImage) {
+    const [usage] = await db.select({ count: count() }).from(costs).where(and(
+      gte(costs.createdAt, dayStart),
+      eq(costs.kind, "ai_image"),
+      sql`${costs.note} like 'Workers AI neurons:%'`,
+    ));
+    estimatedNeuronsToday = Number(usage?.count ?? 0) * provider.estimatedNeuronsPerImage;
+  }
 
   let made = 0;
   let briefed = 0;
@@ -120,6 +133,11 @@ export const runDesign: StageFn = async (ctx) => {
     if (release) log(`Returned “${kw.phrase}” to the backlog after ${next} provider failures`, "warn");
   };
   for (const kw of queue) {
+    if (keywordHasUndeliverablePromise(kw.phrase)) {
+      await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
+      log(`Skipped “${kw.phrase}”: the requested file claim is not deliverable`, "warn");
+      continue;
+    }
     if (isNichePaused(kw.niche)) {
       await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       log(`Skipped “${kw.phrase}”: ${NICHES[kw.niche].pausedReason}`, "warn");
@@ -138,13 +156,20 @@ export const runDesign: StageFn = async (ctx) => {
     }
     const prompt = previous[0]?.prompt ?? buildPrompt(kw.phrase, niche.style, kw.niche, concept!);
     const brief = await ensureDesignBrief(ctx, kw, prompt, concept ?? previous[0]?.concept ?? undefined);
+    const targetKey: PrintTargetKey = brief.brief?.productType === "pod"
+      ? (isPodPreset(brief.brief.podPreset ?? "") ? brief.brief.podPreset! as PrintTargetKey : "posterA3")
+      : "digitalLarge";
+    const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
+    const generationSize = Math.min(1920 / target.targetW, 1920 / target.targetH);
+    const generationWidth = Math.max(256, Math.floor(target.targetW * generationSize));
+    const generationHeight = Math.max(256, Math.floor(target.targetH * generationSize));
     if (brief.created) {
       runConcepts.push(concept!);
       briefed++;
       log(`Design brief for “${kw.phrase}” (${brief.brief?.productType ?? "listing"}${brief.brief?.podPreset ? `/${brief.brief.podPreset}` : ""})`);
     }
     try {
-      type Candidate = { img: GeneratedImage; prepared: PreparedArt; score: number | null; reasons: string[]; review?: boolean };
+      type Candidate = { img: GeneratedImage; prepared: PreparedArt; upscale: UpscaledArtwork | null; score: number | null; reasons: string[]; review?: boolean };
       let accepted: Candidate | null = null;
       let rejected: Candidate | null = null;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -155,13 +180,31 @@ export const runDesign: StageFn = async (ctx) => {
           budgetStopped = true;
           break;
         }
+        if (provider.estimatedNeuronsPerImage && estimatedNeuronsToday + provider.estimatedNeuronsPerImage > 10_000) {
+          log("Cloudflare Workers AI estimated daily neuron budget reached; stopping before another image request.", "warn");
+          budgetStopped = true;
+          break;
+        }
+        if (provider.estimatedNeuronsPerImage) {
+          estimatedNeuronsToday += provider.estimatedNeuronsPerImage;
+          await db.insert(costs).values({
+            shopId: ctx.shopId,
+            kind: "ai_image",
+            amountChf: 0,
+            note: `Workers AI neurons: ${provider.estimatedNeuronsPerImage}; ${kw.phrase}`,
+            isDemo: ctx.demo,
+          });
+          log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons (${estimatedNeuronsToday}/10,000 today)`);
+        }
         const img = await provider.generate({
           prompt,
           niche: kw.niche,
           seed: Math.floor(ctx.random() * 1e9) + attempt,
-          aspectRatio: kw.niche === "stream" ? "16:9" : "2:3",
+          aspectRatio: targetKey === "mug" || kw.niche === "stream" ? "16:9" : "2:3",
+          width: generationWidth,
+          height: generationHeight,
           label: kw.phrase,
-          print: brief.brief?.productType === "pod" && brief.brief.podPreset === "posterA3",
+          print: brief.brief?.productType === "pod",
         });
         spentToday += img.costChf;
         spentMonth += img.costChf;
@@ -169,8 +212,16 @@ export const runDesign: StageFn = async (ctx) => {
           shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf,
           note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`, isDemo: ctx.demo,
         });
-        const print = brief.brief?.productType === "pod" && brief.brief.podPreset === "posterA3";
-        const prepared = await preparePrintFile(img.url);
+        let upscaled: UpscaledArtwork | null = null;
+        if (!isPlaceholderUrl(img.url)) {
+          upscaled = await upscaleArtwork(
+            img.url,
+            target,
+            targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {},
+          );
+        }
+        const outputUrl = upscaled?.url ?? img.url;
+        const prepared = await preparePrintFile(outputUrl);
         let reviewReason: string | null = null;
         const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
@@ -188,7 +239,7 @@ export const runDesign: StageFn = async (ctx) => {
               }
             })();
         if (!assessment) {
-          rejected = { img, prepared, score: null, reasons: [reviewReason!], review: true };
+          rejected = { img, prepared, upscale: upscaled, score: null, reasons: [reviewReason!], review: true };
           log(`Design “${kw.phrase}” needs review: ${reviewReason}`, "warn");
           break;
         }
@@ -203,8 +254,8 @@ export const runDesign: StageFn = async (ctx) => {
         }
         const check = ctx.demo && isPlaceholderUrl(prepared.url)
           ? { pass: true, reasons: [] }
-          : assessArtwork(assessment, prepared.width, prepared.height, print && img.provider === "runpod", ctx.demo ? null : prepared.variance);
-        rejected = { img, prepared, score: assessment.score, reasons: check.reasons };
+          : assessArtwork(assessment, prepared.width, prepared.height, false, ctx.demo ? null : prepared.variance);
+        rejected = { img, prepared, upscale: upscaled, score: assessment.score, reasons: check.reasons };
         if (check.pass) {
           accepted = rejected;
           break;
@@ -217,12 +268,15 @@ export const runDesign: StageFn = async (ctx) => {
         break;
       }
       const result = accepted ?? rejected!;
-      const { img, prepared } = result;
+      const { img, prepared, upscale } = result;
       if (!accepted) {
         const imageUrl = await persistableImageUrl(prepared.url).catch(() => `/api/placeholder/${kw.id}?niche=${kw.niche}`);
         await db.insert(designs).values({
           shopId: ctx.shopId, keywordId: kw.id, niche: kw.niche, prompt, provider: img.provider,
-          imageUrl, provenance: img.provenance ?? null, imageWidth: prepared.width, imageHeight: prepared.height,
+          imageUrl, provenance: img.provenance ?? null, sourceImageUrl: img.url,
+          sourcePx: upscale?.sourcePx ?? null, outputPx: upscale?.outputPx ?? null, upscaleMethod: upscale?.upscaleMethod ?? null,
+          printTarget: target,
+          imageWidth: prepared.width, imageHeight: prepared.height,
           colorVariance: prepared.variance, costChf: img.costChf,
           qualityScore: result.score, qualityReasons: result.reasons, status: result.review ? "needs_review" : "rejected", isDemo: ctx.demo,
         });
@@ -251,8 +305,13 @@ export const runDesign: StageFn = async (ctx) => {
       if (placeholders.length && !isPlaceholderUrl(imageUrl)) {
         const refreshed = {
           imageUrl,
+          sourceImageUrl: img.url,
           provider: img.provider,
           provenance: img.provenance ?? null,
+          sourcePx: upscale?.sourcePx ?? null,
+          outputPx: upscale?.outputPx ?? null,
+          upscaleMethod: upscale?.upscaleMethod ?? null,
+          printTarget: target,
           imageWidth: prepared.width,
           imageHeight: prepared.height,
           colorVariance: prepared.variance,
@@ -299,6 +358,11 @@ export const runDesign: StageFn = async (ctx) => {
         provider: img.provider,
         provenance: img.provenance ?? null,
         imageUrl,
+        sourceImageUrl: img.url,
+        sourcePx: upscale?.sourcePx ?? null,
+        outputPx: upscale?.outputPx ?? null,
+        upscaleMethod: upscale?.upscaleMethod ?? null,
+        printTarget: target,
         imageWidth: prepared.width,
         imageHeight: prepared.height,
         colorVariance: prepared.variance,
