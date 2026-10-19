@@ -310,7 +310,7 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
   if (repeated.length) {
     push({
       field: "tags",
-      severity: "warning",
+      severity: [...wordTags.values()].some((n) => n >= 5) ? "error" : "warning",
       code: "tag_repeated_word",
       message: `The same word is in too many tags: ${repeated.join(", ")}.`,
     });
@@ -510,5 +510,45 @@ export function repairTrivialCopy<T extends ListingDraft>(
       }
     }
   }
-  return { draft: { ...sanitized, tags: tags.slice(0, ETSY_LIMITS.tagCount) }, fixes };
+  const capped = capRepeatedTagWords(tags.slice(0, ETSY_LIMITS.tagCount));
+  if (capped.changed) fixes.push("replaced tags that repeated the same word");
+  return { draft: { ...sanitized, tags: capped.tags }, fixes };
+}
+
+/** Distinct-word fillers so refills never pile onto one word ("art", "dark"). */
+const DIVERSE_TAGS = [
+  "home decor", "room accent", "gallery piece", "cozy style", "gift idea", "living room",
+  "wall hanging", "housewarming", "statement piece", "calm mood", "nature lover", "bedroom styling",
+  "office corner", "hallway", "reading nook", "minimalist", "colour palette", "keepsake", "seasonal",
+  "birthday present", "illustration", "atmosphere", "texture", "heirloom look", "studio",
+];
+
+function tagWords(tag: string) {
+  return [...new Set(tag.toLowerCase().split(/[^a-z0-9']+/).filter((word) => word.length >= 3 && !TAG_STOP.has(word)))];
+}
+
+/** Keeps every word in at most `max` tags (validator warns at 4, blocks at 5), refilling to 13. */
+export function capRepeatedTagWords(input: string[], max = 3) {
+  const counts = new Map<string, number>();
+  const kept: string[] = [];
+  let changed = false;
+  for (const tag of input) {
+    const words = tagWords(tag);
+    if (words.some((word) => (counts.get(word) ?? 0) >= max)) {
+      changed = true;
+      continue;
+    }
+    for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
+    kept.push(tag);
+  }
+  const seen = new Set(kept);
+  for (const filler of DIVERSE_TAGS) {
+    if (kept.length >= ETSY_LIMITS.tagCount) break;
+    const words = tagWords(filler);
+    if (seen.has(filler) || PRODUCT_FAMILY.test(filler) || words.some((word) => (counts.get(word) ?? 0) >= max)) continue;
+    for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
+    kept.push(filler);
+    seen.add(filler);
+  }
+  return { tags: kept, changed };
 }

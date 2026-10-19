@@ -6,7 +6,7 @@ import { buildProductTitle } from "@/lib/product-title";
 import { draftListing } from "@/pipeline/listing";
 
 const providerDetails = { processingMin: 2, processingMax: 4, shippingMin: 5, shippingMax: 9 };
-const tags = Array.from({ length: 13 }, (_, index) => `alpine scene ${index}`);
+const tags = ["alpine scene", "swiss alps", "mountain view", "lake decor", "home accent", "gift idea", "cabin style", "nature lover", "living room", "calm mood", "hiking fan", "snow peaks", "pine forest"];
 const facts = measuredDigitalDeliverable("jpeg", { width: 2048, height: 3072 });
 const digital = (): ListingDraft => ({
   title: "Swiss Alps Printable Wall Art", tags, productType: "digital", priceChf: 8, deliverable: facts,

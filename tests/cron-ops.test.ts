@@ -78,6 +78,7 @@ describe("trivial listing repair", () => {
       "shortened the title to 140 characters",
       "shortened tags to 20 characters",
       "set the tag list to 13",
+      "replaced tags that repeated the same word",
     ]);
     expect(repaired.draft.title.length).toBeLessThanOrEqual(140);
     expect(repaired.draft.tags).toHaveLength(13);
