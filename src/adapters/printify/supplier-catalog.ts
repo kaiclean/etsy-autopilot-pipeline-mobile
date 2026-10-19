@@ -6,8 +6,8 @@ const API = "https://api.printify.com";
 export type SupplierPreset = "posterA3" | "posterA2" | "mug" | "tshirt" | "sweatshirt";
 
 const SURVEY: Record<SupplierPreset, { blueprint: RegExp; avoid?: RegExp; variant: RegExp; maxVariants: number }> = {
-  posterA3: { blueprint: /matte.*poster|poster.*matte/i, avoid: /canvas|framed|horizontal|metal|wood|acrylic|hanger/i, variant: /\bA3\b|297\s*[x×]\s*420|11\.7\S*\s*[x×]\s*16\.5/i, maxVariants: 2 },
-  posterA2: { blueprint: /matte.*poster|poster.*matte/i, avoid: /canvas|framed|horizontal|metal|wood|acrylic|hanger/i, variant: /\bA2\b|420\s*[x×]\s*594|16\.5\S*\s*[x×]\s*23\.4/i, maxVariants: 2 },
+  posterA3: { blueprint: /poster/i, avoid: /canvas|framed|frame|metal|wood|acrylic|hanger|glossy|satin|silk|magnet|sticker|puzzle|calendar/i, variant: /\bA3\b|297\s*[x×]\s*420|11\.7\S*\s*[x×]\s*16\.5/i, maxVariants: 2 },
+  posterA2: { blueprint: /poster/i, avoid: /canvas|framed|frame|metal|wood|acrylic|hanger|glossy|satin|silk|magnet|sticker|puzzle|calendar/i, variant: /\bA2\b|420\s*[x×]\s*594|16\.5\S*\s*[x×]\s*23\.4/i, maxVariants: 2 },
   mug: { blueprint: /^(?:ceramic )?mug(?: \(?11\s?oz\)?)?$|ceramic mug.*11|mug 11\s?oz|white glossy mug|accent coffee mug/i, avoid: /travel|tumbler|latte|magic|enamel|color changing|15\s?oz/i, variant: /11\s?oz/i, maxVariants: 1 },
   tshirt: { blueprint: /unisex jersey short sleeve tee|bella.*3001|unisex softstyle t-shirt|unisex heavy cotton tee/i, avoid: /long sleeve|v-neck|youth|kids|tank/i, variant: /(?:white|black).*\b(?:M)\b|\bM\b.*(?:white|black)/i, maxVariants: 2 },
   sweatshirt: { blueprint: /unisex heavy blend.*crewneck sweatshirt|crewneck sweatshirt/i, avoid: /youth|kids|hoodie|zip|garment-dyed|premium/i, variant: /(?:white|black).*\b(?:M)\b|\bM\b.*(?:white|black)/i, maxVariants: 2 },
@@ -38,14 +38,21 @@ function variantText(row: VariantRow) {
   return `${row.title} ${Object.values(row.options ?? {}).join(" ")}`.replace(/["″]/g, "");
 }
 
-export async function surveyPrintifySuppliers(token: string, opts: { shopId?: string; presets?: SupplierPreset[]; fetchImpl?: typeof fetch; maxBlueprints?: number; maxProviders?: number } = {}) {
+export async function surveyPrintifySuppliers(token: string, opts: { shopId?: string; presets?: SupplierPreset[]; fetchImpl?: typeof fetch; maxBlueprints?: number; maxProviders?: number; delayMs?: number } = {}) {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const headers = { Authorization: ["Bearer", token].join(" "), "User-Agent": "EtsyAutopilot", Accept: "application/json" };
   const errors: string[] = [];
   async function read(path: string): Promise<unknown> {
-    const res = await fetchImpl(`${API}${path}`, { headers, signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) throw new Error(`GET ${path.replace(/\?.*$/, "")} HTTP ${res.status}`);
-    return res.json();
+    for (let attempt = 0; ; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, opts.delayMs ?? 250));
+      const res = await fetchImpl(`${API}${path}`, { headers, signal: AbortSignal.timeout(20_000) });
+      if (res.status === 429 && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 5000 * (attempt + 1)));
+        continue;
+      }
+      if (!res.ok) throw new Error(`GET ${path.replace(/\?.*$/, "")} HTTP ${res.status}`);
+      return res.json();
+    }
   }
   async function safe<T>(path: string, fallback: T): Promise<unknown | T> {
     try {
@@ -78,10 +85,10 @@ export async function surveyPrintifySuppliers(token: string, opts: { shopId?: st
   const rows: SupplierCatalogRow[] = [];
   for (const preset of opts.presets ?? (Object.keys(SURVEY) as SupplierPreset[])) {
     const rule = SURVEY[preset];
-    const matches = blueprints.filter((row) => rule.blueprint.test(row.title) && !(rule.avoid?.test(row.title))).slice(0, opts.maxBlueprints ?? 3);
+    const matches = blueprints.filter((row) => rule.blueprint.test(row.title) && !(rule.avoid?.test(row.title))).slice(0, opts.maxBlueprints ?? (preset.startsWith("poster") ? 6 : 3));
     for (const blueprint of matches) {
       const full = blueprints.find((row) => row.id === blueprint.id) as unknown as Json;
-      const providers = providerRows(await safe(`/v1/catalog/blueprints/${blueprint.id}/print_providers.json`, [])).slice(0, opts.maxProviders ?? 12);
+      const providers = providerRows(await safe(`/v1/catalog/blueprints/${blueprint.id}/print_providers.json`, [])).slice(0, opts.maxProviders ?? 25);
       for (const provider of providers) {
         if (!locations.has(provider.id)) {
           const detail = await safe(`/v1/catalog/print_providers/${provider.id}.json`, null);

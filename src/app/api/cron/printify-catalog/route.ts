@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { surveyPrintifySuppliers } from "@/adapters/printify/supplier-catalog";
+import { surveyPrintifySuppliers, type SupplierPreset } from "@/adapters/printify/supplier-catalog";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -18,7 +18,9 @@ export async function GET(req: Request) {
   const token = config.printify.token;
   if (!token) return NextResponse.json({ error: "PRINTIFY_API_TOKEN is not set" }, { status: 503 });
   try {
-    const result = await surveyPrintifySuppliers(token, { shopId: config.printify.shopId ?? undefined });
+    const wanted = (new URL(req.url).searchParams.get("presets") ?? process.env.PRINTIFY_SURVEY_PRESETS ?? "")
+      .split(/[,\s+]/).map((value) => value.trim()).filter((value): value is SupplierPreset => ["posterA3", "posterA2", "mug", "tshirt", "sweatshirt"].includes(value));
+    const result = await surveyPrintifySuppliers(token, { shopId: config.printify.shopId ?? undefined, ...(wanted.length ? { presets: wanted } : {}) });
     for (const row of result.rows) console.log(`[printify-catalog] ${JSON.stringify(row)}`);
     for (const error of result.errors) console.warn(`[printify-catalog] error ${error}`);
     console.log(`[printify-catalog] done rows=${result.rows.length} errors=${result.errors.length}`);
