@@ -1,12 +1,14 @@
 import type { PodPreset } from "@/lib/fees";
+import type { PrintifyProviderDetails } from "./types";
 
 export type BlueprintRow = { id: number; title: string };
-export type ProviderRow = { id: number; title: string };
+export type ProviderRow = { id: number; title: string; production_time?: unknown };
+export type PlaceholderRow = { position: string; width: number; height: number };
 export type VariantRow = {
   id: number;
   title: string;
   options?: Record<string, string>;
-  placeholders?: { position?: string }[];
+  placeholders?: { position?: string; width?: number; height?: number }[];
 };
 
 export type CatalogChoice = {
@@ -28,6 +30,64 @@ const RULES: Record<PodPreset, { title: RegExp; avoid: RegExp; variant: RegExp }
   hoodie: { title: /hoodie|hooded sweatshirt/i, avoid: /youth|kids|zip/i, variant: /\bM\b|\bmedium\b/i },
   ornament: { title: /\bornaments?\b/i, avoid: /pack|set/i, variant: /round|circle/i },
 };
+
+export function matchesBlueprint(preset: PodPreset, row: BlueprintRow) {
+  return RULES[preset].title.test(row.title) && !RULES[preset].avoid.test(row.title);
+}
+
+export function printPlaceholder(preset: PodPreset, variant: VariantRow): PlaceholderRow {
+  const positions = preset === "mug" ? ["wrap", "full_wrap", "full", "front"]
+    : preset === "phoneCase" ? ["back", "front"] : ["front"];
+  for (const position of positions) {
+    const area = variant.placeholders?.find((row) => row.position === position);
+    if (area && typeof area.width === "number" && Number.isSafeInteger(area.width) && area.width > 0
+      && typeof area.height === "number" && Number.isSafeInteger(area.height) && area.height > 0) {
+      return { position, width: area.width, height: area.height };
+    }
+  }
+  throw new Error(`No usable ${positions.join("/")} print placeholder for variant ${variant.id}`);
+}
+
+/** Printify scale is image width relative to the placeholder width, not source pixels. */
+export function coverPlacement(art: { width: number; height: number }, area: PlaceholderRow) {
+  const ratio = Math.max(area.width / art.width, area.height / art.height);
+  if (ratio > 1) throw new Error(`Artwork would require upscaling for ${area.width}×${area.height} print area`);
+  return { x: 0.5, y: 0.5, scale: Math.max(1, (art.width * area.height) / (art.height * area.width)), angle: 0 };
+}
+
+const EU_CH = new Set(["CH", "AT", "BE", "BG", "HR", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK"]);
+
+function dayRange(value: unknown): { min: number; max: number } | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.unit !== undefined && value.unit !== "day" && value.unit !== "days" && value.unit !== "business-day" && value.unit !== "business_days") return undefined;
+  const min = value.min ?? value.minimum ?? value.value;
+  const max = value.max ?? value.maximum ?? value.value;
+  if (typeof min !== "number" || typeof max !== "number" || !Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < min) return undefined;
+  return { min: Math.floor(min), max: Math.ceil(max) };
+}
+
+function shippingProfiles(payload: unknown): Record<string, unknown>[] {
+  return isRecord(payload) && Array.isArray(payload.profiles) ? payload.profiles.filter(isRecord) : [];
+}
+
+export function verifiedEuropeanShipping(payload: unknown, variantId: number) {
+  return shippingProfiles(payload).filter((profile) => Array.isArray(profile.variant_ids) && profile.variant_ids.includes(variantId)
+    && Array.isArray(profile.countries) && profile.countries.some((country) => typeof country === "string" && EU_CH.has(country))
+    && dayRange(profile.delivery_time) !== undefined);
+}
+
+/** Do not substitute our margin/marketing estimates for supplier promises. */
+export function providerDetails(provider: unknown, shipping: unknown, variantIds: number[]): PrintifyProviderDetails {
+  const processing = isRecord(provider) ? dayRange(provider.production_time) : undefined;
+  if (!processing) throw new Error("Printify provider production_time is missing or invalid");
+  const ranges = variantIds.flatMap((id) => {
+    const profiles = verifiedEuropeanShipping(shipping, id);
+    if (!profiles.length) throw new Error(`Printify verified EU/CH delivery_time missing for variant ${id}`);
+    return profiles.map((profile) => dayRange(profile.delivery_time)!);
+  });
+  if (!ranges.length) throw new Error("Printify supplier timings require pinned variants");
+  return { processingMin: processing.min, processingMax: processing.max, shippingMin: Math.min(...ranges.map((r) => r.min)), shippingMax: Math.max(...ranges.map((r) => r.max)) };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures";
-import { calculateFees } from "@/lib/fees";
+import { calculateFees, type PodPreset } from "@/lib/fees";
+import { PRINT_TARGETS } from "@/lib/print-targets";
+import { PRINT_WIDTH, PRINT_HEIGHT } from "@/lib/design-quality";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
 import { quoteLadder } from "@/lib/pricing-ladder";
 import { colorVariance, decodePng, placeholderPng, podMockupPng, rgbPng } from "@/lib/png";
@@ -38,6 +40,10 @@ describe("artwork compositing and the art gate", () => {
       productType: "pod" as const,
       podProvider: "printify:mug",
       imageUrl: "/api/mockup/mug?niche=christmas",
+      gallery: [1, 2, 3].map((n) => ({
+        url: `https://images.printify.example/mockup-${n}.png`, role: "product-mockup" as const,
+        source: "supplier" as const, label: `Supplier mockup ${n}`,
+      })),
     };
     const solid = decodePng(rgbPng(64, 64, [180, 20, 20]))!;
     expect(colorVariance(solid)).toBeLessThan(8);
@@ -58,6 +64,39 @@ describe("artwork compositing and the art gate", () => {
 
     const ok = evaluateQualityGate({ ...base, artworkUrl: "https://cdn.example/art.png", printWidth: 3510, printHeight: 5265, colorVariance: 40 });
     expect(ok.pass).toBe(true);
+  });
+
+  it.each(Object.keys(PRINT_TARGETS).filter((key) => !key.startsWith("digital")) as PodPreset[])("enforces shared native quality minimums for %s", (preset) => {
+    const target = PRINT_TARGETS[preset];
+    const input = {
+      title: "Alpine Artwork", tags: tags(["alpine art"]),
+      description: `${AI_DISCLOSURE}\n\n${PRODUCTION_PARTNER_DISCLOSURE}`,
+      priceChf: 24.9, productType: "pod" as const, podProvider: `printify:${preset}`,
+      imageUrl: `/api/mockup/${preset}?niche=alpine`, artworkUrl: "https://cdn.example/art.png",
+      printWidth: target.minW, printHeight: target.minH, colorVariance: 40,
+    };
+    expect(evaluateQualityGate(input).reasons.some((reason) => reason.code === "low_res_art")).toBe(false);
+    for (const measured of [
+      { printWidth: target.minW - 1, printHeight: target.minH - 1 },
+      { printWidth: Math.min(target.minW, target.minH) - 1, printHeight: Math.max(target.minW, target.minH) },
+    ]) {
+      expect(evaluateQualityGate({ ...input, ...measured }).reasons.some((reason) => reason.code === "low_res_art")).toBe(true);
+    }
+  });
+
+  it("preserves A3 minimums and rotation while requiring a landscape mug wrap", () => {
+    expect(PRINT_TARGETS.posterA3).toMatchObject({ targetW: PRINT_WIDTH, targetH: PRINT_HEIGHT });
+    expect(PRINT_TARGETS.mug).toMatchObject({ targetW: 2700, targetH: 1120 });
+    const input = {
+      title: "Alpine Artwork", tags: tags(["alpine art"]), description: `${AI_DISCLOSURE}\n\n${PRODUCTION_PARTNER_DISCLOSURE}`,
+      priceChf: 24.9, productType: "pod" as const, imageUrl: "/api/mockup/mug",
+    };
+    const portraitMug = evaluateQualityGate({ ...input, podProvider: "printify:mug", printWidth: 1100, printHeight: 2700 });
+    expect(portraitMug.reasons.some((reason) => reason.code === "low_res_art")).toBe(true);
+    const rotatedPoster = evaluateQualityGate({ ...input, podProvider: "printify:posterA3", printWidth: PRINT_HEIGHT, printHeight: PRINT_WIDTH });
+    expect(rotatedPoster.reasons.some((reason) => reason.code === "low_res_art")).toBe(false);
+    const a4Poster = evaluateQualityGate({ ...input, podProvider: "printify:posterA3", printWidth: 2480, printHeight: 3508 });
+    expect(a4Poster.reasons.some((reason) => reason.code === "low_res_art")).toBe(true);
   });
 });
 

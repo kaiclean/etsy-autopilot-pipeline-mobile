@@ -16,6 +16,7 @@
     "backfill:etsy-ids": "tsx src/pipeline/backfill-etsy-ids.ts",
     "vapid:generate": "node scripts/generate-vapid-keys.mjs",
     "designs:assess": "tsx src/db/reassess-designs.ts",
+    "printify:catalog": "tsx src/adapters/printify/catalog-cli.ts",
     "designs:upscale": "tsx src/db/upscale-designs.ts",
     "etsy:types": "openapi-typescript data/etsy-openapi.snapshot.json --output src/adapters/etsy/generated.ts",
     "etsy:contract:check": "openapi-typescript data/etsy-openapi.snapshot.json --output /tmp/etsy-openapi-generated.ts && diff -u src/adapters/etsy/generated.ts /tmp/etsy-openapi-generated.ts"

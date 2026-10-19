@@ -20,19 +20,36 @@ export type PrintifyProductInput = {
 };
 
 export type PrintifyOrderStatus = "pending" | "in_production" | "shipped" | "delivered";
+export type PrintifyProviderDetails = {
+  processingMin: number;
+  processingMax: number;
+  shippingMin: number;
+  shippingMax: number;
+};
+export type PrintifyProductImage = {
+  src: string;
+  variant_ids?: number[];
+  position?: string;
+  is_default?: boolean;
+  source?: "supplier" | "synthetic";
+};
 
 export interface PrintifyAdapter {
   readonly mode: "dry-run" | "live";
+  getProviderDetails?(preset: PodPreset): Promise<PrintifyProviderDetails>;
+  getProductImages?(productId: string): Promise<PrintifyProductImage[]>;
   /**
    * Uploads the design and creates the Printify product.
    * Calls publish.json only when `publishToEtsy` is set (a per-listing human action).
-   * After that call, a live client may GET `external.id`. Create-only does not.
+   * Reusing an existing live product synchronizes copy without changing supplier prices.
+   * After publishing, a live client may GET `external.id`. Create-only does not.
    */
   createAndPublish(input: PrintifyProductInput): Promise<{
     productId: string;
     externalEtsyId?: string;
     blueprintId?: number;
     printProviderId?: number;
+    variantIds?: number[];
   }>;
   /**
    * Read-only. Maps a Printify product id to the Etsy listing id in `external.id`, or null

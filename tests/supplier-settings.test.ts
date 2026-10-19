@@ -13,7 +13,8 @@ import { getDb } from "@/db";
 import * as schema from "@/db/schema";
 import { config, hasGelatoCredentials, integrationStatus } from "@/lib/config";
 import { requiredDisclosures } from "@/lib/disclosures";
-import { DEFAULT_POD_PRESETS, POD_PRESETS, podCostChf, type PodPreset } from "@/lib/fees";
+import { buildProductTitle } from "@/lib/product-title";
+import { DEFAULT_POD_PRESETS, POD_PRESETS, isPodPreset, podCostChf, type PodPreset } from "@/lib/fees";
 import { connectionHealth } from "@/lib/health";
 import { getSettingsData } from "@/lib/queries";
 import { requireAuth } from "@/lib/session";
@@ -219,21 +220,24 @@ describe("POD settings persistence and action", () => {
   });
 
   async function approvalListing(supplier: string | null, podProvider: string | null) {
+    const preset = podProvider?.split(":").pop();
     const [listing] = await db.insert(schema.listings).values({
       niche: "alpine",
       productType: "pod",
       supplier,
       podProvider,
-      title: "Alpine landscape art",
+      title: buildProductTitle("Alpine landscape", "", preset && isPodPreset(preset) ? preset : "mug"),
       tags: ["alpine art", "mountain scene", "swiss landscape", "nature print", "wall decor", "forest art", "lake scenery",
         "cabin decor", "cozy room", "rustic style", "blue sky", "green valley", "snowy peak"],
       description: `An alpine landscape artwork for a calm room. ${requiredDisclosures("pod").join("\n")}`,
       imageUrl: "/art/fixture.png",
+      deliveryUrl: "/api/placeholder/1?niche=alpine",
       priceChf: 25,
       podCostChf: 10,
       netChf: 8,
       marginPct: 32,
       status: "quality_failed",
+      isDemo: true,
     }).returning();
     return listing;
   }

@@ -7,12 +7,13 @@ import { costs, designs, listings } from "@/db/schema";
 import { config, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
-import { validateListing } from "@/lib/listing-validator";
 import { buildFileManifest, manifestIsComplete } from "@/lib/file-manifest";
 import { verifyListingDeliveryPack } from "@/lib/artwork-pack";
 import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { digitalDraftRefusal } from "@/lib/publish-gates";
+import { MIN_SUPPLIER_MOCKUPS, supplierMockupCount } from "@/lib/quality-gate";
 import { fetchPrintifyMockupUrl, printArtworkUrl } from "./mockup";
+import { prepareSupplierPreview, refreshSupplierDescription, validateSupplierApproval, WAITING_FOR_PRINTIFY_MOCKUPS } from "./supplier-preview";
 import { maskSecrets } from "./stage-log";
 import { stageResult, type StageFn } from "./types";
 
@@ -111,13 +112,24 @@ export const runPublish: StageFn = async (ctx) => {
   let ok = 0;
   let failed = 0;
   let skipped = 0;
-  for (const l of approved) {
+  for (let l of approved) {
+    if (l.productType === "pod" && l.isDemo && printify.mode === "live") {
+      skipped++;
+      log(`#${l.id} held: demo artwork cannot create a live supplier product`, "warn");
+      continue;
+    }
+    if (l.productType === "pod" && printify.mode === "dry-run" && l.printifyProductId && !l.printifyProductId.startsWith("dry-")) {
+      skipped++;
+      log(`#${l.id} held: live supplier products cannot use simulated fulfillment metadata`, "warn");
+      continue;
+    }
     if (publishRetryBlocked(l, ctx.now)) {
       skipped++;
       log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
       continue;
     }
-    const check = validateListing(l);
+    l = await refreshSupplierDescription(db, l);
+    const check = validateSupplierApproval(l);
     if (!check.valid) {
       const [returned] = await db
         .update(listings)
@@ -140,6 +152,16 @@ export const runPublish: StageFn = async (ctx) => {
       log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
       failed++;
       continue;
+    }
+    if (l.productType === "pod" && (supplierMockupCount(l) < MIN_SUPPLIER_MOCKUPS ||
+      (printify.mode === "live" && l.publishMode !== "live"))) {
+      const preview = await prepareSupplierPreview(db, l, { timingsRefreshed: true });
+      if (!preview.ready) {
+        skipped++;
+        log(`#${l.id} held: ${preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS}`, "warn");
+        continue;
+      }
+      l = preview.listing;
     }
     const [claimed] = await db
       .update(listings)

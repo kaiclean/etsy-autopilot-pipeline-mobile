@@ -1,6 +1,7 @@
-import { config, hasEtsyCredentials, hasGelatoCredentials, hasPrintifyCredentials, isDemoMode, storageBackend, vapidConfigured } from "./config";
+import { config, hasEtsyCredentials, hasGelatoCredentials, hasPrintifyCredentials, isDemoMode, resolvePrintifyPin, storageBackend, vapidConfigured } from "./config";
 import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
+import { POD_PRESETS, type PodPreset } from "./fees";
 
 export type HealthLevel = "green" | "yellow" | "red";
 
@@ -100,17 +101,35 @@ function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpir
 }
 
 function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
-  const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS", "PRINTIFY_WEBHOOK_SECRET"];
-  const p = config.printify;
-  const registered = webhooksRegistered == null ? "" : ` Webhooks: ${webhooksRegistered} registered.`;
-  if (hasPrintifyCredentials()) {
-    const blueprint = p.blueprintId ? `Blueprint ${p.blueprintId} is set.` : "Blueprint is chosen from the Printify catalog when a listing publishes.";
+  const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_PRESETS_JSON", "PRINTIFY_PIN_PRESET", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS", "PRINTIFY_WEBHOOK_SECRET"];
+  const registered = webhooksRegistered == null ? " Webhooks: registration not checked." :
+    webhooksRegistered > 0 ? ` Webhooks: ${webhooksRegistered} registered.` : " Webhooks: none registered.";
+  let p: typeof config.printify;
+  try {
+    p = config.printify;
+    if (p.pinConfigError) throw new Error("Invalid Printify pins");
+  } catch {
     return {
       id: "printify",
       name: "Printify API",
-      level: "green",
-      label: "Ready",
-      detail: `API token and shop id are set. ${blueprint} The token is hidden. ${webhookNote(p.webhookSecret)}${registered}`,
+      level: "red",
+      label: "Invalid pins",
+      detail: `Check PRINTIFY_PRESETS_JSON and the legacy pin variables. Invalid pins block creation.${registered}`,
+      envVars,
+    };
+  }
+  const presets = (Object.keys(POD_PRESETS) as PodPreset[])
+    .map((preset) => `${POD_PRESETS[preset].label}: ${resolvePrintifyPin(preset) ? "pinned" : "missing"}`)
+    .join("; ");
+  const pins = `Preset pins — ${presets}.`;
+  if (hasPrintifyCredentials()) {
+    const allPinned = (Object.keys(POD_PRESETS) as PodPreset[]).every((preset) => resolvePrintifyPin(preset));
+    return {
+      id: "printify",
+      name: "Printify API",
+      level: allPinned ? "green" : "yellow",
+      label: allPinned ? "Ready" : "Pins missing",
+      detail: `API token and shop id are set. ${pins} Unpinned products are held; blanks are never auto-selected. ${webhookNote(p.webhookSecret)}${registered}`,
       envVars,
     };
   }
@@ -120,7 +139,7 @@ function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
       name: "Printify API",
       level: "yellow",
       label: "Incomplete",
-      detail: `Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then. ${webhookNote(p.webhookSecret)}${registered}`,
+      detail: `Set both PRINTIFY_API_TOKEN and PRINTIFY_SHOP_ID. The dry-run adapter stays on until then. ${pins} ${webhookNote(p.webhookSecret)}${registered}`,
       envVars,
     };
   }
@@ -129,7 +148,7 @@ function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
     name: "Printify API",
     level: "yellow",
     label: "Dry-run",
-    detail: `No Printify credentials. The dry-run adapter is active. ${webhookNote(p.webhookSecret)}${registered}`,
+    detail: `No Printify credentials. The dry-run adapter is active. ${pins} ${webhookNote(p.webhookSecret)}${registered}`,
     envVars,
   };
 }

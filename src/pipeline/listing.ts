@@ -1,11 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
+import { getPrintifyAdapter } from "@/adapters/printify";
 import type { SupplierProduct } from "@/adapters/supplier/types";
 import { costs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
-import { alignDeliveryCopy, defaultDeliverable, leadPhrase, removeUndeliverablePromises } from "@/lib/delivery";
-import { withDisclosures } from "@/lib/disclosures";
+import { alignDeliveryCopy, defaultDeliverable, leadPhrase, measuredDigitalDeliverable, removeUndeliverablePromises } from "@/lib/delivery";
+import { appendProviderDetails, validProviderDetails, withDisclosures, type ProviderDetails } from "@/lib/disclosures";
 import { emit } from "@/lib/events";
 import { calculateFees, DEFAULT_POD_PRESETS, podCostChf, POD_PRESETS, resolveTargetMargin, suggestPrice, type PodPreset } from "@/lib/fees";
 import { quoteLadder, type LadderRung } from "@/lib/pricing-ladder";
@@ -20,7 +21,7 @@ import { getSetting } from "@/lib/settings";
 import { listingImageForProduct } from "./mockup";
 import { buildProductTitle, productKeyword } from "@/lib/product-title";
 import { MIN_DESIGN_SCORE } from "@/lib/design-quality";
-import { hasMinimumPixels, PRINT_TARGETS, type PrintTargetKey } from "@/lib/print-targets";
+import { getPrintTarget, hasMinimumPixels, PRINT_TARGETS, type PrintTargetKey } from "@/lib/print-targets";
 import { stageResult, type StageContext, type StageFn } from "./types";
 import { sourcedListingCosts } from "./sourcing";
 
@@ -76,11 +77,12 @@ export async function draftListing(opts: {
   demo?: boolean;
   deliveryFormat?: "png" | "jpeg" | "webp" | null;
   deliveryPixels?: { width: number; height: number } | null;
+  providerDetails?: ProviderDetails | null;
   artDirection?: string;
   siblingTitles?: readonly string[];
 }) {
   const llm = opts.llm ?? getLLMProvider({ demo: opts.demo });
-  const keyword = leadPhrase(productKeyword(opts.keyword) || "original art", opts.niche, opts.product.type);
+  const keyword = leadPhrase(productKeyword(opts.keyword) ? opts.keyword : "", opts.niche, opts.product.type, opts.product.pod);
   const copy = await llm.writeListing({
     keyword,
     niche: opts.niche,
@@ -90,7 +92,7 @@ export async function draftListing(opts: {
     artDirection: opts.artDirection,
   });
   const product = opts.product.type === "digital" ? "digital" : opts.product.pod ?? "posterA3";
-  const title = buildProductTitle(opts.keyword, copy.title, product, opts.siblingTitles, opts.artDirection);
+  const title = buildProductTitle(keyword, copy.title, product, opts.siblingTitles, opts.artDirection);
   const styleClaims = /\b(?:engraving|etched|watercolor|oil painting|linocut|photograph|vintage)\b/i;
   const tags = copy.tags.filter((tag) => !styleClaims.test(tag));
   const preset = opts.product.pod ?? "posterA3";
@@ -110,25 +112,33 @@ export async function draftListing(opts: {
       competitorChf: opts.product.type === "pod" ? (opts.competitorChf ?? POD_PRESETS[preset].marketAnchorChf) : undefined,
       productType: opts.product.type,
     });
-  const facts = defaultDeliverable(opts.product.type, opts.deliveryFormat);
+  const facts = opts.product.type === "digital"
+    ? measuredDigitalDeliverable(opts.deliveryFormat ?? null, opts.deliveryPixels)
+    : defaultDeliverable("pod");
   if (opts.product.type === "pod" && opts.product.pod === "ornament") facts.blank = "ornament";
-  if (opts.deliveryPixels) {
+  if (opts.product.type === "pod" && opts.deliveryPixels) {
     facts.dpi = 300;
     facts.sizes = [
       `${(opts.deliveryPixels.width / 300).toFixed(1)}×${(opts.deliveryPixels.height / 300).toFixed(1)} in`,
       `${(opts.deliveryPixels.width / 150).toFixed(1)}×${(opts.deliveryPixels.height / 150).toFixed(1)} in`,
     ];
   }
+  let description = withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat ?? null, facts), opts.product.type);
+  if (opts.product.type === "pod" && validProviderDetails(opts.providerDetails)) {
+    description = appendProviderDetails(description, opts.providerDetails);
+  }
   const repaired = repairTrivialCopy(
     {
       title,
       tags,
-      description: withDisclosures(alignDeliveryCopy(copy.body, opts.product.type, opts.deliveryFormat, opts.deliveryPixels), opts.product.type),
+      description,
       priceChf,
       productType: opts.product.type,
       deliverable: facts,
+      podPreset: opts.product.pod,
+      providerDetails: opts.providerDetails,
     },
-    { keyword, product: opts.product },
+    { keyword: productKeyword(keyword), product: opts.product },
   );
   const stripped = repairTrivialCopy({
     ...repaired.draft,
@@ -137,7 +147,7 @@ export async function draftListing(opts: {
       .map((tag) => removeUndeliverablePromises(tag, facts))
       .filter(Boolean),
     description: repaired.draft.description.split("\n").filter((line) => !removeUndeliverablePromises(line, facts).trim() || removeUndeliverablePromises(line, facts) === line).join("\n"),
-  }, { keyword, product: opts.product });
+  }, { keyword: productKeyword(keyword), product: opts.product });
   const draft = stripped.draft;
   const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.priceChf != null ? true : opts.assumeOffsiteAds });
   const { issues } = validateListing(draft);
@@ -183,6 +193,15 @@ async function listRung(
   if (containsInlineImage(image.url)) throw new Error("Refusing to store an inline gallery image.");
   const deliveryUrl = rung.product.type === "digital" ? artworkUrl : null;
   const fileManifest = deliveryUrl ? await buildFileManifest(deliveryUrl, image.url) : null;
+  let providerDetails: ProviderDetails | undefined;
+  if (rung.product.type === "pod" && supplierId === "printify" && rung.product.pod) {
+    try {
+      const adapter = await getPrintifyAdapter({ db: ctx.db, intent: "read" });
+      if (ctx.demo || adapter.mode === "live") providerDetails = await adapter.getProviderDetails?.(rung.product.pod);
+    } catch {
+      // Unavailable provider facts hold the draft; never replace them with estimates.
+    }
+  }
   const { draft, fees, issues, pod, llmCost, provider, fixes } = await draftListing({
     niche: design.niche,
     keyword: keywordForRung(phrase, rung),
@@ -200,6 +219,7 @@ async function listRung(
       : design.imageWidth && design.imageHeight
         ? { width: design.imageWidth, height: design.imageHeight }
         : null,
+    providerDetails,
     artDirection: design.prompt,
     siblingTitles,
   });
@@ -211,14 +231,20 @@ async function listRung(
     productType: rung.product.type,
     podProvider,
     imageUrl: image.url,
+    gallery: image.gallery,
+    isDemo: ctx.demo,
     artworkUrl,
     printWidth: design.imageWidth,
     printHeight: design.imageHeight,
     colorVariance: design.colorVariance,
     printTargetKey: (rung.id === "digital-mid" ? "digitalLarge" : rung.product.type === "digital" ? "digital" : rung.product.pod) as PrintTargetKey,
-    printTarget: rung.product.type === "pod" && rung.product.pod ? design.printTarget ?? undefined : undefined,
+    printTarget: rung.product.type === "pod" && rung.product.pod ? await getPrintTarget(rung.product.pod) : undefined,
     upscaleMethod: design.upscaleMethod,
   });
+  for (const issue of issues.filter((issue) => issue.severity === "error")) {
+    gate.pass = false;
+    if (!gate.reasons.some((reason) => reason.code === issue.code && reason.message === issue.message)) gate.reasons.push(issue);
+  }
   if (dryRunOnly) {
     gate.pass = false;
     gate.reasons.push({ field: "description", code: "supplier_dry_run", severity: "error", message: "This supplier/product type is dry-run only; live fulfillment is not enabled." });
@@ -230,6 +256,10 @@ async function listRung(
   if (rung.costIsEstimate) {
     validation.push({ field: "price", code: "sourcing_estimate", severity: "warning", message: "POD cost is a preset estimate; no fresh verified sourcing quote." });
   }
+  const awaitingSupplierPreparation = gate.reasons.length > 0 &&
+    gate.reasons.every((reason) =>
+      reason.code === "supplier_mockups_pending" || reason.code === "missing_provider_timings" ||
+      (reason.code === "supplier_preview_error" && reason.message.startsWith("No Printify blank pinned for ")));
   await ctx.db.insert(listings).values({
     shopId: ctx.shopId,
     designId: design.id,
@@ -248,6 +278,7 @@ async function listRung(
     gallery: image.gallery ?? [],
     copyProvenance: {
       version: 1, provider,
+      ...(validProviderDetails(providerDetails) ? { providerDetails } : {}),
       inputSha256: createHash("sha256").update(JSON.stringify({
         version: "listing-input-v1", phrase: keywordForRung(phrase, rung),
         niche: design.niche, product: rung.product, seed: design.id, artDirection: design.prompt,
@@ -260,7 +291,7 @@ async function listRung(
     netChf: fees.netChf,
     marginPct: fees.marginPct,
     validation,
-    status: gate.pass ? "pending_approval" : "quality_failed",
+    status: gate.pass || awaitingSupplierPreparation ? "pending_approval" : "quality_failed",
     isDemo: ctx.demo,
   });
   siblingTitles.push(draft.title);
@@ -276,7 +307,7 @@ async function listRung(
   return {
     fixes,
     errors: issues.filter((issue) => issue.severity === "error").map((issue) => issue.message),
-    passed: gate.pass,
+    passed: gate.pass || awaitingSupplierPreparation,
     hold: gate.reasons.map((reason) => reason.message).join("; "),
     title: draft.title,
     priceChf: draft.priceChf,

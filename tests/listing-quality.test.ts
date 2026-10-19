@@ -160,11 +160,10 @@ describe("digital delivery copy", () => {
     expect(result.issues.map((issue) => issue.code)).not.toContain("undeliverable_promise");
   });
 
-  it("states measured pixel dimensions and print sizes at 300 and 150", () => {
+  it("states measured pixel dimensions and the 300 DPI print size", () => {
     const blurb = digitalFileBlurb("png", { width: 4800, height: 7200 });
-    expect(blurb).toContain("4800×7200px");
-    expect(blurb).toContain("16×24 in");
-    expect(blurb).toContain("32×48 in");
+    expect(blurb).toContain("4800 × 7200 pixels");
+    expect(blurb).toContain("16.00 × 24.00 inches");
   });
 
   it("describes the single PNG the shop uploads", async () => {

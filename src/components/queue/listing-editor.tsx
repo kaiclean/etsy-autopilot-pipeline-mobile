@@ -13,6 +13,7 @@ import type { Listing } from "@/db/schema";
 import { calculateFees } from "@/lib/fees";
 import { ETSY_LIMITS, validateListing } from "@/lib/listing-validator";
 import { cn } from "@/lib/utils";
+import { SupplierGallery } from "./supplier-gallery";
 
 type Props = {
   listing: Listing | null;
@@ -45,15 +46,16 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
   const [pending, start] = useTransition();
 
   const priceNum = Number(price.replace(",", "."));
-  const { issues, valid } = useMemo(
-    () => validateListing({ title, tags, description, priceChf: priceNum, productType: listing.productType }),
-    [title, tags, description, priceNum, listing.productType],
+  const { issues } = useMemo(
+    () => validateListing({ ...listing, title, tags, description, priceChf: priceNum }),
+    [title, tags, description, priceNum, listing],
   );
   const fees = useMemo(
     () => calculateFees({ priceChf: Number.isFinite(priceNum) ? priceNum : 0, podCostChf: listing.podCostChf, offsiteAds }),
     [priceNum, listing.podCostChf, offsiteAds],
   );
-  const errors = issues.filter((i) => i.severity === "error");
+  const errors = issues.filter((i) => i.severity === "error" && i.code !== "missing_provider_timings");
+  const valid = errors.length === 0;
 
   const addTag = () => {
     const t = newTag.trim().toLowerCase();
@@ -79,6 +81,8 @@ function EditorBody({ listing, offsiteAds, onDone }: { listing: Listing; offsite
         <DrawerTitle>Edit listing</DrawerTitle>
       </DrawerHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pt-3 pb-4">
+        <SupplierGallery listing={listing} />
+        {listing.productType === "pod" && <p className="text-xs text-muted-foreground">Approval refreshes provider timings and Printify mockups. It does not publish to Etsy.</p>}
         <Field label="Title" counter={`${title.length}/${ETSY_LIMITS.titleMax}`} over={title.length > ETSY_LIMITS.titleMax}>
           <Textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={3} className="min-h-0 resize-none rounded-xl text-[15px]" />
         </Field>

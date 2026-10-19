@@ -9,6 +9,7 @@ import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { listings, shops } from "@/db/schema";
 import { withDisclosures } from "@/lib/disclosures";
+import { digitalFileBlurb, measuredDigitalDeliverable } from "@/lib/delivery";
 import { etsyDeliveryFingerprint } from "@/lib/etsy-delivery";
 import { runPublish, PUBLISH_RETRY_MS } from "@/pipeline/publish";
 import type { StageContext } from "@/pipeline/types";
@@ -51,7 +52,7 @@ async function draft(pack = false) {
   const [row] = await db.insert(listings).values({
     shopId, niche: "alpine", productType: "digital", status: "approved", isDemo: true,
     title: "Swiss Alps Wall Art Printable, Minimalist Mountain Poster, Alpine Decor",
-    description: withDisclosures("Swiss alpine artwork. One original PNG for personal use.", "digital"),
+    description: withDisclosures(digitalFileBlurb("png", measuredDigitalDeliverable("png", source)), "digital"),
     tags, imageUrl: "/api/preview/1?src=https%3A%2F%2Fassets.example%2Fartwork.png",
     deliveryUrl: "https://assets.example/artwork.png", priceChf: 8, podCostChf: 0, netChf: 6, marginPct: 75,
     fileManifest: { delivery: source }, fileVerifiedAt: pack ? now : null,

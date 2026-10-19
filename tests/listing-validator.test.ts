@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultDeliverable, promiseLabels, removeUndeliverablePromises } from "@/lib/delivery";
+import { alignDeliveryCopy, defaultDeliverable, measuredDigitalDeliverable, promiseLabels, removeUndeliverablePromises } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { ETSY_LIMITS, sanitizeDraft, validateListing, type ListingDraft } from "@/lib/listing-validator";
 
@@ -11,15 +11,17 @@ const TAGS = [
 
 function draft(over: Partial<ListingDraft> = {}): ListingDraft {
   const productType = over.productType ?? "digital";
+  const deliverable = measuredDigitalDeliverable("png", { width: 3000, height: 4500 });
   return {
     title: "Swiss Alps Wall Art Printable, Minimalist Mountain Poster, Alpine Decor",
     tags: [...TAGS],
     description: withDisclosures(
-      "Bring the calm of the Swiss Alps into your home with this minimalist printable. One PNG for personal printing at home or at a local print shop.",
+      alignDeliveryCopy("Bring the calm of the Swiss Alps into your home.", productType, "png", deliverable),
       productType,
     ),
     priceChf: 7.9,
     productType,
+    deliverable,
     ...over,
   };
 }
@@ -103,7 +105,7 @@ describe("validateListing", () => {
   it("allows a promise word only when the deliverable supports it", () => {
     const editable = draft({
       title: "Editable Birthday Template",
-      deliverable: { ...defaultDeliverable("digital"), editable: true },
+      deliverable: { ...measuredDigitalDeliverable("png", { width: 3000, height: 4500 }), editable: true },
     });
     expect(codes(editable).filter((code) => code === "undeliverable_promise")).toEqual([]);
   });
