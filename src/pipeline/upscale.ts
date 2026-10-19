@@ -3,6 +3,7 @@ import { config, storageBackend } from "@/lib/config";
 import { loadArtworkBytes } from "@/lib/artwork-source";
 import { uploadImageBytes } from "@/lib/object-storage";
 import type { PixelSize, PrintTarget } from "@/lib/print-targets";
+import { setUpscalerState, type UpscalerSource } from "@/lib/upscaler-status";
 
 type TensorLike = { data: Float32Array; dims: readonly number[] };
 export type UpscaleSession = {
@@ -20,55 +21,176 @@ export type UpscaledArtwork = {
 };
 
 let sessionPromise: Promise<UpscaleSession | null> | undefined;
+let lastFailure: string | null = null;
 
-async function modelBytes(): Promise<string | Uint8Array | null> {
-  const { modelPath, modelKey } = config.upscale;
+const MAX_MODEL_BYTES = 250 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+type ModelSource = { source: UpscalerSource; model: string | Uint8Array };
+
+function fail(reason: string): null {
+  lastFailure = reason;
+  return null;
+}
+
+async function sha256File(file: string) {
+  const { createHash } = await import("node:crypto");
+  const { createReadStream } = await import("node:fs");
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(file).on("data", (chunk) => hash.update(chunk)).on("end", () => resolve()).on("error", reject);
+  });
+  return hash.digest("hex");
+}
+
+/** Downloads the ONNX model over HTTPS into tmp, verifying size and SHA-256. Returns the cached path or null. */
+export async function downloadModel(url: string, sha256?: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return fail("model URL is invalid");
+  }
+  if (parsed.protocol !== "https:") return fail("model URL must use HTTPS");
+  if (sha256 && !/^[a-f0-9]{64}$/.test(sha256)) return fail("REALESRGAN_MODEL_SHA256 is not a 64-character hex digest");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const fs = await import("node:fs/promises");
+  const name = sha256 ?? (await import("node:crypto")).createHash("sha256").update(url).digest("hex").slice(0, 32);
+  const cached = path.join(os.tmpdir(), `realesrgan-${name}.onnx`);
+  try {
+    await fs.access(cached);
+    if (!sha256 || (await sha256File(cached)) === sha256) return cached;
+    await fs.rm(cached, { force: true });
+  } catch {
+    // not cached yet
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(parsed.toString(), { redirect: "follow", signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  } catch (error) {
+    return fail(`model download error (${error instanceof Error ? error.name : "network"})`);
+  }
+  if (!response.ok || !response.body) return fail(`model download error (HTTP ${response.status})`);
+  if (response.url && !response.url.startsWith("https:")) return fail("model download redirected away from HTTPS");
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_MODEL_BYTES) return fail("model exceeds the 250 MiB cap");
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha256");
+  const temp = `${cached}.${process.pid}.${Date.now()}.part`;
+  const handle = await fs.open(temp, "w");
+  let total = 0;
+  try {
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_MODEL_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("oversize");
+      }
+      hash.update(value);
+      await handle.write(value);
+    }
+  } catch (error) {
+    await handle.close();
+    await fs.rm(temp, { force: true });
+    return fail(error instanceof Error && error.message === "oversize" ? "model exceeds the 250 MiB cap" : "model download error (stream)");
+  }
+  await handle.close();
+  if (total === 0) {
+    await fs.rm(temp, { force: true });
+    return fail("model download was empty");
+  }
+  const digest = hash.digest("hex");
+  if (sha256 && digest !== sha256) {
+    await fs.rm(temp, { force: true });
+    return fail("model hash mismatch");
+  }
+  await fs.rename(temp, cached);
+  return cached;
+}
+
+async function modelSource(fetchImpl: typeof fetch = fetch): Promise<ModelSource | null> {
+  const { modelPath, modelKey, modelUrl, modelSha256 } = config.upscale;
   if (modelPath) {
     const fs = await import("node:fs/promises");
     try {
       await fs.access(modelPath);
-      return modelPath;
+      return { source: "path", model: modelPath };
     } catch {
-      return null;
+      fail("REALESRGAN_MODEL_PATH file is missing");
     }
   }
-  if (!modelKey || storageBackend() !== "s3" || !/^[A-Za-z0-9._/-]{1,512}$/.test(modelKey) || modelKey.split("/").includes("..")) return null;
-  const { GetObjectCommand, S3Client } = await import("@aws-sdk/client-s3");
-  const store = config.storage;
-  const client = new S3Client({
-    region: store.region,
-    endpoint: store.endpoint,
-    forcePathStyle: store.forcePathStyle,
-    credentials: { accessKeyId: store.accessKeyId!, secretAccessKey: store.secretAccessKey! },
-  });
-  try {
-    const response = await client.send(new GetObjectCommand({ Bucket: store.bucket, Key: modelKey }));
-    if (response.ContentLength != null && response.ContentLength > 250 * 1024 * 1024) return null;
-    const bytes = await response.Body?.transformToByteArray();
-    return bytes && bytes.length > 0 && bytes.length <= 250 * 1024 * 1024 ? bytes : null;
-  } finally {
-    client.destroy();
+  if (modelKey && storageBackend() === "s3" && /^[A-Za-z0-9._/-]{1,512}$/.test(modelKey) && !modelKey.split("/").includes("..")) {
+    const { GetObjectCommand, S3Client } = await import("@aws-sdk/client-s3");
+    const store = config.storage;
+    const client = new S3Client({
+      region: store.region,
+      endpoint: store.endpoint,
+      forcePathStyle: store.forcePathStyle,
+      credentials: { accessKeyId: store.accessKeyId!, secretAccessKey: store.secretAccessKey! },
+    });
+    try {
+      const response = await client.send(new GetObjectCommand({ Bucket: store.bucket, Key: modelKey }));
+      if (response.ContentLength != null && response.ContentLength > MAX_MODEL_BYTES) {
+        fail("S3 model exceeds the 250 MiB cap");
+      } else {
+        const bytes = await response.Body?.transformToByteArray();
+        if (bytes && bytes.length > 0 && bytes.length <= MAX_MODEL_BYTES) return { source: "s3", model: bytes };
+        fail("S3 model is empty or too large");
+      }
+    } catch (error) {
+      fail(`S3 model read error (${error instanceof Error ? error.name : "unknown"})`);
+    } finally {
+      client.destroy();
+    }
+  } else if (modelKey) {
+    fail("REALESRGAN_MODEL_KEY needs S3 storage and a safe key");
   }
+  if (modelUrl) {
+    const file = await downloadModel(modelUrl, modelSha256, fetchImpl);
+    if (file) return { source: "url", model: file };
+    return null;
+  }
+  if (!lastFailure) fail("no model source configured");
+  return null;
+}
+
+/** Exposed for tests: resolves the model in PATH → S3 → URL order without creating an ORT session. */
+export async function resolveModelSourceForTests(fetchImpl: typeof fetch) {
+  lastFailure = null;
+  const found = await modelSource(fetchImpl);
+  return found ? { source: found.source, model: found.model } : { source: null, reason: lastFailure };
 }
 
 export async function loadRealEsrganSession(): Promise<UpscaleSession | null> {
   if (!sessionPromise) {
     sessionPromise = (async () => {
+      const started = Date.now();
+      lastFailure = null;
       try {
-        const model = await modelBytes();
-        if (!model) return null;
+        const found = await modelSource();
+        if (!found) {
+          console.warn(`[upscale] Real-ESRGAN unavailable: ${lastFailure ?? "unknown reason"}`);
+          setUpscalerState({ state: "fallback", reason: lastFailure ?? "model unavailable" });
+          return null;
+        }
         const ort = await import("onnxruntime-node");
-        const session = typeof model === "string"
-          ? await ort.InferenceSession.create(model, {
-            executionProviders: ["cpu"],
-            graphOptimizationLevel: "all",
-          })
-          : await ort.InferenceSession.create(model, {
-          executionProviders: ["cpu"],
-          graphOptimizationLevel: "all",
-          });
+        const options = { executionProviders: ["cpu"], graphOptimizationLevel: "all" as const, intraOpNumThreads: Math.max(1, Math.min(8, (await import("node:os")).availableParallelism?.() ?? 4)) };
+        const session = typeof found.model === "string"
+          ? await ort.InferenceSession.create(found.model, options)
+          : await ort.InferenceSession.create(found.model, options);
+        const loadMs = Date.now() - started;
+        const io = `${session.inputNames[0] ?? "?"}→${session.outputNames[0] ?? "?"}`;
+        console.log(`[upscale] Real-ESRGAN loaded from ${found.source} in ${(loadMs / 1000).toFixed(1)}s (${io})`);
+        setUpscalerState({ state: "ready", source: found.source, loadMs, io });
         return session as unknown as UpscaleSession;
-      } catch {
+      } catch (error) {
+        const reason = `ORT error (${error instanceof Error ? error.message.slice(0, 160) : "unknown"})`;
+        console.warn(`[upscale] Real-ESRGAN unavailable: ${reason}`);
+        setUpscalerState({ state: "fallback", reason });
         return null;
       }
     })();
@@ -144,14 +266,16 @@ export async function upscaleTiledRgb(
   return { data: result, width, height, channels: 3 as const };
 }
 
-async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: number; height: number; channels: 3 }) {
-  return sharp(bytes, {
-    limitInputPixels: 64_000_000,
+async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: number; height: number; channels: 3 }, finish = false) {
+  let image = sharp(bytes, {
+    limitInputPixels: 128_000_000,
     ...(raw ? { raw } : {}),
   })
     .flatten({ background: "#ffffff" })
-    .resize(target.targetW, target.targetH, { fit: "cover", kernel: "lanczos3" })
-    .sharpen({ sigma: 0.5 })
+    .resize(target.targetW, target.targetH, { fit: "cover", kernel: "lanczos3" });
+  // Poster finish: a 3px median removes upscale speckle, then a gentle unsharp mask restores edges.
+  image = finish ? image.median(3).sharpen({ sigma: 0.8, m1: 0.5, m2: 1.5 }) : image.sharpen({ sigma: 0.5 });
+  return image
     .withMetadata({ density: 300 })
     .toColourspace("srgb")
     .png({ compressionLevel: 9, effort: 8 })
@@ -161,7 +285,7 @@ async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: numbe
 export async function upscaleArtwork(
   url: string,
   target: PrintTarget,
-  options: { fallbackTarget?: PrintTarget; session?: UpscaleSession | null; createTensor?: TensorFactory; store?: boolean } = {},
+  options: { fallbackTarget?: PrintTarget; session?: UpscaleSession | null; createTensor?: TensorFactory; store?: boolean; posterFinish?: boolean } = {},
 ): Promise<UpscaledArtwork> {
   const sourceBytes = await loadArtworkBytes(url);
   if (!sourceBytes) throw new Error("Unable to read source artwork for upscaling");
@@ -197,13 +321,15 @@ export async function upscaleArtwork(
         width: upscaled.width,
         height: upscaled.height,
         channels: upscaled.channels,
-      });
+      }, options.posterFinish ?? false);
       upscaleMethod = "realesrgan";
-    } catch {
+    } catch (error) {
+      console.warn(`[upscale] Real-ESRGAN failed, falling back to lanczos: ${error instanceof Error ? error.message.slice(0, 160) : "unknown error"}`);
       outputBytes = await finalPng(sourceBytes, outputTarget);
       upscaleMethod = "lanczos";
     }
   } else {
+    console.warn(`[upscale] Falling back to lanczos: ${lastFailure ?? "Real-ESRGAN session unavailable"}`);
     outputBytes = await finalPng(sourceBytes, outputTarget);
     upscaleMethod = "lanczos";
   }

@@ -1,4 +1,5 @@
 import type { ProviderCreditSignal } from "./provider-errors";
+import { upscalerState } from "@/lib/upscaler-status";
 import { isPodPreset, type PodPreset } from "./fees";
 
 export type PrintifyPin = { blueprintId: number; printProviderId: number; variantIds: number[] };
@@ -175,6 +176,15 @@ export const config = {
     return {
       modelPath: env("REALESRGAN_MODEL_PATH"),
       modelKey: env("REALESRGAN_MODEL_KEY"),
+      /** Pinned BSD-3-Clause Real-ESRGAN x4plus ONNX export. Set REALESRGAN_MODEL_URL=off to disable downloads. */
+      modelUrl: (() => {
+        const value = env("REALESRGAN_MODEL_URL");
+        if (value?.toLowerCase() === "off") return undefined;
+        return value ?? DEFAULT_REALESRGAN_MODEL_URL;
+      })(),
+      modelSha256: (env("REALESRGAN_MODEL_SHA256") ?? (env("REALESRGAN_MODEL_URL") ? undefined : DEFAULT_REALESRGAN_MODEL_SHA256))?.toLowerCase(),
+      /** Optional light denoise + sharpen pass for posters/canvas after upscaling. Default on; set to "off" to disable. */
+      posterFinish: env("UPSCALE_POSTER_FINISH")?.toLowerCase() !== "off",
     };
   },
   get runpod() {
@@ -303,6 +313,9 @@ function withCreditStatus(row: IntegrationStatus, signal: ProviderCreditSignal |
   };
 }
 
+export const DEFAULT_REALESRGAN_MODEL_URL = "https://huggingface.co/jonathanst29/tinier-upscale-models/resolve/899dc1e4b22bbf1955c2f1739c085edc080cb366/realesrgan-x4plus.onnx";
+export const DEFAULT_REALESRGAN_MODEL_SHA256 = "4ed6a45a8185bde6c8d7c7790a6e80e3c5b9f608946f634021068dd0fd0473c8";
+
 export function integrationStatus(etsyConnected: boolean, opts?: { providerCredits?: ProviderCreditSignal }): IntegrationStatus[] {
   const e = config.etsy;
   const p = config.printify;
@@ -339,6 +352,24 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
       } Webhook POST ${printifyWebhookUrl()}.${p.webhookSecret ? " Signatures are checked with PRINTIFY_WEBHOOK_SECRET." : " Set PRINTIFY_WEBHOOK_SECRET so production deliveries are verified."}`,
       envVars: ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_WEBHOOK_SECRET"],
     },
+    (() => {
+      const u = config.upscale;
+      const st = upscalerState();
+      const configured = Boolean(u.modelPath || u.modelKey || u.modelUrl);
+      return {
+        id: "upscaler",
+        name: "Real-ESRGAN upscaler",
+        status: st.state === "ready" ? "connected" : configured ? "configured" : "missing",
+        detail: st.state === "ready"
+          ? `Real-ESRGAN ready (loaded from ${st.source} in ${(st.loadMs / 1000).toFixed(1)}s, ${st.io}).`
+          : st.state === "fallback"
+            ? `Lanczos fallback: ${st.reason}. Posters, apparel and large digital files stay held.`
+            : configured
+              ? `Model loads on the first print upscale from ${u.modelPath ? "REALESRGAN_MODEL_PATH" : u.modelKey ? "REALESRGAN_MODEL_KEY (S3)" : "REALESRGAN_MODEL_URL"}.`
+              : "No model source. Set REALESRGAN_MODEL_URL (or unset it to use the pinned default).",
+        envVars: ["REALESRGAN_MODEL_PATH", "REALESRGAN_MODEL_KEY", "REALESRGAN_MODEL_URL", "REALESRGAN_MODEL_SHA256"],
+      } satisfies IntegrationStatus;
+    })(),
     {
       id: "gelato",
       name: "Gelato",

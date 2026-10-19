@@ -4,12 +4,15 @@ import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
 import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl } from "@/lib/art-quality";
+import { config } from "@/lib/config";
 import { assessArtwork } from "@/lib/design-quality";
 import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import { productKeyword } from "@/lib/product-title";
 import { isPodPreset } from "@/lib/fees";
 import { keywordHasUndeliverablePromise } from "@/lib/delivery";
 import { persistableImageUrl } from "@/lib/compact-image-url";
+import { loadArtworkBytes } from "@/lib/artwork-source";
+import { differenceHash, isNearDuplicate, type DesignHash } from "@/lib/design-similarity";
 import { emit } from "@/lib/events";
 import { isNichePaused, NICHES } from "@/lib/niches";
 import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
@@ -31,7 +34,7 @@ export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
 
 const NICHE_PROMPTS: Record<string, string> = {
   alpine:
-    "Alpine wall art with a clear mountain or landscape focal subject, painterly but crisp and print-ready",
+    "Swiss and alpine-inspired wall art with a clear focal subject, painterly but crisp and print-ready",
   gothic: "Dark botanical art with a clearly readable focal subject",
   christmas:
     "Cozy winter illustration with a clearly readable seasonal focal subject and hand-drawn texture",
@@ -53,21 +56,80 @@ const SUBJECTS: Record<string, string[]> = {
 };
 const PALETTES = ["ivory and charcoal", "teal and copper", "ochre and midnight", "indigo and silver", "jade and cream", "apricot and blue", "coral and graphite", "gold and slate"];
 
-export function chooseConcept(niche: string, recent: string[]) {
+/** Rendering styles rotated per run so a day's designs do not share one look. */
+export const STYLES = [
+  "vintage travel-poster lithograph",
+  "loose watercolor",
+  "bold linocut print",
+  "mid-century screenprint",
+  "fine botanical engraving",
+  "gouache illustration",
+  "art deco poster",
+  "risograph print with grain",
+];
+
+function words(text: string) {
+  return new Set(text.toLowerCase().split(/[^a-z]+/).filter((word) => word.length > 3));
+}
+
+/**
+ * Picks an unused style + motif + palette. The keyword stays the main subject (see `buildPrompt`);
+ * the motif is only chosen from niche subjects that share no words with recent concepts in this run,
+ * and motifs the keyword itself contradicts are skipped (a "christmas cabin" keyword gets no mountain lake).
+ */
+export function chooseConcept(niche: string, recent: string[], phrase = "") {
   const used = new Set(recent.map((concept) => concept.toLowerCase()));
-  for (const subject of SUBJECTS[niche] ?? SUBJECTS.alpine!) {
+  const usedStyles = new Set(STYLES.filter((style) => recent.some((concept) => concept.toLowerCase().includes(style))));
+  const usedSubjects = new Set((SUBJECTS[niche] ?? SUBJECTS.alpine!).filter((subject) => recent.some((concept) => concept.toLowerCase().includes(subject))));
+  const keywordWords = words(phrase);
+  const subjects = (SUBJECTS[niche] ?? SUBJECTS.alpine!);
+  const relevant = keywordWords.size
+    ? [...subjects].sort((a, b) => Number([...words(b)].some((w) => keywordWords.has(w))) - Number([...words(a)].some((w) => keywordWords.has(w))))
+    : subjects;
+  const candidates: string[] = [];
+  for (const subject of relevant) {
     for (const palette of PALETTES) {
-      const concept = `${subject} in ${palette}`;
-      if (!used.has(concept)) return concept;
+      for (const style of STYLES) candidates.push(`${style}: ${subject} in ${palette}`);
     }
   }
-  return null;
+  const fresh = candidates.find((concept) => {
+    const style = STYLES.find((item) => concept.startsWith(item))!;
+    const subject = subjects.find((item) => concept.includes(item))!;
+    return !used.has(concept) && !usedStyles.has(style) && !usedSubjects.has(subject);
+  });
+  return fresh ?? candidates.find((concept) => !used.has(concept)) ?? null;
 }
 
 export function buildPrompt(phrase: string, style: string, niche?: string, concept?: string) {
   const look = ((niche && NICHE_PROMPTS[niche]) || style)
     .replace(/\bno (?:text|lettering|frames?|interface chrome)\b/gi, "clean pictorial detail");
-  return `${look}. Subject: ${productKeyword(phrase) || "original art"}. ${concept ? `Concept: ${concept}. ` : ""}Original unframed full-bleed artwork with clean edges, a detailed central subject, high contrast, crisp detail and rich color variation. All marks are pictorial rather than typography; the corners contain clean artwork continuous with the composition. Opaque background with meaningful visual detail throughout.`;
+  const subject = productKeyword(phrase) || "original art";
+  const [renderStyle, motif] = concept?.includes(": ") ? concept.split(": ", 2) : [null, concept];
+  return `Main subject: ${subject}. The artwork must clearly depict ${subject}; do not substitute a generic mountain landscape unless the subject asks for one. ${renderStyle ? `Style: ${renderStyle}. ` : ""}${look}. ${motif ? `Secondary motif and palette: ${motif}. ` : ""}Original unframed full-bleed artwork with clean edges, a detailed central subject, high contrast, crisp detail and rich color variation. All marks are pictorial rather than typography; the corners contain clean artwork continuous with the composition. Opaque background with meaningful visual detail throughout. Avoid rendering defects: no melted or warped objects, no unintended fire or smoke, no distorted geometry.`;
+}
+
+/** Selected keywords from today's research first, then interleaved across niches so one niche cannot fill the run. */
+export function orderDesignQueue<T extends { niche: string; updatedAt: Date | null; score: number; designFailures: number }>(rows: T[], dayStart: Date, limit: number) {
+  const today = (row: T) => (row.updatedAt ? row.updatedAt >= dayStart : false);
+  const sorted = [...rows].sort((a, b) => Number(today(b)) - Number(today(a)) || a.designFailures - b.designFailures || b.score - a.score);
+  const byNiche = new Map<string, T[]>();
+  for (const row of sorted) byNiche.set(row.niche, [...(byNiche.get(row.niche) ?? []), row]);
+  const out: T[] = [];
+  const pick = (todayOnly: boolean) => {
+    let progressed = true;
+    while (out.length < limit && progressed) {
+      progressed = false;
+      for (const list of byNiche.values()) {
+        const index = list.findIndex((row) => !todayOnly || today(row));
+        if (index < 0 || out.length >= limit) continue;
+        out.push(list.splice(index, 1)[0]!);
+        progressed = true;
+      }
+    }
+  };
+  pick(true);
+  pick(false);
+  return out;
 }
 
 export const runDesign: StageFn = async (ctx) => {
@@ -78,12 +140,14 @@ export const runDesign: StageFn = async (ctx) => {
 
   // Seeded demo keywords are never sent to a paid image provider for a live shop.
   const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
-  let queue = await db
+  const queueDayStart = new Date(ctx.now);
+  queueDayStart.setUTCHours(0, 0, 0, 0);
+  let queue = orderDesignQueue(await db
     .select()
     .from(keywords)
     .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), liveOnly))
     .orderBy(asc(keywords.designFailures), desc(keywords.score))
-    .limit(automation.designsPerRun);
+    .limit(200), queueDayStart, automation.designsPerRun);
   if (queue.length === 0) {
     const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
     if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
@@ -122,6 +186,7 @@ export const runDesign: StageFn = async (ctx) => {
     .where(and(eq(designBriefs.shopId, ctx.shopId), ctx.demo ? undefined : eq(designBriefs.isDemo, false)))
     .orderBy(desc(designBriefs.id)).limit(30);
   const runConcepts: string[] = [];
+  const runHashes: DesignHash[] = [];
   const noteFailure = async (kw: (typeof queue)[number]) => {
     const next = kw.designFailures + 1;
     kw.designFailures = next;
@@ -148,7 +213,7 @@ export const runDesign: StageFn = async (ctx) => {
     const concept = previous[0] ? null : chooseConcept(kw.niche, [
       ...recentBriefs.filter((row) => row.niche === kw.niche).slice(0, 30).map((row) => row.concept).filter((value): value is string => Boolean(value)),
       ...runConcepts,
-    ]);
+    ], kw.phrase);
     if (!previous[0] && !concept) {
       await db.update(keywords).set({ status: "new", updatedAt: ctx.now }).where(eq(keywords.id, kw.id));
       log(`Deferred duplicate brief for “${kw.phrase}”: no unused concept/palette in this run`, "warn");
@@ -217,7 +282,10 @@ export const runDesign: StageFn = async (ctx) => {
           upscaled = await upscaleArtwork(
             img.url,
             target,
-            targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {},
+            {
+              ...(targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
+              posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas"),
+            },
           );
         }
         const outputUrl = upscaled?.url ?? img.url;
@@ -256,6 +324,15 @@ export const runDesign: StageFn = async (ctx) => {
           ? { pass: true, reasons: [] }
           : assessArtwork(assessment, prepared.width, prepared.height, false, ctx.demo ? null : prepared.variance);
         rejected = { img, prepared, upscale: upscaled, score: assessment.score, reasons: check.reasons };
+        if (check.pass && !isPlaceholderUrl(prepared.url)) {
+          const hash = await loadArtworkBytes(prepared.url).then((bytes) => bytes ? differenceHash(bytes) : null).catch(() => null);
+          if (hash != null && isNearDuplicate(hash, runHashes)) {
+            rejected = { ...rejected, reasons: ["Near-duplicate of another design in this run."] };
+            log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: near-duplicate of another design in this run`, "warn");
+            continue;
+          }
+          if (hash != null) runHashes.push(hash);
+        }
         if (check.pass) {
           accepted = rejected;
           break;
