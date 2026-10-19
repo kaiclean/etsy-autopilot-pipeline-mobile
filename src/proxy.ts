@@ -12,7 +12,9 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/cron/") ||
     pathname.startsWith("/api/media/") ||
     pathname === "/api/webhooks/printify" ||
-    pathname === "/api/webhooks/etsy"
+    pathname === "/api/webhooks/etsy" ||
+    // Bearer-token API (OMNIGRAM_API_TOKEN) checked inside the route.
+    pathname === "/api/brain/decisions"
   ) {
     return NextResponse.next();
   }

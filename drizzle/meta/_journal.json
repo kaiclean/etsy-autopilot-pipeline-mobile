@@ -155,6 +155,13 @@
       "when": 1792267200000,
       "tag": "0023_design_upscale",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792280000000,
+      "tag": "0024_brain_decisions",
+      "breakpoints": true
     }
   ]
 }
