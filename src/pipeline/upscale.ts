@@ -282,11 +282,40 @@ async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: numbe
     .toBuffer();
 }
 
+type WorkerOptions = { fallbackTarget?: PrintTarget; posterFinish?: boolean };
+
+/** POSTs a job to the upscaler worker (Bearer UPSCALER_SECRET). Returns null-safe result or throws. */
+export async function upscaleViaWorker(url: string, target: PrintTarget, options: WorkerOptions, fetchImpl: typeof fetch = fetch): Promise<UpscaledArtwork> {
+  const { workerUrl, workerSecret } = config.upscale;
+  if (!workerUrl || !workerSecret) throw new Error("UPSCALER_URL or UPSCALER_SECRET is not set");
+  const response = await fetchImpl(`${workerUrl.replace(/\/$/, "")}/upscale`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${workerSecret}` },
+    body: JSON.stringify({ source: url, target, fallbackTarget: options.fallbackTarget, posterFinish: options.posterFinish ?? false }),
+    signal: AbortSignal.timeout(20 * 60_000),
+  });
+  if (!response.ok) throw new Error(`worker HTTP ${response.status}`);
+  const body = await response.json() as Partial<UpscaledArtwork>;
+  const valid = (px: unknown): px is PixelSize => !!px && typeof px === "object" &&
+    Number.isInteger((px as PixelSize).width) && Number.isInteger((px as PixelSize).height);
+  if (typeof body.url !== "string" || !body.url || !valid(body.sourcePx) || !valid(body.outputPx) ||
+    !["realesrgan", "lanczos", "native"].includes(String(body.upscaleMethod))) throw new Error("worker returned an invalid result");
+  return { url: body.url, upscaleMethod: body.upscaleMethod!, sourcePx: body.sourcePx, outputPx: body.outputPx };
+}
+
 export async function upscaleArtwork(
   url: string,
   target: PrintTarget,
-  options: { fallbackTarget?: PrintTarget; session?: UpscaleSession | null; createTensor?: TensorFactory; store?: boolean; posterFinish?: boolean } = {},
+  options: { fallbackTarget?: PrintTarget; session?: UpscaleSession | null; createTensor?: TensorFactory; store?: boolean; posterFinish?: boolean; tileSize?: number; skipWorker?: boolean } = {},
 ): Promise<UpscaledArtwork> {
+  // Heavy upscales go to the dedicated worker when configured; any worker failure falls back to the local path.
+  if (!options.skipWorker && options.session === undefined && options.store !== false && config.upscale.workerUrl && !config.upscale.isWorker) {
+    const remote = await upscaleViaWorker(url, target, options).catch((error) => {
+      console.warn(`[upscale] worker failed, using local path: ${error instanceof Error ? error.message.slice(0, 160) : "unknown error"}`);
+      return null;
+    });
+    if (remote) return remote;
+  }
   const sourceBytes = await loadArtworkBytes(url);
   if (!sourceBytes) throw new Error("Unable to read source artwork for upscaling");
   const metadata = await sharp(sourceBytes, { limitInputPixels: 64_000_000 }).metadata();
@@ -322,7 +351,7 @@ export async function upscaleArtwork(
         width: input.info.width,
         height: input.info.height,
         channels: input.info.channels,
-      }, session, 256, 16, options.createTensor);
+      }, session, options.tileSize ?? 256, 16, options.createTensor);
       outputBytes = await finalPng(upscaled.data, target, {
         width: upscaled.width,
         height: upscaled.height,
