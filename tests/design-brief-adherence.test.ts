@@ -44,3 +44,20 @@ describe("design follows the day's research", () => {
     expect(isNearDuplicate(c, [a])).toBe(false);
   });
 });
+
+import { capRepeatedTagWords, repairTrivialCopy, validateListing } from "@/lib/listing-validator";
+
+describe("tag writer avoids repeated words", () => {
+  it("caps any word at three tags and refills to 13", () => {
+    const { tags } = capRepeatedTagWords(["dark art", "dark floral", "dark gothic", "dark academia", "art print", "wall art", "gothic art", "moody art", "art lover"]);
+    expect(tags).toHaveLength(13);
+    for (const word of ["dark", "art"]) expect(tags.filter((tag) => tag.split(" ").includes(word)).length).toBeLessThanOrEqual(3);
+  });
+
+  it("blocks five repeats and repair fixes them", () => {
+    const tags = ["art one", "art two", "art three", "art four", "art five", "a1 b", "c1 d", "e1 f", "g1 h", "i1 j", "k1 l", "m1 n", "o1 p"];
+    const draft = { title: "Gothic Floral Poster", tags, description: "x", priceChf: 20, productType: "pod" as const };
+    expect(validateListing(draft).issues.find((issue) => issue.code === "tag_repeated_word")?.severity).toBe("error");
+    expect(repairTrivialCopy(draft).draft.tags.filter((tag) => tag.includes("art")).length).toBeLessThanOrEqual(3);
+  });
+});
