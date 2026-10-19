@@ -122,6 +122,11 @@ export const PROMISE_RULES: PromiseRule[] = [
   { label: "JPEG", pattern: /\b(?:jpe?g)\b/i, allowed: (f) => f.format === "jpeg" },
   { label: "WebP", pattern: /\bwebp\b/i, allowed: (f) => f.format === "webp" },
   { label: "commercial use", pattern: /\bcommercial use\b/i, allowed: (f) => f.commercialUse },
+  {
+    label: "high resolution",
+    pattern: /\bhigh[- ]?res(?:olution)?\b|\bhi[- ]?res\b|\bultra hd\b|\b4k\b/i,
+    allowed: (f) => f.blank != null || (f.pixels != null && Math.max(f.pixels.width, f.pixels.height) >= 4000),
+  },
   { label: "DPI", pattern: /\bdpi\b/i, allowed: (f) => f.dpi != null && f.dpi > 0 },
   {
     label: "print ratio",

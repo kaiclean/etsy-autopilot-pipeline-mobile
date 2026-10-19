@@ -316,6 +316,11 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
     });
   }
 
+  const lastWord = title.trim().split(/\s+/).pop()?.replace(/[^A-Za-z]/g, "").toLowerCase() ?? "";
+  if (["coffee", "for", "and", "with", "the", "of", "a", "an", "to", "in"].includes(lastWord)) {
+    push({ field: "title", severity: "error", code: "title_dangling_word", message: `Title ends in a bare "${lastWord}"; finish the phrase (e.g. "Coffee Mug").` });
+  }
+
   return { valid: !issues.some((i) => i.severity === "error"), issues };
 }
 

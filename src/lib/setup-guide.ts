@@ -114,6 +114,8 @@ export const SETUP_STEPS: SetupStep[] = [
       "CLOUDFLARE_IMAGE_MODEL",
       "REALESRGAN_MODEL_PATH",
       "REALESRGAN_MODEL_KEY",
+      "REALESRGAN_MODEL_URL",
+      "REALESRGAN_MODEL_SHA256",
     ],
     bullets: [
       "Ollama Cloud: LLM_PROVIDER=ollama, OLLAMA_API_KEY, and a vision-capable OLLAMA_MODEL. The base is fixed at https://ollama.com/v1. Design sends images for visual assessment through /chat/completions; this is distinct from image generation.",
@@ -122,7 +124,7 @@ export const SETUP_STEPS: SetupStep[] = [
       "OpenAI or OpenRouter still work with LLM_PROVIDER=openai and IMAGE_PROVIDER=openai. OpenRouter uses OPENAI_BASE_URL=https://openrouter.ai/api/v1.",
       "RunPod Serverless ComfyUI: set IMAGE_PROVIDER=runpod, RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and RUNPOD_COMFY_WORKFLOW to the endpoint ID and ComfyUI API-format workflow JSON. Use {{PROMPT}} in the positive prompt node; {{SEED}}, {{WIDTH}}, and {{HEIGHT}} are optional placeholders. Print briefs use the worker's 4x-UltraSharp.pth model (override RUNPOD_UPSCALE_MODEL) before SaveImage; digital keeps native size. Use a vision-capable LLM_PROVIDER, optionally VISION_MODEL, for design assessment. Keep keys in deployment secrets.",
       "Cloudflare Workers AI: set IMAGE_PROVIDER=cloudflare, CLOUDFLARE_ACCOUNT_ID, and CLOUDFLARE_API_TOKEN (Workers AI Run permission). CLOUDFLARE_IMAGE_MODEL defaults to FLUX.1 schnell; FLUX.2 klein-4b is an opt-in native model capped at 1920×1920 and estimated at 1,000 neurons per image (10,000/day free allocation).",
-      "Print-ready files pass through the shared Real-ESRGAN x4plus ONNX CPU upscaler when its BSD-3-Clause model is available. Provide REALESRGAN_MODEL_PATH or place the model in S3 and set REALESRGAN_MODEL_KEY. Without ONNX, Lanczos fallback is held for apparel, posters, and large digital files; mug and standard digital may pass pixel gates.",
+      "Print-ready files pass through the shared Real-ESRGAN x4plus ONNX CPU upscaler when its BSD-3-Clause model is available. Load order is REALESRGAN_MODEL_PATH, then S3 REALESRGAN_MODEL_KEY, then an HTTPS REALESRGAN_MODEL_URL download (defaults to the pinned x4plus ONNX, SHA-256 verified, cached in tmp; set it to off to disable). Without ONNX, Lanczos fallback is held for apparel, posters, and large digital files; mug and standard digital may pass pixel gates.",
       "Optional IMAGE_FALLBACK_PROVIDER selects a real provider to try once if the primary fails; empty disables fallback. Configure that provider's credentials too. Both attempts count toward the estimated AI budget; no mock fallback is allowed.",
       "Connections → Test connection sends one tiny text request and one image request for OpenAI-compatible or Cloudflare image providers. For RunPod it runs the configured workflow, which may incur GPU charges. It tests the primary directly, without fallback. Keys are not shown.",
     ],

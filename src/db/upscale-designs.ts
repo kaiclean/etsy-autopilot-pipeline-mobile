@@ -2,7 +2,7 @@ import { inArray, eq } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import type { DB } from "@/db";
 import { getDb } from "@/db";
-import { storageBackend } from "@/lib/config";
+import { config, storageBackend } from "@/lib/config";
 import { designBriefs, designs, listings, type FileManifest } from "@/db/schema";
 import { defaultDeliverable, removeUndeliverablePromises } from "@/lib/delivery";
 import { evaluateQualityGate, podPresetFromProvider } from "@/lib/quality-gate";
@@ -51,7 +51,7 @@ export async function upscaleDesigns(db: DB, ids: number[], apply = false) {
     const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
     const fallbackTarget = targetKey === "digitalLarge" ? PRINT_TARGETS.digital : target;
     const sourceUrl = design.sourceImageUrl ?? design.imageUrl;
-    const processed = await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply });
+    const processed = await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply, posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas") });
     const measured = await preparePrintFile(processed.url);
     if (!measured.width || !measured.height) throw new Error(`Design #${id}: reprocessed file could not be measured.`);
     const outputPx = { width: measured.width, height: measured.height };
