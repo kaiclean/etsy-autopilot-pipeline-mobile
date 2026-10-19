@@ -178,7 +178,7 @@ export async function loadRealEsrganSession(): Promise<UpscaleSession | null> {
           return null;
         }
         const ort = await import("onnxruntime-node");
-        const options = { executionProviders: ["cpu"], graphOptimizationLevel: "all" as const, intraOpNumThreads: Math.max(1, Math.min(8, (await import("node:os")).availableParallelism?.() ?? 4)) };
+        const options = { executionProviders: ["cpu"], graphOptimizationLevel: "all" as const, enableCpuMemArena: false, enableMemPattern: false, intraOpNumThreads: Math.max(1, Math.min(8, (await import("node:os")).availableParallelism?.() ?? 4)) };
         const session = typeof found.model === "string"
           ? await ort.InferenceSession.create(found.model, options)
           : await ort.InferenceSession.create(found.model, options);
@@ -305,7 +305,13 @@ export async function upscaleArtwork(
     upscaleMethod = "native";
   } else if (session) {
     try {
+      // Only feed Real-ESRGAN what a 4× pass needs: the output is resized to the target anyway, and this
+      // keeps CPU time and memory bounded on small Railway instances.
+      const needW = Math.ceil(target.targetW / 4);
+      const needH = Math.ceil(target.targetH / 4);
+      const shrink = metadata.width > needW * 1.05 && metadata.height > needH * 1.05;
       const input = await sharp(sourceBytes, { limitInputPixels: 64_000_000 })
+        .resize(shrink ? { width: needW, height: needH, fit: "cover", kernel: "lanczos3" } : undefined)
         .flatten({ background: "#ffffff" })
         .toColourspace("srgb")
         .removeAlpha()
