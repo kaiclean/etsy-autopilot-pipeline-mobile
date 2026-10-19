@@ -530,3 +530,25 @@ export type PodSample = typeof podSamples.$inferSelect;
 export type DesignBrief = typeof designBriefs.$inferSelect;
 export type HealthReport = typeof healthReports.$inferSelect;
 export type SaleAlert = typeof saleAlerts.$inferSelect;
+
+/**
+ * OmniGram Brain: Kai's verdicts on vault ideas (Ideas/<name>). Append-only; the latest row per idea wins.
+ * An approved idea that fits an active niche links the keyword and design brief it created.
+ */
+export const brainDecisions = pgTable("brain_decisions", {
+  id: serial("id").primaryKey(),
+  ideaId: text("idea_id").notNull(),
+  verdict: text("verdict").$type<"approved" | "rejected" | "needs_research">().notNull(),
+  comment: text("comment"),
+  priority: integer("priority"),
+  /** Search phrase Kai confirmed in the approve form; null for backlog-only approvals. */
+  phrase: text("phrase"),
+  niche: text("niche").$type<Niche>(),
+  keywordId: integer("keyword_id").references(() => keywords.id),
+  designBriefId: integer("design_brief_id").references(() => designBriefs.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("brain_decisions_idea_idx").on(table.ideaId, table.createdAt.desc()),
+  index("brain_decisions_created_idx").on(table.createdAt),
+]);
+export type BrainDecision = typeof brainDecisions.$inferSelect;

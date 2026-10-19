@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow } from "lucide-react";
+import { AlertTriangle, ChartColumnBig, HeartPulse, House, Inbox, LayoutGrid, Package, Power, Receipt, Settings, Workflow, Brain } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { DryRunNotice } from "@/lib/operator-mode";
@@ -25,7 +25,7 @@ const MOBILE_TABS = [
   { href: "/pipeline", label: "Pipeline", icon: Workflow },
   { href: "/queue", label: "Queue", icon: Inbox, badge: true },
   { href: "/orders", label: "Orders", icon: Receipt },
-  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections", "/catalog-draft"] },
+  { href: "/more", label: "More", icon: LayoutGrid, match: ["/more", "/products", "/analytics", "/settings", "/connections", "/catalog-draft", "/brain"] },
 ];
 
 const SIDEBAR = [
@@ -35,6 +35,7 @@ const SIDEBAR = [
   { href: "/products", label: "Products", icon: Package },
   { href: "/orders", label: "Orders", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartColumnBig },
+  { href: "/brain", label: "Brain", icon: Brain },
   { href: "/connections", label: "Connections", icon: HeartPulse },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
