@@ -185,6 +185,11 @@ export const config = {
       modelSha256: (env("REALESRGAN_MODEL_SHA256") ?? (env("REALESRGAN_MODEL_URL") ? undefined : DEFAULT_REALESRGAN_MODEL_SHA256))?.toLowerCase(),
       /** Optional light denoise + sharpen pass for posters/canvas after upscaling. Default on; set to "off" to disable. */
       posterFinish: env("UPSCALE_POSTER_FINISH")?.toLowerCase() !== "off",
+      /** Dedicated Real-ESRGAN worker, e.g. http://upscaler.railway.internal:8080. Unset = upscale in-process. */
+      workerUrl: env("UPSCALER_URL"),
+      workerSecret: env("UPSCALER_SECRET"),
+      /** Set to "worker" on the upscaler service so it never calls itself. */
+      isWorker: env("UPSCALER_ROLE") === "worker",
     };
   },
   get runpod() {
