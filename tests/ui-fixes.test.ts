@@ -20,6 +20,14 @@ import type { StageContext } from "@/pipeline/types";
 vi.mock("@/pipeline/artwork", () => ({
   preparePrintFile: async (url: string) => ({ url, width: 3510, height: 5265, variance: 40 }),
 }));
+vi.mock("@/pipeline/upscale", () => ({
+  upscaleArtwork: async (url: string) => ({
+    url: url.startsWith("data:") ? "https://cdn.example/upscaled.png" : url,
+    upscaleMethod: "native",
+    sourcePx: { width: 3510, height: 5265 },
+    outputPx: { width: 3510, height: 5265 },
+  }),
+}));
 
 const vision = {
   name: "test-vision",

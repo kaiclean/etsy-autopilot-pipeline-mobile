@@ -3,7 +3,7 @@ import { isPlaceholderUrl, MIN_COLOR_STDDEV } from "@/lib/art-quality";
 import { AI_DISCLOSURE, PRODUCTION_PARTNER_DISCLOSURE } from "@/lib/disclosures";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { isPodPreset, POD_PRESETS, type PodPreset } from "@/lib/fees";
-import { PRINT_TARGETS } from "@/lib/print-targets";
+import { hasMinimumPixels, pixelSize, PRINT_TARGETS, type PrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import type { ArtworkGalleryView } from "@/pipeline/mockup";
 
 export const WAITING_FOR_PRINTIFY_MOCKUPS = "Waiting for Printify mockups";
@@ -60,12 +60,14 @@ export type QualityGateInput = {
   gallery?: ArtworkGalleryView[] | null;
   publishMode?: string | null;
   isDemo?: boolean;
+  printTarget?: PrintTarget;
+  printTargetKey?: PrintTargetKey;
+  upscaleMethod?: "realesrgan" | "lanczos" | "native" | null;
 };
 
 export function podPresetFromProvider(provider: string | null | undefined): PodPreset | null {
   const name = provider?.startsWith("printify:") ? provider.slice("printify:".length) : provider ?? "";
-  if (isPodPreset(name)) return name;
-  return null;
+  return isPodPreset(name) ? name : null;
 }
 
 function familiesIn(text: string) {
@@ -94,6 +96,8 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
   const tags = input.tags ?? [];
   const description = input.description ?? "";
   const preset = input.productType === "pod" ? podPresetFromProvider(input.podProvider) : null;
+  const targetKey = input.printTargetKey ?? (preset ?? "digital");
+  const printTarget = input.printTarget ?? PRINT_TARGETS[targetKey];
 
   if (title.trim().length === 0) {
     reasons.push(issue("title", "title_empty", "Title is empty."));
@@ -182,17 +186,15 @@ export function evaluateQualityGate(input: QualityGateInput): { pass: boolean; r
   if (artChecked) {
     const width = input.printWidth ?? 0;
     const height = input.printHeight ?? 0;
-    const target = preset ? PRINT_TARGETS[preset] : null;
-    const meetsMinimum = target && (preset === "posterA3"
-      ? Math.min(width, height) >= target.width && Math.max(width, height) >= target.height
-      : width >= target.width && height >= target.height);
-    if (preset && target && !meetsMinimum) {
-      const size = width && height ? `${width}×${height}px` : "an unknown size";
+    if (!hasMinimumPixels(width, height, printTarget)) {
+      const size = width && height ? pixelSize({ width, height }) : "unknown size";
+      const product = preset ? POD_PRESETS[preset]?.label ?? preset : targetKey === "digitalLarge" ? "large digital print" : "digital download";
       reasons.push(
-        issue("image", "low_res_art", preset === "posterA3"
-          ? `Print file is ${size}. Print files need at least ${target.width}×${target.height}px for an A3 poster at 300 dpi.`
-          : `Print file is ${size}. ${POD_PRESETS[preset].label} artwork needs at least ${target.width}×${target.height}px in this orientation (no upscaling).`),
+        issue("image", "low_res_art", `${product} file is ${size}; this product needs at least ${printTarget.minW}×${printTarget.minH}px.`),
       );
+    }
+    if (input.upscaleMethod === "lanczos" && targetKey !== "mug" && targetKey !== "digital") {
+      reasons.push(issue("image", "ai_upscale_required", `${preset ? POD_PRESETS[preset]?.label ?? preset : "Large digital print"} requires AI-upscaled artwork; Lanczos-only enlargement is not sufficient.`));
     }
     if (input.colorVariance != null && input.colorVariance < MIN_COLOR_STDDEV) {
       reasons.push(

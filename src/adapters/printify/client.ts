@@ -6,7 +6,7 @@ import { config, resolvePrintifyPin } from "@/lib/config";
 import { POD_PRESETS } from "@/lib/fees";
 import { describeFetchError } from "@/lib/http-error";
 import { externalEtsyIdFromProduct } from "@/lib/pod-etsy-id";
-import { PRINT_TARGETS } from "@/lib/print-targets";
+import { PRINT_TARGETS, hasMinimumPixels } from "@/lib/print-targets";
 import { LIVE_PROVIDER_PIN_ERROR } from "@/lib/publish-gates";
 import { coverPlacement, printPlaceholder, providerDetails, variantRows, type CatalogChoice } from "./catalog";
 import type { PrintifyAdapter, PrintifyOrderStatus, PrintifyProductImage, PrintifyProductInput } from "./types";
@@ -190,8 +190,8 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     const art = bytes ? await validateArtwork(bytes) : null;
     if (!art || !bytes) throw new Error("Printify artwork could not be decoded; a real print file is required");
     const minimum = PRINT_TARGETS[input.preset];
-    if (art.width < minimum.width || art.height < minimum.height) {
-      throw new Error(`Printify ${input.preset} artwork is ${art.width}×${art.height}; minimum ${minimum.width}×${minimum.height} native pixels required (no upscaling)`);
+    if (!hasMinimumPixels(art.width, art.height, minimum)) {
+      throw new Error(`Printify ${input.preset} artwork is ${art.width}×${art.height}; minimum ${minimum.minW}×${minimum.minH} pixels required`);
     }
     const placements = areas.map(({ id, area }) => ({ id, area, placement: coverPlacement(art, area) }));
     const upload = await this.uploadDesign(bytes, art.format);

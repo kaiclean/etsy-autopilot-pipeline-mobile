@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alignDeliveryCopy, measuredDigitalDeliverable } from "@/lib/delivery";
+import { alignDeliveryCopy, defaultDeliverable, measuredDigitalDeliverable, promiseLabels, removeUndeliverablePromises } from "@/lib/delivery";
 import { withDisclosures } from "@/lib/disclosures";
 import { ETSY_LIMITS, sanitizeDraft, validateListing, type ListingDraft } from "@/lib/listing-validator";
 
@@ -108,6 +108,18 @@ describe("validateListing", () => {
       deliverable: { ...measuredDigitalDeliverable("png", { width: 3000, height: 4500 }), editable: true },
     });
     expect(codes(editable).filter((code) => code === "undeliverable_promise")).toEqual([]);
+  });
+
+  it("allows a numbered set only when that many files exist", () => {
+    const twoFiles = { ...defaultDeliverable("digital"), fileCount: 2 };
+    const threeFiles = { ...defaultDeliverable("digital"), fileCount: 3 };
+    const oneFile = defaultDeliverable("digital");
+    expect(promiseLabels("Single art set of 1", oneFile)).not.toContain("set");
+    expect(promiseLabels("Swiss travel poster set of 3", twoFiles)).toContain("set");
+    expect(promiseLabels("Swiss travel poster set of 3", threeFiles)).not.toContain("set");
+    expect(promiseLabels("Three-file bundle of 3", twoFiles)).toContain("bundle");
+    expect(promiseLabels("Three-file bundle of 3", threeFiles)).not.toContain("bundle");
+    expect(removeUndeliverablePromises("Swiss travel poster set of 3", defaultDeliverable("digital"))).toBe("Swiss travel poster");
   });
 
   it("warns on empty praise, plural twins and a word repeated across tags", () => {

@@ -1,8 +1,8 @@
 import { MIN_COLOR_STDDEV } from "@/lib/art-quality";
+import { PRINT_TARGETS, hasMinimumPixels, pixelSize, type PrintTarget } from "@/lib/print-targets";
 
-// An A3 poster is 11.7×16.5 inches; 2:3 artwork needs 3510×5265px to cover it at 300 dpi.
-export const PRINT_WIDTH = 3510;
-export const PRINT_HEIGHT = 5265;
+export const PRINT_WIDTH = PRINT_TARGETS.posterA3.targetW;
+export const PRINT_HEIGHT = PRINT_TARGETS.posterA3.targetH;
 export const MIN_DESIGN_SCORE = 7;
 
 export type VisionAssessment = {
@@ -18,7 +18,14 @@ export type VisionAssessment = {
   artifacts: boolean;
 };
 
-export function assessArtwork(vision: VisionAssessment, width: number | null, height: number | null, print = true, variance: number | null = null) {
+export function assessArtwork(
+  vision: VisionAssessment,
+  width: number | null,
+  height: number | null,
+  print = true,
+  variance: number | null = null,
+  target: PrintTarget = PRINT_TARGETS.posterA3,
+) {
   const reasons: string[] = [];
   if (!Number.isInteger(vision.score) || vision.score < MIN_DESIGN_SCORE || vision.score > 10) {
     reasons.push(`Print-worthiness ${vision.score}/10 (minimum ${MIN_DESIGN_SCORE}).`);
@@ -30,8 +37,8 @@ export function assessArtwork(vision: VisionAssessment, width: number | null, he
   if (vision.empty === true) reasons.push("Large empty or solid area.");
   if (vision.frameOnly === true) reasons.push("Frame-only composition.");
   if (vision.artifacts === true) reasons.push("Visible rendering artifacts.");
-  if (print && (!width || !height || Math.min(width, height) < PRINT_WIDTH || Math.max(width, height) < PRINT_HEIGHT)) {
-    reasons.push(`Print file ${width ?? "?"}×${height ?? "?"}px is below ${PRINT_WIDTH}×${PRINT_HEIGHT}px.`);
+  if (print && !hasMinimumPixels(width, height, target)) {
+    reasons.push(`Print file ${pixelSize(width && height ? { width, height } : null)} is below ${target.minW}×${target.minH}px.`);
   }
   if (variance != null && variance < MIN_COLOR_STDDEV) reasons.push("Flat artwork.");
   const pass = reasons.length === 0;

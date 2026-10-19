@@ -111,7 +111,7 @@ describe("preset-specific Printify configuration", () => {
 
 describe("native-resolution create-only Printify placement", () => {
   it("preserves the existing A3 native artwork minimum", () => {
-    expect(PRINT_TARGETS.posterA3).toEqual({ width: PRINT_WIDTH, height: PRINT_HEIGHT });
+    expect(PRINT_TARGETS.posterA3).toMatchObject({ targetW: PRINT_WIDTH, targetH: PRINT_HEIGHT });
   });
 
   it("uses the selected variant dimensions and mug wrap position without publishing", async () => {
@@ -141,7 +141,7 @@ describe("native-resolution create-only Printify placement", () => {
   it("rejects decoded artwork under the shared minimum before uploading", async () => {
     setPins();
     const calls = mockCreate();
-    await expect(new PrintifyLiveClient().createAndPublish({ ...baseInput, imageUrl: await artwork(2700, 1000) })).rejects.toThrow(`minimum ${PRINT_TARGETS.mug.width}×${PRINT_TARGETS.mug.height}`);
+    await expect(new PrintifyLiveClient().createAndPublish({ ...baseInput, imageUrl: await artwork(2700, 1000) })).rejects.toThrow(`minimum ${PRINT_TARGETS.mug.minW}×${PRINT_TARGETS.mug.minH}`);
     expect(calls.map((call) => call.method)).toEqual(["GET"]);
   });
 

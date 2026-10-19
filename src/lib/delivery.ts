@@ -1,5 +1,6 @@
 import type { Niche, ProductType } from "@/db/schema";
 import type { PodPreset } from "./fees";
+import type { PixelSize } from "@/lib/print-targets";
 
 /**
  * Wall-art ratios buyers expect from a finished printable pack.
@@ -9,13 +10,19 @@ import type { PodPreset } from "./fees";
 export const PLANNED_WALL_ART_RATIOS = ["2:3", "3:4", "4:5", "11x14", "ISO A"] as const;
 
 /** Buyer-facing file list. Must match the single file `runPublish` uploads for digital listings. */
-export function digitalFileBlurb(format: "png" | "jpeg" | "webp" | null = "png", facts?: DeliverableFacts) {
+function isFacts(value: DeliverableFacts | PixelSize | null | undefined): value is DeliverableFacts {
+  return !!value && typeof value === "object" && "fileCount" in value;
+}
+
+/** Accepts measured facts (from `measuredDigitalDeliverable`) or raw pixel dimensions. */
+export function digitalFileBlurb(format: "png" | "jpeg" | "webp" | null = "png", measured?: DeliverableFacts | PixelSize | null) {
   const file = format ? `One ${{ png: "PNG", jpeg: "JPEG", webp: "WebP" }[format]} of this artwork` : "One image file of this artwork";
-  const measured = facts?.pixels && facts.dpi && facts.sizes.length
+  const facts = isFacts(measured) ? measured : measured ? measuredDigitalDeliverable(format, measured) : undefined;
+  const lines = facts?.pixels && facts.dpi && facts.sizes.length
     ? [`• Pixel size: ${facts.pixels.width} × ${facts.pixels.height} pixels`,
       `• Print size at ${facts.dpi} DPI: up to ${facts.sizes[0]} (no additional exports included)`]
     : [];
-  return ["WHAT YOU GET", `• ${file}`, ...measured, "• Instant download after purchase"].join("\n");
+  return ["WHAT YOU GET", `• ${file}`, ...lines, "• Instant download after purchase"].join("\n");
 }
 
 export const DIGITAL_FILE_BLURB = digitalFileBlurb();
@@ -77,6 +84,15 @@ type PromiseRule = {
   allowed: (facts: DeliverableFacts) => boolean;
 };
 
+const COUNT_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+const COUNT_CLAIM = /\b(?:set|bundle|pack|package)s?\s+of\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/gi;
+
+function promisedCounts(text: string) {
+  return [...text.matchAll(COUNT_CLAIM)].map((match) => Number(match[1]) || COUNT_WORDS[match[1]!.toLowerCase()]!);
+}
+
 /**
  * Claims the shop must not make unless `DeliverableFacts` says the file or blank supports them.
  * Checked on title, tags and description for digital and POD.
@@ -87,8 +103,8 @@ export const PROMISE_RULES: PromiseRule[] = [
   { label: "evite", pattern: /\bevites?\b/i, allowed: (f) => f.editable },
   {
     label: "set",
-    pattern: /\bset of(?: \d+| two| three| four| five)?\b|\b(?:wall|gallery|print|poster|art) set\b/i,
-    allowed: (f) => f.itemCount > 1 || f.fileCount > 1,
+    pattern: /\bset of(?:\s+\d+|\s+one|\s+two|\s+three|\s+four|\s+five|\s+six|\s+seven|\s+eight|\s+nine|\s+ten)?\b|\b(?:wall|gallery|print|poster|art) set\b/i,
+    allowed: (f) => f.fileCount > 1,
   },
   { label: "bundle", pattern: /\bbundles?\b/i, allowed: (f) => f.fileCount > 1 },
   { label: "pack", pattern: /\bpacks?\b/i, allowed: (f) => f.fileCount > 1 },
@@ -119,13 +135,39 @@ export const PROMISE_RULES: PromiseRule[] = [
 export function promiseLabels(text: string, facts: DeliverableFacts) {
   const found: string[] = [];
   for (const rule of PROMISE_RULES) {
-    if (rule.pattern.test(text) && !rule.allowed(facts)) found.push(rule.label);
+    if (!rule.pattern.test(text)) continue;
+    if (["set", "bundle", "pack", "package"].includes(rule.label) && promisedCounts(text).length) {
+      if (promisedCounts(text).some((count) => count > facts.fileCount)) found.push(rule.label);
+      continue;
+    }
+    if (!rule.allowed(facts)) {
+      found.push(rule.label);
+      continue;
+    }
   }
   return found;
 }
 
 export function keywordHasUndeliverablePromise(phrase: string, productType: ProductType = "digital") {
   return promiseLabels(phrase, defaultDeliverable(productType)).length > 0;
+}
+
+export function removeUndeliverablePromises(text: string, facts: DeliverableFacts) {
+  let cleaned = text;
+  for (const rule of PROMISE_RULES) {
+    if (!rule.pattern.test(cleaned)) continue;
+    if (!promiseLabels(cleaned, facts).includes(rule.label)) continue;
+    const pattern = rule.label === "set" || ["bundle", "pack", "package"].includes(rule.label)
+      ? /\b(?:sets?|bundles?|packs?|packages?)(?:\s+of\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten))?\b/gi
+      : new RegExp(rule.pattern.source, "gi");
+    cleaned = cleaned.replace(pattern, " ");
+  }
+  return cleaned
+    .replace(/\s+([,.;!?])/g, "$1")
+    .replace(/([,;])\s*([,;])/g, "$1")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,;|]+|[\s,;|]+$/g, "")
+    .trim();
 }
 
 /** Safe phrase to put at the start of a title and in the first tag. Never a blocked keyword. */
@@ -152,7 +194,12 @@ export function leadPhrase(phrase: string, niche: Niche, productType: ProductTyp
  * Drop lines that promise files, ratios, or formats the shop does not ship,
  * then state the one image file digital buyers actually get.
  */
-export function alignDeliveryCopy(body: string, productType: ProductType, format: "png" | "jpeg" | "webp" | null = "png", measured?: DeliverableFacts) {
+export function alignDeliveryCopy(
+  body: string,
+  productType: ProductType,
+  format: "png" | "jpeg" | "webp" | null = "png",
+  measured?: DeliverableFacts | PixelSize | null,
+) {
   const facts = defaultDeliverable(productType, format);
   const withoutPack = productType === "digital" ? body.replace(/\n*WHAT YOU GET[\s\S]*$/i, "") : body;
   const kept = withoutPack

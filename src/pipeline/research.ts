@@ -5,6 +5,7 @@ import { emit } from "@/lib/events";
 import { activeNiches, isNichePaused, normalizeEtsyVolume, scoreKeyword, seasonality } from "@/lib/niches";
 import { notFakeReceiptWhere, realPublishedListingsWhere, revenueEligibleOrderWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
+import { keywordHasUndeliverablePromise } from "@/lib/delivery";
 import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
@@ -26,8 +27,9 @@ export const runResearch: StageFn = async (ctx) => {
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect({ demo: ctx.demo });
-      log(`Source ${source.name}: ${found.length} candidates`);
-      candidates.push(...found);
+      const eligible = found.filter((candidate) => !keywordHasUndeliverablePromise(candidate.phrase));
+      log(`Source ${source.name}: ${eligible.length} eligible of ${found.length} candidates`);
+      candidates.push(...eligible);
     } catch (e) {
       log(`Source ${source.name} failed: ${(e as Error).message}`, "warn");
     }
@@ -54,6 +56,16 @@ export const runResearch: StageFn = async (ctx) => {
   // A live run re-scores a seeded demo phrase as real research, so it can be selected.
   const claim = ctx.demo ? {} : { isDemo: false };
   const liveOnly = ctx.demo ? undefined : eq(keywords.isDemo, false);
+  const unresolved = await db.select({ id: keywords.id, phrase: keywords.phrase }).from(keywords).where(and(
+    eq(keywords.shopId, ctx.shopId),
+    inArray(keywords.status, ["new", "selected"]),
+    liveOnly,
+  ));
+  for (const keyword of unresolved) {
+    if (!keywordHasUndeliverablePromise(keyword.phrase)) continue;
+    await db.update(keywords).set({ status: "rejected", updatedAt: ctx.now }).where(eq(keywords.id, keyword.id));
+    log(`Rejected existing keyword “${keyword.phrase}”: its file claim is not deliverable`, "warn");
+  }
   const rankedCandidates = preferMeasuredDemand(candidates);
   const existingKeywords = rankedCandidates.length
     ? await db

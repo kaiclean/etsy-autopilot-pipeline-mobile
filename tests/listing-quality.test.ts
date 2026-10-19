@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockLLMProvider } from "@/adapters/llm/mock";
-import { alignDeliveryCopy } from "@/lib/delivery";
+import { alignDeliveryCopy, digitalFileBlurb } from "@/lib/delivery";
+import { draftListing } from "@/pipeline/listing";
 import { normalizeEtsyVolume, scoreKeyword } from "@/lib/niches";
 import { localAssetPng, podMockupPng } from "@/lib/png";
 import { assertOfficialEtsyApi, createEtsyApiCompetitionSource } from "@/pipeline/etsy-api";
@@ -129,6 +130,42 @@ swiss alps wall art,100,0.45,alpine
 });
 
 describe("digital delivery copy", () => {
+  it("removes a set-of-3 keyword claim from generated title, tags, and description", async () => {
+    const tags = [
+      "set of 3 prints", "swiss alps art", "mountain wall art", "alpine decor", "nature poster",
+      "scandi wall art", "switzerland gift", "hiking gift", "cabin decor", "matterhorn",
+      "travel poster", "gallery wall", "neutral wall art",
+    ];
+    const result = await draftListing({
+      niche: "alpine",
+      keyword: "swiss travel poster set of 3",
+      product: { type: "digital" },
+      seed: 120,
+      assumeOffsiteAds: false,
+      demo: true,
+      llm: {
+        name: "promise-test",
+        writeListing: async () => ({
+          title: "Swiss Travel Poster Set Of 3, Alpine Wall Art",
+          tags,
+          body: "A Swiss travel poster set of 3 for your home.",
+          provider: "promise-test",
+          costChf: 0,
+        }),
+      },
+    });
+    expect(result.draft.title).not.toMatch(/set of 3/i);
+    expect(result.draft.tags.join(" ")).not.toMatch(/set of 3|bundle|pack/i);
+    expect(result.draft.description).not.toMatch(/set of 3|bundle|pack/i);
+    expect(result.issues.map((issue) => issue.code)).not.toContain("undeliverable_promise");
+  });
+
+  it("states measured pixel dimensions and the 300 DPI print size", () => {
+    const blurb = digitalFileBlurb("png", { width: 4800, height: 7200 });
+    expect(blurb).toContain("4800 × 7200 pixels");
+    expect(blurb).toContain("16.00 × 24.00 inches");
+  });
+
   it("describes the single PNG the shop uploads", async () => {
     const copy = await new MockLLMProvider().writeListing({
       keyword: "swiss alps wall art",
