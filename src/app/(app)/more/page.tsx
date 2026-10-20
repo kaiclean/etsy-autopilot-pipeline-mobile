@@ -1,4 +1,4 @@
-import { ChartColumnBig, ChevronRight, HeartPulse, LogOut, Package, Settings, Brain } from "lucide-react";
+import { ChartColumnBig, ChevronRight, HeartPulse, LogOut, Package, Settings, Brain, Activity } from "lucide-react";
 import Link from "next/link";
 import { logout } from "@/app/actions";
 import { PageHeader, Panel } from "@/components/common";
@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/brain", label: "OmniGram Brain", desc: "Reel vault, idea approvals, graph and insights", icon: Brain },
   { href: "/analytics", label: "Analytics", desc: "Revenue, profit, niches, costs", icon: ChartColumnBig },
   { href: "/connections", label: "Connections", desc: "Neon, Etsy, Printify, and provider health", icon: HeartPulse },
+  { href: "/status", label: "Status", desc: "Live check of every integration and key", icon: Activity },
   { href: "/settings", label: "Settings", desc: "Keys, budgets, schedules, kill switch", icon: Settings },
 ];
 
