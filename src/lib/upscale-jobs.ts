@@ -115,11 +115,12 @@ export async function pendingUpscaleJobs(db: DB, limit = 3, needsDesign: NeedsDe
     const minimum = key === "digitalLarge" ? PRINT_TARGETS.digital : target;
     // Re-queue earlier Real-ESRGAN output that falls short of the current product minimum (e.g. A3 3510×4950).
     const short = design.upscaleMethod === "realesrgan" && ((design.imageWidth ?? 0) < minimum.minW || (design.imageHeight ?? 0) < minimum.minH);
-    if (!lanczos && !short && !(design.upscaleMethod === null && heldIds.has(design.id))) continue;
+    if (!lanczos && !short && !(design.upscaleMethod === null && (heldIds.has(design.id) || design.needsRedesign))) continue;
     const source = design.sourceImageUrl ?? design.imageUrl;
     if (!source || source.startsWith("/api/placeholder")) continue;
     const sourcePx = design.sourcePx ?? (design.upscaleMethod === null && design.imageWidth && design.imageHeight ? { width: design.imageWidth, height: design.imageHeight } : null);
     if (presets.length && sourcePx) {
+      if (!design.sourcePx) await db.update(designs).set({ sourcePx }).where(eq(designs.id, design.id));
       const reach = reachableBy4x(sourcePx, target);
       if (!reach.reachable) {
         const row = { designId: design.id, sourcePx, presets, target, scale: reach.scale };
@@ -128,14 +129,59 @@ export async function pendingUpscaleJobs(db: DB, limit = 3, needsDesign: NeedsDe
         continue;
       }
     }
+    // Reachable in one pass: deliver the native 4× master (e.g. 1024×1280 → 4096×5120) without resampling.
+    const native = presets.length && sourcePx && sourcePx.width * 4 >= target.minW && sourcePx.height * 4 >= target.minH
+      ? { ...target, targetW: sourcePx.width * 4, targetH: sourcePx.height * 4 } : target;
     out.push({
       designId: design.id,
       source: absolute(source),
-      target,
+      target: native,
       ...(key === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
       posterFinish: config.upscale.posterFinish && (key === "posterA3" || key === "canvas"),
       reason: lanczos ? "lanczos output" : short ? "realesrgan output below product minimum" : "held: too small for print",
     });
   }
   return out;
+}
+
+/** A3 aspect (297×420 mm): the A3 crop of a 4:5 master keeps full height, e.g. 4096×5120 → 3620×5120. */
+export function a3CropSize(master: { width: number; height: number }) {
+  const width = Math.min(master.width, Math.round(master.height * 3508 / 4961));
+  return { width, height: width < master.width ? master.height : Math.min(master.height, Math.round(width * 4961 / 3508)) };
+}
+
+/** Digital listings of the design ship the 4:5 master plus an A3 centre crop (≥3508×4961). Both sizes are logged. */
+export async function attachA3Crop(db: DB, designId: number, master: Buffer, masterUrl: string, size: { width: number; height: number }) {
+  const rows = await db.select({ id: listings.id }).from(listings)
+    .where(and(eq(listings.designId, designId), eq(listings.productType, "digital"), isNull(listings.activatedAt), inArray(listings.status, ["pending_approval", "quality_failed"])));
+  if (!rows.length) return null;
+  const crop = a3CropSize(size);
+  if (crop.width < 3508 || crop.height < 4961) return { skipped: `A3 crop ${crop.width}×${crop.height} is below 3508×4961` };
+  const { default: sharp } = await import("sharp");
+  const cropBytes = await sharp(master, { limitInputPixels: 128_000_000 })
+    .extract({ left: Math.floor((size.width - crop.width) / 2), top: Math.floor((size.height - crop.height) / 2), width: crop.width, height: crop.height }).png().toBuffer();
+  const { uploadImageBytes } = await import("@/lib/object-storage");
+  const { inspectArtworkFile } = await import("@/lib/file-manifest");
+  const stored = await uploadImageBytes(cropBytes, "image/png");
+  const masterRecord = await inspectArtworkFile(master, `design-${designId}-4x5-master.png`);
+  const cropRecord = await inspectArtworkFile(cropBytes, `design-${designId}-A3.png`);
+  if (!stored || !masterRecord || !cropRecord) return { skipped: "could not store or inspect the A3 crop" };
+  for (const row of rows) {
+    await db.update(listings).set({
+      deliveryUrl: masterUrl,
+      deliveryPack: { version: 1, source: masterRecord, files: [{ ...masterRecord, url: masterUrl }, { ...cropRecord, url: stored.url }] },
+      fileVerifiedAt: null, fileVerifiedBy: null, updatedAt: new Date(),
+    }).where(eq(listings.id, row.id));
+  }
+  console.log(`[upscale-jobs] design #${designId} digital files: master ${size.width}×${size.height}, A3 crop ${crop.width}×${crop.height} (${stored.key}) on listings ${rows.map((row) => row.id).join(",")}`);
+  return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id) };
+}
+
+/** Clears needs_redesign once the delivered master meets the flagged target. */
+export async function clearRedesignFlag(db: DB, designId: number, size: { width: number; height: number }) {
+  const [row] = await db.select({ flag: designs.needsRedesign }).from(designs).where(eq(designs.id, designId));
+  if (!row?.flag || size.width < row.flag.target.minW || size.height < row.flag.target.minH) return false;
+  await db.update(designs).set({ needsRedesign: null }).where(eq(designs.id, designId));
+  console.log(`[upscale-jobs] design #${designId} redesign flag cleared at ${size.width}×${size.height} (target ${row.flag.target.minW}×${row.flag.target.minH})`);
+  return true;
 }

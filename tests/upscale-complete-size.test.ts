@@ -9,6 +9,8 @@ vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: apply }));
 vi.mock("@/lib/upscale-jobs", () => ({
   authorizedUpscaleJob: () => true,
   requiredUpscaleTarget: async () => ({ minW: 3508, minH: 4961, targetW: 3508, targetH: 4961 }),
+  attachA3Crop: async () => null,
+  clearRedesignFlag: async () => false,
 }));
 
 const png = (width: number, height: number) => sharp({ create: { width, height, channels: 3, background: "#888" } }).png().toBuffer();
