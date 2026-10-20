@@ -78,3 +78,12 @@ describe("box pull model", () => {
     expect(authorizedUpscaleJob(req())).toBe(false);
   });
 });
+
+import { strictestTargetKey } from "@/lib/upscale-jobs";
+describe("strictest product per design", () => {
+  it("upscales a shared design for its poster, not its mug", () => {
+    expect(strictestTargetKey(["printify:mug", "printify:posterA3", null], { productType: "pod", podPreset: "mug" })).toBe("posterA3");
+    expect(strictestTargetKey(["printify:mug", "printify:tshirt"], null)).toBe("tshirt");
+    expect(strictestTargetKey([null], { productType: "digital", podPreset: null })).toBe("digitalLarge");
+  });
+});

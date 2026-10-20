@@ -40,7 +40,7 @@ describe("print targets", () => {
     vi.stubGlobal("fetch", fetchMock);
     // Apparel uses the placeholder but never drops below the static 3000×3600 floor.
     await expect(getPrintTarget("tshirt")).resolves.toMatchObject({
-      targetW: 4500, targetH: 6000, minW: 3000, minH: 3960,
+      targetW: 4500, targetH: 6000, minW: 4000, minH: 6000,
     });
     await getPrintTarget("tshirt");
     expect(fetchMock).toHaveBeenCalledTimes(3);

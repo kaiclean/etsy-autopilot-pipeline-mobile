@@ -75,6 +75,7 @@ describe("trivial listing repair", () => {
       productType: "pod",
     });
     expect(repaired.fixes).toEqual([
+      "added the required AI / production-partner disclosures",
       "shortened the title to 140 characters",
       "shortened tags to 20 characters",
       "set the tag list to 13",
