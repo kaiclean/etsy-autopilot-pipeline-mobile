@@ -37,8 +37,9 @@ function validPixels(value: unknown): value is PixelSize {
 
 function targetFromPlaceholder(width: number, height: number): PrintTarget {
   return {
-    minW: Math.max(1, Math.floor(width * 0.66)),
-    minH: Math.max(1, Math.floor(height * 0.66)),
+    // The provider's print area is the minimum: no undersized files.
+    minW: width,
+    minH: height,
     targetW: width,
     targetH: height,
   };

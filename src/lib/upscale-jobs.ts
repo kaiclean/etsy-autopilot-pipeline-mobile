@@ -29,10 +29,17 @@ function absolute(url: string) {
  * Designs that still need a Real-ESRGAN pass: lanczos output, or no upscale yet while an open listing
  * is held for low-resolution / AI-upscale reasons. Live (non-demo) rows only.
  */
-async function targetFor(brief: { productType: string | null; podPreset: string | null } | null) {
-  const key: PrintTargetKey = brief?.productType === "pod"
-    ? (isPodPreset(brief.podPreset ?? "") ? brief.podPreset as PrintTargetKey : "posterA3")
-    : "digitalLarge";
+/** One design feeds several products; upscale for the most demanding one (largest minimum print area). */
+export function strictestTargetKey(podProviders: readonly (string | null)[], brief: { productType: string | null; podPreset: string | null } | null): PrintTargetKey {
+  const presets = podProviders.map((value) => value?.replace(/^printify:/, "") ?? "").filter((value): value is PrintTargetKey => isPodPreset(value));
+  if (!presets.length && brief?.productType === "pod") presets.push(isPodPreset(brief.podPreset ?? "") ? brief.podPreset as PrintTargetKey : "posterA3");
+  if (!presets.length) return "digitalLarge";
+  const area = (key: PrintTargetKey) => PRINT_TARGETS[key].minW * PRINT_TARGETS[key].minH;
+  return presets.reduce((best, key) => (area(key) > area(best) ? key : best));
+}
+
+async function targetFor(brief: { productType: string | null; podPreset: string | null } | null, podProviders: readonly (string | null)[] = []) {
+  const key = strictestTargetKey(podProviders, brief);
   const target = key === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(key);
   return { key, target };
 }
@@ -42,11 +49,15 @@ export async function requiredUpscaleTarget(db: DB, designId: number): Promise<P
   const [row] = await db.select({ id: designs.id, brief: designBriefs }).from(designs)
     .leftJoin(designBriefs, eq(designs.keywordId, designBriefs.keywordId)).where(eq(designs.id, designId)).limit(1);
   if (!row) return null;
-  const { key, target } = await targetFor(row.brief);
+  const products = await db.select({ podProvider: listings.podProvider }).from(listings).where(eq(listings.designId, designId));
+  const { key, target } = await targetFor(row.brief, products.map((item) => item.podProvider));
   return key === "digitalLarge" ? PRINT_TARGETS.digital : target;
 }
 
 export async function pendingUpscaleJobs(db: DB, limit = 3): Promise<UpscaleJobRow[]> {
+  const all = await db.select({ designId: listings.designId, podProvider: listings.podProvider }).from(listings).where(eq(listings.isDemo, false));
+  const productsByDesign = new Map<number, (string | null)[]>();
+  for (const row of all) if (row.designId) productsByDesign.set(row.designId, [...(productsByDesign.get(row.designId) ?? []), row.podProvider]);
   const held = await db.select({ designId: listings.designId, validation: listings.validation }).from(listings)
     .where(and(inArray(listings.status, ["pending_approval", "quality_failed"]), isNull(listings.activatedAt), eq(listings.isDemo, false)));
   const heldIds = new Set(held.filter((row) => (row.validation ?? []).some((issue) => issue.code === "low_res_art" || issue.code === "ai_upscale_required"))
@@ -60,7 +71,7 @@ export async function pendingUpscaleJobs(db: DB, limit = 3): Promise<UpscaleJobR
   for (const { design, brief } of rows) {
     if (out.length >= limit) break;
     const lanczos = design.upscaleMethod === "lanczos";
-    const { key, target } = await targetFor(brief);
+    const { key, target } = await targetFor(brief, productsByDesign.get(design.id) ?? []);
     const minimum = key === "digitalLarge" ? PRINT_TARGETS.digital : target;
     // Re-queue earlier Real-ESRGAN output that falls short of the current product minimum (e.g. A3 3510×4950).
     const short = design.upscaleMethod === "realesrgan" && ((design.imageWidth ?? 0) < minimum.minW || (design.imageHeight ?? 0) < minimum.minH);

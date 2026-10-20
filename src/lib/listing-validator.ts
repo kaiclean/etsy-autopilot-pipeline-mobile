@@ -493,6 +493,12 @@ export function repairTrivialCopy<T extends ListingDraft>(
     description = bodyPraise.text;
     fixes.push("removed empty praise from the description");
   }
+  // Re-validated older drafts (e.g. after a box upscale) must still carry the required Etsy disclosures.
+  const missing = requiredDisclosures(d.productType).filter((disclosure) => !description.includes(disclosure));
+  if (missing.length) {
+    description = [description.trimEnd(), ...missing].filter(Boolean).join("\n\n");
+    fixes.push("added the required AI / production-partner disclosures");
+  }
   const keyword = opts?.keyword?.replace(/\s+/g, " ").trim();
   if (keyword && !title.toLowerCase().startsWith(keyword.toLowerCase())) {
     const lead = keyword.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
