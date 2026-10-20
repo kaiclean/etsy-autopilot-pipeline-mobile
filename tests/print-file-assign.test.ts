@@ -31,3 +31,26 @@ describe("assignPrintFile (ratio rule)", () => {
     expect(assignPrintFile("mug", { width: 2700, height: 1120 }, master, a3).file).toBe("none");
   });
 });
+
+describe("fitted apparel art", () => {
+  it("meets the print area's minimum pixels and stays inside it", () => {
+    const area = { width: 3909, height: 4431 };
+    const choice = assignPrintFile("sweatshirt", area, master, a3);
+    if (choice.file !== "padded") throw new Error("expected padded");
+    expect(choice.fit.width).toBeLessThanOrEqual(area.width);
+    expect(choice.fit.height).toBe(area.height);
+    expect(choice.fit.width).toBeGreaterThanOrEqual(3000);
+    expect(choice.fit.height).toBeGreaterThanOrEqual(3600);
+  });
+});
+
+describe("fit wording", () => {
+  it("flags 'full front' copy on fitted apparel", async () => {
+    const { validateListing } = await import("@/lib/listing-validator");
+    const base = { title: "Alpine Sweatshirt", tags: [], description: "Full front edge-to-edge print.", priceChf: 40, productType: "pod", podProvider: "printify:sweatshirt" } as never;
+    const fitted = validateListing({ ...(base as object), printFit: "fitted" } as never).issues.map((i) => i.code);
+    const filled = validateListing({ ...(base as object), printFit: "fill" } as never).issues.map((i) => i.code);
+    expect(fitted).toContain("fit_wording");
+    expect(filled).not.toContain("fit_wording");
+  });
+});

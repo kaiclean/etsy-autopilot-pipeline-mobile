@@ -46,6 +46,7 @@ const TITLE_ALLOWED = /^[\p{L}\p{N}\s\-'",.!?|/()+#%:&™©®]+$/u;
 const TAG_ALLOWED = /^[\p{L}\p{N} '\-]+$/u;
 
 export type ListingDraft = {
+  printFit?: "fill" | "fitted" | null;
   title: string;
   tags: string[];
   description: string;
@@ -128,6 +129,9 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
   if (d.productType === "pod" && preset !== "posterA3" && preset !== "canvas" &&
     /\b(?:wall[ -]+art|prints?|printables?|digital|downloads?)\b/i.test(title)) {
     push({ field: "title", severity: "error", code: "variant_mismatch", message: "Only posters and canvases may use wall-art or print titles for POD." });
+  }
+  if (d.printFit === "fitted" && /\b(?:full[ -]front|edge[ -]to[ -]edge|all[ -]over)\b/i.test(`${title} ${d.description ?? ""}`)) {
+    push({ field: "description", severity: "error", code: "fit_wording", message: "Art is fitted with transparent margins; remove 'full front' / 'edge-to-edge' wording." });
   }
   if (d.productType === "pod" && preset) {
     const matching = FAMILIES.find((family) => (family.presets as readonly string[]).includes(preset));
