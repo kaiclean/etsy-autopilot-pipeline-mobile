@@ -22,7 +22,7 @@ export async function reviewQueue(db: DB) {
       id: l.id, designId: l.designId, status: l.status, productType: l.productType, niche: l.niche,
       failures: (l.validation ?? []).filter((issue) => issue.severity === "error").map((issue) => ({ code: issue.code, message: issue.message })),
       warnings: (l.validation ?? []).filter((issue) => issue.severity !== "error").map((issue) => issue.code),
-      design: d ? { width: d.imageWidth, height: d.imageHeight, upscaleMethod: d.upscaleMethod, printTarget: d.printTarget, imageUrl: d.imageUrl, status: d.status } : null,
+      design: d ? { prompt: d.prompt, sourcePx: d.sourcePx, needsRedesign: d.needsRedesign, width: d.imageWidth, height: d.imageHeight, upscaleMethod: d.upscaleMethod, printTarget: d.printTarget, imageUrl: d.imageUrl, status: d.status } : null,
       preset: { podProvider: l.podProvider, supplier: l.supplier, blueprintId: l.podBlueprintId, printProviderId: l.podPrintProviderId, printifyProductId: l.printifyProductId },
       mockups: { total: gallery.length, supplier: gallery.filter((view) => view.source === "supplier").length, views: gallery.map((view) => ({ role: view.role, source: view.source ?? null, label: view.label, url: view.url })) },
       margin: { priceChf: l.priceChf, podCostChf: l.podCostChf, netChf: l.netChf, marginPct: l.marginPct },

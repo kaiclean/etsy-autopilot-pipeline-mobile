@@ -13,6 +13,12 @@ import { isPodPreset } from "@/lib/fees";
 import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { upscaleArtwork } from "@/pipeline/upscale";
+import { designTarget, flagRedesign, reachableBy4x } from "@/lib/upscale-jobs";
+
+async function measureSource(url: string) {
+  const measured = await preparePrintFile(url).catch(() => null);
+  return measured?.width && measured.height ? { width: measured.width, height: measured.height } : null;
+}
 
 type ReprocessedListing = {
   id: number;
@@ -45,13 +51,34 @@ export async function upscaleDesigns(db: DB, ids: number[], apply = false, preco
       report.push({ id, skipped: "Discarded designs are not reprocessed." });
       continue;
     }
-    const targetKey: PrintTargetKey = brief?.productType === "pod"
-      ? (isPodPreset(brief.podPreset ?? "") ? brief.podPreset! as PrintTargetKey : "posterA3")
-      : "digitalLarge";
-    const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
+    // Combined target across every product this design feeds (max of each dimension).
+    const resolved = await designTarget(db, id);
+    const targetKey: PrintTargetKey = resolved.key;
+    const target = resolved.target;
+    const pod = resolved.presets.length > 0;
     const fallbackTarget = targetKey === "digitalLarge" ? PRINT_TARGETS.digital : target;
     const sourceUrl = design.sourceImageUrl ?? design.imageUrl;
-    const processed = precomputed?.get(id) ?? await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply, posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas") });
+    let processed = precomputed?.get(id);
+    if (!processed && pod) {
+      // Measure the real source when sourcePx was never recorded, instead of skipping (stops the 422 loop).
+      const sourcePx = design.sourcePx ?? await measureSource(sourceUrl);
+      if (!sourcePx) {
+        report.push({ id, skipped: "Source image could not be measured." });
+        continue;
+      }
+      const reach = reachableBy4x(sourcePx, target);
+      if (!reach.reachable) {
+        await flagRedesign(db, { designId: id, sourcePx, presets: resolved.presets, target, scale: reach.scale });
+        report.push({ id, skipped: `Needs full-size redesign: ${sourcePx.width}×${sourcePx.height} needs ${reach.scale}× for ${target.minW}×${target.minH}.` });
+        continue;
+      }
+    }
+    processed ??= await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply, posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas") });
+    if (pod && processed.upscaleMethod !== "realesrgan") {
+      // Print files are Real-ESRGAN only; the item stays held.
+      report.push({ id, skipped: `Real-ESRGAN unavailable (${processed.upscaleMethod}); print stays held.` });
+      continue;
+    }
     const measured = await preparePrintFile(processed.url);
     if (!measured.width || !measured.height) throw new Error(`Design #${id}: reprocessed file could not be measured.`);
     const outputPx = { width: measured.width, height: measured.height };

@@ -197,6 +197,8 @@ export const designs = pgTable("designs", {
   upscaleMethod: text("upscale_method").$type<"realesrgan" | "lanczos" | "native">(),
   printTarget: jsonb("print_target").$type<{ minW: number; minH: number; targetW: number; targetH: number }>(),
   colorVariance: doublePrecision("color_variance"),
+  /** Set when no 4× Real-ESRGAN pass can reach the print target; Design rebuilds at full size. */
+  needsRedesign: jsonb("needs_redesign").$type<{ reason: string; sourcePx: { width: number; height: number }; target: { minW: number; minH: number; targetW: number; targetH: number }; presets: string[]; scale: number; at: string }>(),
   qualityScore: integer("quality_score"),
   qualityReasons: jsonb("quality_reasons").$type<string[]>().notNull().default([]),
   status: text("status").$type<"generated" | "listed" | "discarded" | "rejected" | "needs_review">().notNull().default("generated"),
