@@ -56,3 +56,25 @@ describe("main app delegation", () => {
     expect(result.outputPx).toEqual({ width: 200, height: 200 });
   });
 });
+
+import { inWindow } from "../workers/upscaler/pull";
+import { authorizedUpscaleJob } from "@/lib/upscale-jobs";
+
+describe("box pull model", () => {
+  it("runs 03:00–10:30 UTC", () => {
+    expect(inWindow(new Date("2026-10-20T03:00:00Z"))).toBe(true);
+    expect(inWindow(new Date("2026-10-20T10:30:00Z"))).toBe(true);
+    expect(inWindow(new Date("2026-10-20T10:31:00Z"))).toBe(false);
+    expect(inWindow(new Date("2026-10-20T02:59:00Z"))).toBe(false);
+  });
+
+  it("accepts CRON_SECRET or UPSCALER_SECRET only", () => {
+    vi.stubEnv("CRON_SECRET", "c".repeat(32));
+    vi.stubEnv("UPSCALER_SECRET", "u".repeat(32));
+    const req = (auth?: string) => new Request("http://x/api/cron/upscale-jobs", { headers: auth ? { authorization: auth } : {} });
+    expect(authorizedUpscaleJob(req(`Bearer ${"c".repeat(32)}`))).toBe(true);
+    expect(authorizedUpscaleJob(req(`Bearer ${"u".repeat(32)}`))).toBe(true);
+    expect(authorizedUpscaleJob(req("Bearer nope"))).toBe(false);
+    expect(authorizedUpscaleJob(req())).toBe(false);
+  });
+});

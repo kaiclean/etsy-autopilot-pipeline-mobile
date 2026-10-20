@@ -285,6 +285,8 @@ export const runDesign: StageFn = async (ctx) => {
             {
               ...(targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
               posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas"),
+              // With the box worker pulling jobs, POD stays on Lanczos (held) here and is upscaled off-app.
+              ...(config.upscale.pull && targetKey !== "digitalLarge" ? { session: null } : {}),
             },
           );
         }

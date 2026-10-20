@@ -190,6 +190,8 @@ export const config = {
       workerSecret: env("UPSCALER_SECRET"),
       /** Set to "worker" on the upscaler service so it never calls itself. */
       isWorker: env("UPSCALER_ROLE") === "worker",
+      /** "on" = an external box worker pulls POD upscales; the app keeps POD on Lanczos (held) instead of running ESRGAN locally. */
+      pull: env("UPSCALER_PULL") === "on",
     };
   },
   get runpod() {

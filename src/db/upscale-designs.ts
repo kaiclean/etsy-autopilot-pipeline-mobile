@@ -25,7 +25,7 @@ type ReprocessedListing = {
   status: "pending_approval" | "quality_failed";
 };
 
-export async function upscaleDesigns(db: DB, ids: number[], apply = false) {
+export async function upscaleDesigns(db: DB, ids: number[], apply = false, precomputed?: Map<number, Awaited<ReturnType<typeof upscaleArtwork>>>) {
   if (!ids.length || ids.some((id) => !Number.isInteger(id) || id < 1)) throw new Error("Provide one or more positive design IDs.");
   if (apply && storageBackend() === "none") throw new Error("Object storage is required for --apply; preview remains read-only.");
   const rows = await db.select({ design: designs, brief: designBriefs }).from(designs)
@@ -51,7 +51,7 @@ export async function upscaleDesigns(db: DB, ids: number[], apply = false) {
     const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
     const fallbackTarget = targetKey === "digitalLarge" ? PRINT_TARGETS.digital : target;
     const sourceUrl = design.sourceImageUrl ?? design.imageUrl;
-    const processed = await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply, posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas") });
+    const processed = precomputed?.get(id) ?? await upscaleArtwork(sourceUrl, target, { fallbackTarget, store: apply, posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas") });
     const measured = await preparePrintFile(processed.url);
     if (!measured.width || !measured.height) throw new Error(`Design #${id}: reprocessed file could not be measured.`);
     const outputPx = { width: measured.width, height: measured.height };
