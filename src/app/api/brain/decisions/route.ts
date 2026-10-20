@@ -1,16 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
+import { bearerMatches } from "@/lib/bearer";
 import { NextRequest, NextResponse } from "next/server";
 import { listDecisions } from "@/lib/brain/decisions";
 
 // Hermes reads Kai's verdicts here. Exempt from the session check in proxy.ts; bearer token instead.
 export const dynamic = "force-dynamic";
-function authorized(req: NextRequest) {
-  const want = process.env.OMNIGRAM_API_TOKEN;
-  const got = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!want || !got) return false;
-  const a = Buffer.from(got), b = Buffer.from(want);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+const authorized = (req: NextRequest) => bearerMatches(req.headers.get("authorization"), process.env.OMNIGRAM_API_TOKEN);
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const s = req.nextUrl.searchParams.get("since");

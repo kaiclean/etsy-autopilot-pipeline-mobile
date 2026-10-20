@@ -19,20 +19,23 @@ const n = (v: unknown) => Number(v ?? 0);
 
 /** Counts per stage for the first-sale tracker. Live counts exclude demo rows and dry-run/fake ids. */
 export async function getFirstSale(db: DB, shopId: string, demo: boolean): Promise<FirstSale> {
-  const kw = await db.select({ status: keywords.status, c: sql<number>`count(*)::int` }).from(keywords)
-    .where(and(eq(keywords.shopId, shopId), eq(keywords.isDemo, demo))).groupBy(keywords.status);
+  // Independent counts run in parallel: over neon-http each query is a round trip.
+  const [kw, [{ c: briefs }], ds, ls, [{ c: live }], [o], [{ c: candidates }]] = await Promise.all([
+    db.select({ status: keywords.status, c: sql<number>`count(*)::int` }).from(keywords)
+      .where(and(eq(keywords.shopId, shopId), eq(keywords.isDemo, demo))).groupBy(keywords.status),
+    db.select({ c: sql<number>`count(*)::int` }).from(designBriefs).where(eq(designBriefs.shopId, shopId)),
+    db.select({ status: designs.status, c: sql<number>`count(*)::int` }).from(designs)
+      .where(and(eq(designs.shopId, shopId), eq(designs.isDemo, demo))).groupBy(designs.status),
+    db.select({ status: listings.status, mode: listings.publishMode, c: sql<number>`count(*)::int` }).from(listings)
+      .where(and(eq(listings.shopId, shopId), eq(listings.isDemo, demo))).groupBy(listings.status, listings.publishMode),
+    db.select({ c: sql<number>`count(*)::int` }).from(listings).where(realPublishedListingsWhere(shopId)),
+    db.select({ c: sql<number>`count(*)::int`, rev: sql<number>`coalesce(sum(${orders.totalChf}),0)`, profit: sql<number>`coalesce(sum(${orders.profitChf}),0)` })
+      .from(orders).where(and(eq(orders.shopId, shopId), eq(orders.isDemo, false), notFakeReceiptWhere(), revenueEligibleOrderWhere())),
+    db.select({ c: sql<number>`count(*)::int` }).from(ideaCandidates).where(eq(ideaCandidates.status, "pending")),
+  ]);
   const k = Object.fromEntries(kw.map((r) => [r.status, n(r.c)]));
-  const [{ c: briefs }] = await db.select({ c: sql<number>`count(*)::int` }).from(designBriefs).where(eq(designBriefs.shopId, shopId));
-  const ds = await db.select({ status: designs.status, c: sql<number>`count(*)::int` }).from(designs)
-    .where(and(eq(designs.shopId, shopId), eq(designs.isDemo, demo))).groupBy(designs.status);
   const d = Object.fromEntries(ds.map((r) => [r.status, n(r.c)]));
-  const ls = await db.select({ status: listings.status, mode: listings.publishMode, c: sql<number>`count(*)::int` }).from(listings)
-    .where(and(eq(listings.shopId, shopId), eq(listings.isDemo, demo))).groupBy(listings.status, listings.publishMode);
   const l = (s: string) => ls.filter((r) => r.status === s).reduce((a, r) => a + n(r.c), 0);
-  const [{ c: live }] = await db.select({ c: sql<number>`count(*)::int` }).from(listings).where(realPublishedListingsWhere(shopId));
-  const [o] = await db.select({ c: sql<number>`count(*)::int`, rev: sql<number>`coalesce(sum(${orders.totalChf}),0)`, profit: sql<number>`coalesce(sum(${orders.profitChf}),0)` })
-    .from(orders).where(and(eq(orders.shopId, shopId), eq(orders.isDemo, false), notFakeReceiptWhere(), revenueEligibleOrderWhere()));
-  const [{ c: candidates }] = await db.select({ c: sql<number>`count(*)::int` }).from(ideaCandidates).where(eq(ideaCandidates.status, "pending"));
   const r: FirstSale = {
     demo, keywordsNew: k.new ?? 0, keywordsSelected: k.selected ?? 0, briefs: n(briefs),
     designsGenerated: (d.generated ?? 0) + (d.listed ?? 0), designsNeedReview: d.needs_review ?? 0,
