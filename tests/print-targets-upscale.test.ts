@@ -38,10 +38,11 @@ describe("print targets", () => {
       return Response.json({ variants: [{ id: 3, title: "A3", placeholders: [{ position: "front", width: 4000, height: 6000 }] }] });
     });
     vi.stubGlobal("fetch", fetchMock);
-    await expect(getPrintTarget("posterA3")).resolves.toMatchObject({
-      targetW: 4000, targetH: 6000, minW: 2640, minH: 3960,
+    // Apparel uses the placeholder but never drops below the static 3000×3600 floor.
+    await expect(getPrintTarget("tshirt")).resolves.toMatchObject({
+      targetW: 4500, targetH: 6000, minW: 3000, minH: 3960,
     });
-    await getPrintTarget("posterA3");
+    await getPrintTarget("tshirt");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

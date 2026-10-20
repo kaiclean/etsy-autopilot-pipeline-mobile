@@ -1,4 +1,4 @@
-import { config } from "@/lib/config";
+import { config, resolvePrintifyPin } from "@/lib/config";
 import { pickBlueprint, pickProvider, pickVariantIds, blueprintRows, providerRows, variantRows } from "@/adapters/printify/catalog";
 import type { PodPreset } from "@/lib/fees";
 
@@ -44,10 +44,25 @@ function targetFromPlaceholder(width: number, height: number): PrintTarget {
   };
 }
 
+/** Never drop below the physical-size floor (A3 = 3508×4961 @300dpi) because a catalog placeholder is smaller. */
+export function atLeast(target: PrintTarget, floor: PrintTarget): PrintTarget {
+  return {
+    minW: Math.max(target.minW, floor.minW),
+    minH: Math.max(target.minH, floor.minH),
+    targetW: Math.max(target.targetW, floor.targetW),
+    targetH: Math.max(target.targetH, floor.targetH),
+  };
+}
+
 async function readPrintifyTarget(preset: PodPreset): Promise<PrintTarget> {
   const fallback = PRINT_TARGETS[preset];
-  const { token, blueprintId, printProviderId, variantIds } = config.printify;
+  const { token } = config.printify;
   if (!token) return fallback;
+  let pin: ReturnType<typeof resolvePrintifyPin>;
+  try { pin = resolvePrintifyPin(preset); } catch { pin = undefined; }
+  const blueprintId = pin?.blueprintId ?? null;
+  const printProviderId = pin?.printProviderId ?? null;
+  const variantIds = pin?.variantIds ?? [];
   const headers = { Authorization: ["Bearer", token].join(" "), "User-Agent": "EtsyAutopilot" };
   const get = async (path: string) => {
     const response = await fetch(`https://api.printify.com/v1${path}`, {
@@ -75,7 +90,7 @@ async function readPrintifyTarget(preset: PodPreset): Promise<PrintTarget> {
     if (!Array.isArray(placeholders)) return fallback;
     const preferred = placeholders.find((row) => row?.position === "front") ?? placeholders[0];
     if (!validPixels(preferred)) return fallback;
-    return targetFromPlaceholder(preferred.width, preferred.height);
+    return atLeast(targetFromPlaceholder(preferred.width, preferred.height), fallback);
   } catch {
     return fallback;
   }
@@ -83,7 +98,8 @@ async function readPrintifyTarget(preset: PodPreset): Promise<PrintTarget> {
 
 /** Uses a fresh Printify catalog placeholder when available, with a stable local fallback. */
 export function getPrintTarget(key: PrintTargetKey): Promise<PrintTarget> {
-  if (key === "digital" || key === "digitalLarge") return Promise.resolve(PRINT_TARGETS[key]);
+  // A3 is a fixed physical size: exactly 3508×4961 @300dpi regardless of the provider placeholder.
+  if (key === "digital" || key === "digitalLarge" || key === "posterA3") return Promise.resolve(PRINT_TARGETS[key]);
   let target = targetCache.get(key);
   if (!target) {
     target = readPrintifyTarget(key);
