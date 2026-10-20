@@ -282,17 +282,19 @@ export const runDesign: StageFn = async (ctx) => {
           note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`, isDemo: ctx.demo,
         });
         let upscaled: UpscaledArtwork | null = null;
-        if (!isPlaceholderUrl(img.url)) {
+        // Print (POD) files are Real-ESRGAN only. In pull mode the box worker does it; the item stays held meanwhile.
+        const podPrint = targetKey !== "digitalLarge";
+        if (!isPlaceholderUrl(img.url) && !(podPrint && config.upscale.pull)) {
           upscaled = await upscaleArtwork(
             img.url,
             target,
             {
               ...(targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
               posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas"),
-              // With the box worker pulling jobs, POD stays on Lanczos (held) here and is upscaled off-app.
-              ...(config.upscale.pull && targetKey !== "digitalLarge" ? { session: null } : {}),
             },
           );
+          // No Lanczos fallback for print: keep the clean source and stay held until Real-ESRGAN runs.
+          if (podPrint && upscaled.upscaleMethod === "lanczos") upscaled = null;
         }
         const outputUrl = upscaled?.url ?? img.url;
         const prepared = await preparePrintFile(outputUrl);
