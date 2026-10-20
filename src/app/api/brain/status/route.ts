@@ -20,7 +20,7 @@ function authorized(req: NextRequest) {
 }
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const db = getDb();
+  const db = await getDb();
   const automation = await getSetting(db, "automation");
   const now = new Date();
   const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
