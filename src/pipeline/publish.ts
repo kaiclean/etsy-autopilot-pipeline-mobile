@@ -111,6 +111,7 @@ export const runPublish: StageFn = async (ctx) => {
 
   let ok = 0;
   let failed = 0;
+  let returnedToQueue = 0; // re-validation sent it back for review: a warning, not a broken run
   let skipped = 0;
   for (let l of approved) {
     if (l.productType === "pod" && l.isDemo && printify.mode === "live") {
@@ -150,7 +151,7 @@ export const runPublish: StageFn = async (ctx) => {
         continue;
       }
       log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
-      failed++;
+      returnedToQueue++;
       continue;
     }
     if (l.productType === "pod" && (supplierMockupCount(l) < MIN_SUPPLIER_MOCKUPS ||
@@ -343,8 +344,8 @@ export const runPublish: StageFn = async (ctx) => {
   if (failed) {
     await emit(db, { type: "listing.failed", title: `${failed} listing${failed > 1 ? "s" : ""} failed to publish`, severity: "error", href: "/products" }, ctx.demo);
   }
-  const summary = `Published ${ok}, failed ${failed}${skipped ? `, skipped ${skipped} (same error within 24h)` : ""}${held ? `, held ${held} for operator reconciliation` : ""} (${etsy.mode})`;
-  if (failed > 0) throw new Error(summary);
-  if (held > 0) return stageResult(summary, "warning");
+  const summary = `Published ${ok}, failed ${failed}${returnedToQueue ? `, returned ${returnedToQueue} to the queue (failed validation)` : ""}${skipped ? `, skipped ${skipped} (same error within 24h)` : ""}${held ? `, held ${held} for operator reconciliation` : ""} (${etsy.mode})`;
+  if (failed > 0 || (returnedToQueue > 0 && ok === 0)) throw new Error(summary);
+  if (held > 0 || returnedToQueue > 0) return stageResult(summary, "warning");
   return summary;
 };

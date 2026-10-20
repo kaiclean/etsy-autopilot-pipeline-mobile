@@ -1,7 +1,7 @@
 import type { PodPreset } from "@/lib/fees";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 
-const PRODUCT_WORDS = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|t[ -]?shirts?|shirts?|sweatshirts?|tees?|mugs?|posters?|prints?|printables?|digital|downloads?|wall[ -]+art)\b/gi;
+const PRODUCT_WORDS = /\b(?:tote(?: bags?)?|phone cases?|canvases|canvas|stickers?|blankets?|hoodies?|ornaments?|t[ -]?shirts?|shirts?|sweatshirts?|tees?|mugs?|posters?|prints?|printables?|digital|downloads?|png|svg|jpe?g|pdf|clipart|wall[ -]+art)\b/gi;
 const NOUN: Record<PodPreset | "digital", string> = {
   digital: "Printable Wall Art",
   posterA3: "Poster",
@@ -47,13 +47,14 @@ export function buildProductTitle(keyword: string, copy: string, product: PodPre
   return padTitle(fitting.length > 4 ? `${base} | ${fitting}` : base);
 }
 
-const PAD = ["Original", "Illustrated", "Artwork", "Design"];
+// Each option reads as a whole phrase, so a short pad never leaves a dangling "| Original".
+const PADS = ["Illustrated Design", "Illustrated Art Design", "Original Illustrated Art Design", "Original Illustrated Artwork Design Piece"];
 /** Etsy-listing skill: 6-14 title words. Pads short generated titles with neutral, true descriptors (no praise). */
 export function padTitle(title: string) {
   const count = (t: string) => t.trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
-  if (count(title) >= ETSY_LIMITS.titleWordsMin) return title;
-  const have = new Set(title.toLowerCase().split(/\W+/));
-  const extra = PAD.filter((w) => !have.has(w.toLowerCase())).slice(0, ETSY_LIMITS.titleWordsMin - count(title));
-  const padded = `${title}${title.includes(" | ") ? " " : " | "}${extra.join(" ")}`.trim();
+  const need = ETSY_LIMITS.titleWordsMin - count(title);
+  if (need <= 0) return title;
+  const pad = PADS.find((p) => p.split(" ").length >= need) ?? PADS[PADS.length - 1];
+  const padded = `${title}${title.includes(" | ") ? " " : " | "}${pad}`.trim();
   return padded.length <= ETSY_LIMITS.titleMax ? padded : title;
 }

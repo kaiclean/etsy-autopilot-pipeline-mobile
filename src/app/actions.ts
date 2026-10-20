@@ -1,11 +1,12 @@
 "use server";
 
 import { eq, inArray } from "drizzle-orm";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh, revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { keywords, listings, type StageName } from "@/db/schema";
+import { clearLoginFailures, loginLocked, recordLoginFailure, safeNext } from "@/lib/login-limit";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
 import { config, hasGelatoCredentials, isDemoMode } from "@/lib/config";
 import { emit } from "@/lib/events";
@@ -38,10 +39,15 @@ export async function login(_prev: { error?: string } | undefined, form: FormDat
   if (!secret || !config.dashboardPassword) {
     return { error: "Server is missing DASHBOARD_PASSWORD / AUTH_SECRET." };
   }
+  const h = await headers();
+  const client = (h.get("x-forwarded-for")?.split(",")[0] ?? h.get("x-real-ip") ?? "local").trim();
+  if (loginLocked(client)) return { error: "Too many wrong passwords. Try again in 15 minutes." };
   if (!(await passwordMatches(password, config.dashboardPassword, secret))) {
+    recordLoginFailure(client);
     await new Promise((r) => setTimeout(r, 400));
     return { error: "Wrong password." };
   }
+  clearLoginFailures(client);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, await createSessionToken(secret), {
     httpOnly: true,
@@ -50,7 +56,7 @@ export async function login(_prev: { error?: string } | undefined, form: FormDat
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
-  redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/");
+  redirect(safeNext(next));
 }
 
 export async function logout() {
