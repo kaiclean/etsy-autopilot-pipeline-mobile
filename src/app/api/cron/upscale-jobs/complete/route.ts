@@ -60,6 +60,14 @@ export async function POST(req: Request) {
   if (meta.width < target.minW || meta.height < target.minH) {
     return reject({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, 422);
   }
+  // Edge check applies to full-bleed redesigns only (white-background clipart legitimately has white edges).
+  const [flagged] = await db.select({ flag: designs.needsRedesign }).from(designs).where(eq(designs.id, designId));
+  const { blankEdgeBands } = await import("@/lib/edge-check");
+  const bands = flagged?.flag ? await blankEdgeBands(bytes) : { blank: false, top: 0, bottom: 0, left: 0, right: 0, trimmed: { width: meta.width, height: meta.height } };
+  console.log(`[upscale-jobs] design #${designId} edge check: top ${bands.top} bottom ${bands.bottom} left ${bands.left} right ${bands.right}px`);
+  if (bands.blank && (bands.trimmed.width < target.minW || bands.trimmed.height < target.minH)) {
+    return reject({ error: `blank edge bands; trimmed ${bands.trimmed.width}×${bands.trimmed.height} is below ${target.minW}×${target.minH}`, bands }, 422);
+  }
   const stored = presetStored ?? await uploadImageBytes(bytes, "image/png");
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
   const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: { width: meta.width, height: meta.height } };

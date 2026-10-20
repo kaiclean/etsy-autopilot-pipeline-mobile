@@ -214,11 +214,11 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
   return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id), posters: assigned };
 }
 
-/** Clears needs_redesign once the delivered master meets the flagged target. */
+/** Size check passed: the flag stays until Design signs off; the design is marked review-pending (blocks approval). */
 export async function clearRedesignFlag(db: DB, designId: number, size: { width: number; height: number }) {
   const [row] = await db.select({ flag: designs.needsRedesign }).from(designs).where(eq(designs.id, designId));
   if (!row?.flag || size.width < row.flag.target.minW || size.height < row.flag.target.minH) return false;
-  await db.update(designs).set({ needsRedesign: null }).where(eq(designs.id, designId));
-  console.log(`[upscale-jobs] design #${designId} redesign flag cleared at ${size.width}×${size.height} (target ${row.flag.target.minW}×${row.flag.target.minH})`);
-  return true;
+  await db.update(designs).set({ designReview: { status: "pending", at: new Date().toISOString() } }).where(eq(designs.id, designId));
+  console.log(`[upscale-jobs] design #${designId} meets ${row.flag.target.minW}×${row.flag.target.minH} at ${size.width}×${size.height}; redesign flag KEPT, design review pending`);
+  return false;
 }

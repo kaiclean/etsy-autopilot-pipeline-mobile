@@ -9,7 +9,7 @@ vi.mock("@/lib/object-storage", async (orig) => ({
   storedUrlForKey: vi.fn(async (key: string) => `https://app/api/media/${key}`),
   uploadImageBytes: vi.fn(async () => { throw new Error("must not re-upload a presigned object"); }),
 }));
-vi.mock("@/db", () => ({ getDb: async () => ({ update: () => ({ set: () => ({ where: () => Object.assign(Promise.resolve([]), { returning: async () => [{ key: "k" }] }) }) }) }) }));
+vi.mock("@/db", () => ({ getDb: async () => ({ select: () => ({ from: () => ({ where: async () => [] }) }), update: () => ({ set: () => ({ where: () => Object.assign(Promise.resolve([]), { returning: async () => [{ key: "k" }] }) }) }) }) }));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: vi.fn(async () => ({})) }));
 vi.mock("@/lib/upscale-jobs", () => ({
   authorizedUpscaleJob: () => true,

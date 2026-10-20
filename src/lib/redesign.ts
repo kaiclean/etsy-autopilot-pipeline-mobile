@@ -14,7 +14,7 @@ import { PRINT_RENDER, aiSpend } from "@/pipeline/design";
  */
 export { MAX_REDESIGNS_PER_DAY } from "@/lib/image-quota";
 
-export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: string) => void = console.log) {
+export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: string) => void = console.log, opts: { hint?: string } = {}) {
   const [design] = await db.select().from(designs).where(eq(designs.id, id));
   if (!design) throw new Error(`design #${id} not found`);
   if (!design.needsRedesign) throw new Error(`design #${id} is not flagged for redesign`);
@@ -26,14 +26,24 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   // Count generations, not CHF (Cloudflare costs 0). Atomic, shared with daily runs.
   const slot = await reserveImage(db, { provider: provider.name, redesign: true });
   if (!slot.ok) throw new Error(slot.reason);
-  const img = await provider.generate({ prompt: design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
+  const img = await provider.generate({ prompt: opts.hint ? `${design.prompt}, ${opts.hint}` : design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
   await db.insert(costs).values({ shopId: design.shopId, kind: "ai_image", amountChf: img.costChf, note: `redesign #${id} (${img.provider})`, isDemo: false });
   const measured = await preparePrintFile(img.url);
   if (!measured.width || !measured.height) throw new Error("re-rendered image could not be measured");
   if (measured.width < PRINT_RENDER.width || measured.height < PRINT_RENDER.height) {
     throw new Error(`re-render came back ${measured.width}×${measured.height}, below ${PRINT_RENDER.width}×${PRINT_RENDER.height}`);
   }
+  // Blank-edge check on all four sides before anything else; a trimmed render must still meet 1024×1280.
+  const { blankEdgeBands } = await import("@/lib/edge-check");
+  const { decodeDataUrl } = await import("@/lib/object-storage");
+  const raw = decodeDataUrl(img.url)?.bytes ?? Buffer.from(await (await fetch(img.url, { signal: AbortSignal.timeout(60_000) })).arrayBuffer());
+  const bands = await blankEdgeBands(raw);
+  log(`[redesign] design #${id} edge check: top ${bands.top} bottom ${bands.bottom} left ${bands.left} right ${bands.right}px`);
+  if (bands.blank && (bands.trimmed.width < PRINT_RENDER.width || bands.trimmed.height < PRINT_RENDER.height)) {
+    throw new Error(`re-render has blank edge bands (top ${bands.top}, bottom ${bands.bottom}, left ${bands.left}, right ${bands.right}px); trimmed ${bands.trimmed.width}×${bands.trimmed.height} is below ${PRINT_RENDER.width}×${PRINT_RENDER.height} — rejected`);
+  }
   await db.update(designs).set({
+    designReview: null,
     imageUrl: img.url, sourceImageUrl: img.url, sourcePx: { width: measured.width, height: measured.height },
     imageWidth: measured.width, imageHeight: measured.height, upscaleMethod: null, outputPx: null, colorVariance: measured.variance,
   }).where(eq(designs.id, id));
