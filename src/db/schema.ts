@@ -198,6 +198,7 @@ export const designs = pgTable("designs", {
   printTarget: jsonb("print_target").$type<{ minW: number; minH: number; targetW: number; targetH: number }>(),
   colorVariance: doublePrecision("color_variance"),
   /** Set when no 4× Real-ESRGAN pass can reach the print target; Design rebuilds at full size. */
+  designReview: jsonb("design_review").$type<{ status: "pending" | "approved" | "rejected"; note?: string; at: string }>(),
   upscaleFailure: jsonb("upscale_failure").$type<{ attempts: number; lastError: string; at: string; failed: boolean }>(),
   needsRedesign: jsonb("needs_redesign").$type<{ reason: string; sourcePx: { width: number; height: number }; target: { minW: number; minH: number; targetW: number; targetH: number }; presets: string[]; scale: number; at: string }>(),
   qualityScore: integer("quality_score"),

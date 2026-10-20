@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const upload = vi.fn(async () => ({ url: "/api/media/x.png", key: "x.png" }));
 const apply = vi.fn(async () => []);
-vi.mock("@/db", () => ({ getDb: async () => ({ update: () => ({ set: () => ({ where: async () => [] }) }) }) }));
+vi.mock("@/db", () => ({ getDb: async () => ({ select: () => ({ from: () => ({ where: async () => [] }) }), update: () => ({ set: () => ({ where: async () => [] }) }) }) }));
 vi.mock("@/lib/object-storage", () => ({ MAX_ARTWORK_BYTES: 80e6, uploadImageBytes: upload }));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: apply }));
 vi.mock("@/lib/upscale-jobs", () => ({

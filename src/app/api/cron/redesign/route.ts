@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   const id = Number(new URL(req.url).searchParams.get("id"));
   if (!Number.isInteger(id) || id < 1) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {
-    return NextResponse.json(await regenerateFlaggedDesign(await getDb(), id));
+    return NextResponse.json(await regenerateFlaggedDesign(await getDb(), id, console.log, { hint: new URL(req.url).searchParams.get("hint")?.slice(0, 200) || undefined }));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message.slice(0, 200) : "redesign failed" }, { status: 422 });
   }

@@ -70,6 +70,6 @@ describe("single-pass redesign", () => {
     expect(jobs.map((job) => job.designId)).toEqual([d.id]);
     expect(jobs[0]!.target).toMatchObject({ targetW: 4096, targetH: 5120 });
     expect(await clearRedesignFlag(db, d.id, { width: 4000, height: 5000 })).toBe(false);
-    expect(await clearRedesignFlag(db, d.id, { width: 4096, height: 5120 })).toBe(true);
+    expect(await clearRedesignFlag(db, d.id, { width: 4096, height: 5120 })).toBe(false) // flag kept until Design sign-off;
   });
 });

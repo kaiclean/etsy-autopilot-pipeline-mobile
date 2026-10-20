@@ -41,8 +41,8 @@ const png = (w: number, hgt: number) => sharp({ create: { width: w, height: hgt,
 describe("upload hardening", () => {
   it("(d) complete only accepts a key bound to that design, once", async () => {
     const db = await freshDb();
-    const [a] = await db.insert(schema.designs).values({ niche: "n", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png" }).returning();
-    const [b] = await db.insert(schema.designs).values({ niche: "n", prompt: "p", provider: "cloudflare", imageUrl: "https://e/b.png" }).returning();
+    const [a] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png" }).returning();
+    const [b] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/b.png" }).returning();
     const { bindUploadKey } = await import("@/lib/upscale-failures");
     await bindUploadKey(db, KEY, a.id);
     h.bytes = await png(200, 250);
@@ -53,7 +53,7 @@ describe("upload hardening", () => {
 
   it("(c) a rejected upload is deleted from S3", async () => {
     const db = await freshDb();
-    const [a] = await db.insert(schema.designs).values({ niche: "n", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png" }).returning();
+    const [a] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png" }).returning();
     const { bindUploadKey } = await import("@/lib/upscale-failures");
     await bindUploadKey(db, KEY, a.id);
     h.bytes = await png(100, 100);
@@ -64,7 +64,7 @@ describe("upload hardening", () => {
 
   it("(b) 3 failures mark the design failed, drop it from the job list and list it for the dashboard", async () => {
     const db = await freshDb();
-    const [a] = await db.insert(schema.designs).values({ niche: "n", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png",
+    const [a] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png",
       needsRedesign: { reason: "x", sourcePx: { width: 1024, height: 1280 }, target: { minW: 1, minH: 1, targetW: 1, targetH: 1 }, presets: [], scale: 4, at: "now" } }).returning();
     const { recordUpscaleFailure, failedUpscaleJobs } = await import("@/lib/upscale-failures");
     const { pendingUpscaleJobs } = await import("@/lib/upscale-jobs");

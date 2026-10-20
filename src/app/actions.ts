@@ -125,7 +125,11 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   if (!l) return { ok: false as const, error: "Listing not found" };
   if (status === "approved") {
     if (isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
-    const blocker = approvalBlocker(l.validation);
+    let blocker = approvalBlocker(l.validation);
+    if (!blocker && l.designId) {
+      const { designReviewBlocker } = await import("@/lib/design-review");
+      blocker = await designReviewBlocker(db, l.designId);
+    }
     if (blocker) return { ok: false as const, error: blocker };
     const refreshed = await refreshSupplierDescription(db, l);
     const { valid, issues } = validateSupplierApproval(refreshed);

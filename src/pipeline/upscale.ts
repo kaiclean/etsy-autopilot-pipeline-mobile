@@ -266,7 +266,7 @@ export async function upscaleTiledRgb(
   return { data: result, width, height, channels: 3 as const };
 }
 
-async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: number; height: number; channels: 3 }, finish = false) {
+export async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: number; height: number; channels: 3 }, finish = false) {
   let image = sharp(bytes, {
     limitInputPixels: 128_000_000,
     ...(raw ? { raw } : {}),
@@ -278,7 +278,7 @@ async function finalPng(bytes: Buffer, target: PrintTarget, raw?: { width: numbe
   return image
     .withMetadata({ density: 300 })
     .toColourspace("srgb")
-    .png({ compressionLevel: 9, effort: 8 })
+    .png({ compressionLevel: 9, palette: false })
     .toBuffer();
 }
 
