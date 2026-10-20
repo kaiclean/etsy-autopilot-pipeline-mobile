@@ -167,3 +167,14 @@
     display: none;
   }
 }
+
+/* Mobile polish (375–430px): never scroll sideways, keep media and tables inside the viewport. */
+@media (max-width: 767px) {
+  html, body { overflow-x: clip; max-width: 100vw; }
+  main img, main video, main canvas, main svg { max-width: 100%; height: auto; }
+  main pre, main table { max-width: 100%; }
+  main pre { overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  main :where(p, h1, h2, h3, li, td, span, a) { overflow-wrap: anywhere; }
+  main :where(button, [role="button"], select, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])) { min-height: 44px; }
+  input, select, textarea { font-size: 16px; max-width: 100%; } /* 16px stops iOS zoom-on-focus */
+}
