@@ -180,7 +180,9 @@ export const config = {
       modelUrl: (() => {
         const value = env("REALESRGAN_MODEL_URL");
         if (value?.toLowerCase() === "off") return undefined;
-        return value ?? DEFAULT_REALESRGAN_MODEL_URL;
+        // Box-only upscaling: the app never downloads/loads the model by default (1GB container OOM).
+        // Only the box worker (UPSCALER_ROLE=worker) falls back to the pinned URL.
+        return value ?? (process.env.UPSCALER_ROLE === "worker" ? DEFAULT_REALESRGAN_MODEL_URL : undefined);
       })(),
       modelSha256: (env("REALESRGAN_MODEL_SHA256") ?? (env("REALESRGAN_MODEL_URL") ? undefined : DEFAULT_REALESRGAN_MODEL_SHA256))?.toLowerCase(),
       /** Optional light denoise + sharpen pass for posters/canvas after upscaling. Default on; set to "off" to disable. */
