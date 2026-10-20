@@ -25,6 +25,8 @@ import { ensureDesignBrief } from "./design-brief";
 import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
 
+export const PRINT_RENDER = { width: 1024, height: 1280 } as const;
+
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   const [row] = await db
     .select({ total: sql<number>`coalesce(sum(${costs.amountChf}), 0)::float` })
@@ -230,8 +232,9 @@ export const runDesign: StageFn = async (ctx) => {
       : "digitalLarge";
     const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
     const generationSize = Math.min(1920 / target.targetW, 1920 / target.targetH);
-    const generationWidth = Math.max(256, Math.floor(target.targetW * generationSize));
-    const generationHeight = Math.max(256, Math.floor(target.targetH * generationSize));
+    // Print (POD) renders natively at 4:5 1024×1280 so one 4× Real-ESRGAN pass reaches 4096×5120 (≥ tee 4016×5057, A3).
+    const generationWidth = targetKey !== "digitalLarge" ? PRINT_RENDER.width : Math.max(256, Math.floor(target.targetW * generationSize));
+    const generationHeight = targetKey !== "digitalLarge" ? PRINT_RENDER.height : Math.max(256, Math.floor(target.targetH * generationSize));
     if (brief.created) {
       runConcepts.push(concept!);
       briefed++;

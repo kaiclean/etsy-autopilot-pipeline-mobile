@@ -4,7 +4,7 @@ import { getDb } from "@/db";
 import { upscaleDesigns } from "@/db/upscale-designs";
 import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
 import { uploadImageBytes } from "@/lib/object-storage";
-import { authorizedUpscaleJob, requiredUpscaleTarget } from "@/lib/upscale-jobs";
+import { attachA3Crop, authorizedUpscaleJob, clearRedesignFlag, requiredUpscaleTarget } from "@/lib/upscale-jobs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -38,5 +38,7 @@ export async function POST(req: Request) {
   const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: { width: meta.width, height: meta.height } };
   const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
   console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${meta.width}×${meta.height} stored ${stored.key}`);
-  return NextResponse.json({ designId, key: stored.key, outputPx: processed.outputPx, report });
+  const digital = await attachA3Crop(db, designId, bytes, stored.url, { width: meta.width, height: meta.height });
+  const cleared = await clearRedesignFlag(db, designId, { width: meta.width, height: meta.height });
+  return NextResponse.json({ designId, key: stored.key, outputPx: processed.outputPx, digital, redesignCleared: cleared, report });
 }
