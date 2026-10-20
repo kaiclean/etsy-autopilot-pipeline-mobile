@@ -12,6 +12,8 @@ export type KeywordCandidate = {
   searchVolume?: number;
   /** True when `competition` came from the official Open API v3 listing count. */
   competitionMeasured?: boolean;
+  /** Theme registry id when the phrase came from an active theme. */
+  themeId?: string;
 };
 
 /**

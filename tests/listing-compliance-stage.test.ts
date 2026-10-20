@@ -14,7 +14,7 @@ vi.mock("@/adapters/llm", () => ({
   getLLMProvider: () => ({
     name: "fixture",
     writeListing: async () => ({
-      title: "Swiss Alps Mug", tags: Array.from({ length: 13 }, (_, index) => `mountain scene ${index}`),
+      title: "Swiss Alps Mug with Calm Alpine Lake Scene", tags: Array.from({ length: 13 }, (_, index) => `mountain scene ${index}`),
       body: "A mountain landscape.", costChf: 0, provider: "fixture",
     }),
   }),

@@ -11,6 +11,8 @@ import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import { loadHotSignals, mergeHotKeywords } from "./hot-signals";
 import type { StageFn } from "./types";
+import { themeCandidates } from "@/lib/themes";
+import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
 
 const TRENDS_LOOKUPS_PER_RUN = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +35,16 @@ export const runResearch: StageFn = async (ctx) => {
     } catch (e) {
       log(`Source ${source.name} failed: ${(e as Error).message}`, "warn");
     }
+  }
+
+  try {
+    const themed = await themeCandidates(db);
+    const known = new Set(candidates.map((c) => c.phrase));
+    const fresh = themed.filter((c) => !known.has(c.phrase));
+    candidates.push(...fresh);
+    log(`Source themes: ${fresh.length} phrases from the theme registry`);
+  } catch (e) {
+    log(`Source themes failed: ${(e as Error).message}`, "warn");
   }
 
   const trends = new Map<string, number>();
@@ -170,6 +182,7 @@ export const runResearch: StageFn = async (ctx) => {
         seasonalityScore: season,
         trendScore: trend,
         score,
+        themeId: c.themeId ?? null,
         isDemo: ctx.demo,
       })
       .onConflictDoUpdate({
@@ -221,5 +234,14 @@ export const runResearch: StageFn = async (ctx) => {
       href: "/pipeline",
     }, ctx.demo);
   }
-  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog`;
+  // Daily idea step: rule-based (no AI spend). Candidates wait in the Brain for Kai.
+  let ideaNote = "";
+  try {
+    const added = await generateIdeaCandidates(db, ctx.now);
+    ideaNote = `, ${added} new idea candidate${added === 1 ? "" : "s"} for the Brain`;
+    log(`Idea feed: ${added} new candidates waiting in /brain/ideas`);
+  } catch (e) {
+    log(`Idea feed failed: ${(e as Error).message}`, "warn");
+  }
+  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
 };

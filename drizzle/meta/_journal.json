@@ -162,6 +162,13 @@
       "when": 1792280000000,
       "tag": "0024_brain_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0025_themes_registry",
+      "breakpoints": true
     }
   ]
 }

@@ -122,11 +122,13 @@ describe("validateListing", () => {
     expect(removeUndeliverablePromises("Swiss travel poster set of 3", defaultDeliverable("digital"))).toBe("Swiss travel poster");
   });
 
-  it("warns on empty praise, plural twins and a word repeated across tags", () => {
-    const praised = draft({ title: "Unique Gift Idea Alpine Print" });
+  it("blocks empty praise in the title, warns on plural twins and a word repeated across tags", () => {
+    const praised = draft({ title: "Unique Gift Idea Alpine Mountain Wall Print" });
     const praise = validateListing(praised);
-    expect(praise.valid).toBe(true);
-    expect(praise.issues.map((i) => i.code)).toContain("empty_praise");
+    expect(praise.valid).toBe(false);
+    expect(praise.issues.find((i) => i.code === "empty_praise")?.severity).toBe("error");
+    const describedPraise = validateListing(draft({ description: draft().description + "\nA beautiful view." }));
+    expect(describedPraise.issues.find((i) => i.code === "empty_praise")?.severity).toBe("warning");
 
     const twinTags = [...TAGS];
     twinTags[8] = "hiking gifts";

@@ -14,7 +14,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/api/webhooks/printify" ||
     pathname === "/api/webhooks/etsy" ||
     // Bearer-token API (OMNIGRAM_API_TOKEN) checked inside the route.
-    pathname === "/api/brain/decisions"
+    pathname === "/api/brain/decisions" ||
+    pathname === "/api/brain/status"
   ) {
     return NextResponse.next();
   }

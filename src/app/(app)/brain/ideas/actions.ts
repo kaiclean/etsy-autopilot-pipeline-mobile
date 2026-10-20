@@ -4,14 +4,29 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import { config } from "@/lib/config";
-import { activeNiches } from "@/lib/niches";
-import type { Niche } from "@/db/schema";
+import { getDb } from "@/db";
+import { listThemes, themeRunnable } from "@/lib/themes";
 import { getVault } from "@/lib/brain/vault";
-import { cleanPhrase, themeFit } from "@/lib/brain/fit";
-import { decide, VERDICTS, type Verdict } from "@/lib/brain/decisions";
+import { cleanPhrase } from "@/lib/brain/fit";
+import { mapIdea } from "@/lib/brain/mapper";
+import { decide, decideCandidate, VERDICTS, type PipelineRequest, type Verdict } from "@/lib/brain/decisions";
+
+async function requireSession(next: string) {
+  if (!(await verifySessionToken((await cookies()).get(SESSION_COOKIE)?.value, config.authSecret))) redirect(`/login?next=${next}`);
+}
+
+/** Reads the confirmed theme + phrase. Returns a request, null (not confirmed) or an error code. */
+async function confirmedPipeline(form: FormData): Promise<PipelineRequest | null | "phrase" | "theme"> {
+  if (form.get("confirm") !== "on") return null;
+  const phrase = cleanPhrase(String(form.get("phrase") ?? ""));
+  if (!phrase) return "phrase";
+  const theme = (await listThemes(await getDb())).find((t) => t.id === String(form.get("theme") ?? ""));
+  if (!theme || !themeRunnable(theme)) return "theme";
+  return { phrase, niche: theme.baseNiche, themeId: theme.id };
+}
 
 export async function decideIdea(form: FormData) {
-  if (!(await verifySessionToken((await cookies()).get(SESSION_COOKIE)?.value, config.authSecret))) redirect("/login?next=/brain/ideas");
+  await requireSession("/brain/ideas");
   const ideaId = String(form.get("idea") ?? "");
   const verdict = String(form.get("verdict") ?? "") as Verdict;
   const note = getVault().byId.get(ideaId);
@@ -20,13 +35,13 @@ export async function decideIdea(form: FormData) {
   const p = Number.parseInt(String(form.get("priority") ?? ""), 10);
   const priority = Number.isFinite(p) ? Math.min(Math.max(p, 1), 5) : null;
 
-  let pipeline: { phrase: string; niche: Niche } | null = null;
-  if (verdict === "approved" && form.get("confirm") === "on" && themeFit(note)) {
-    const phrase = cleanPhrase(String(form.get("phrase") ?? ""));
-    const niche = String(form.get("niche") ?? "") as Niche;
-    if (!phrase) redirect(`/brain/ideas?msg=phrase#${encodeURIComponent(ideaId)}`);
-    if (!activeNiches().some((n) => n.id === niche)) redirect("/brain/ideas?msg=niche");
-    pipeline = { phrase, niche };
+  let pipeline: PipelineRequest | null = null;
+  if (verdict === "approved") {
+    const mapping = mapIdea(note, await listThemes(await getDb()));
+    const artwork = mapping.kind === "product" && mapping.product && ["wall-art", "poster", "pod-apparel", "pod-mug"].includes(mapping.product);
+    const req = artwork ? await confirmedPipeline(form) : null;
+    if (req === "phrase" || req === "theme") redirect(`/brain/ideas?msg=${req}`);
+    pipeline = req;
   }
   let msg = "saved";
   try {
@@ -39,4 +54,27 @@ export async function decideIdea(form: FormData) {
   }
   revalidatePath("/brain", "layout");
   redirect(`/brain/ideas?msg=${msg}`);
+}
+
+export async function decideCandidateAction(form: FormData) {
+  await requireSession("/brain/ideas");
+  const id = Number(form.get("candidate"));
+  const verdict = String(form.get("verdict")) === "approved" ? "approved" : "rejected";
+  let pipeline: PipelineRequest | null = null;
+  if (verdict === "approved") {
+    const req = await confirmedPipeline(form);
+    if (req === null) redirect("/brain/ideas?msg=confirm#candidates");
+    if (req === "phrase" || req === "theme") redirect(`/brain/ideas?msg=${req}#candidates`);
+    pipeline = req;
+  }
+  let msg = verdict === "approved" ? "pipeline" : "dismissed";
+  try {
+    const r = await decideCandidate(id, verdict, pipeline);
+    if (verdict === "approved" && r.note) msg = "existing";
+  } catch (e) {
+    console.error("brain: candidate failed:", (e as Error).message);
+    msg = "error";
+  }
+  revalidatePath("/brain", "layout");
+  redirect(`/brain/ideas?msg=${msg}#candidates`);
 }

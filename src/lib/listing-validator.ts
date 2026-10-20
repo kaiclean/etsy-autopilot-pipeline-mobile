@@ -9,6 +9,11 @@ export const ETSY_LIMITS = {
   tagMax: 20,
   maxAllCapsWords: 3,
   descriptionMin: 160,
+  titleWordsMin: 6,
+  titleWordsMax: 14,
+  primaryWithin: 40,
+  /** Never the same 2+-word phrase in more than this many tags (etsy-listing skill). */
+  phraseTagMax: 2,
   priceMinChf: 0.2,
 } as const;
 
@@ -53,9 +58,34 @@ export type ListingDraft = {
   providerDetails?: ProviderDetails | null;
   copyProvenance?: { version: 1; provider: string; inputSha256: string; providerDetails?: ProviderDetails | null } | null;
   fileManifest?: { delivery: { width: number; height: number; format?: "png" | "jpeg" | "webp" } } | null;
+  /** The keyword this listing targets. When set, its words must sit in the first ~40 title characters. */
+  primaryPhrase?: string | null;
 };
 
-/** Empty praise. Warnings only: they do not block approval. */
+const PRIMARY_STOP = new Set(["for", "the", "and", "with", "a", "an", "of", "to", "in", "on"]);
+const stemWord = (w: string) => w.toLowerCase().replace(/(?:ies)$/, "y").replace(/(?:es|s)$/, "");
+
+/** True when every content word of the phrase appears (singular-insensitive) in the first `within` characters of the title. */
+export function primaryPhraseUpFront(title: string, phrase: string, within: number = ETSY_LIMITS.primaryWithin) {
+  const head = title.slice(0, within + 12).toLowerCase();
+  const headWords = new Set(head.split(/[^\p{L}\p{N}']+/u).filter(Boolean).map(stemWord));
+  const want = phrase.toLowerCase().split(/\s+/).filter((w) => w && !PRIMARY_STOP.has(w)).map(stemWord);
+  return want.length > 0 && want.every((w) => headWords.has(w));
+}
+
+/** 2+-word phrases (adjacent word pairs) that appear in more than `max` tags. */
+export function overusedTagPhrases(tags: string[], max: number = ETSY_LIMITS.phraseTagMax) {
+  const counts = new Map<string, number>();
+  for (const tag of tags) {
+    const w = tag.toLowerCase().split(/\s+/).filter(Boolean).map(stemWord);
+    const pairs = new Set<string>();
+    for (let i = 0; i + 1 < w.length; i++) pairs.add(`${w[i]} ${w[i + 1]}`);
+    for (const p of pairs) counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, n]) => n > max).map(([p]) => p);
+}
+
+/** Empty praise. Blocks in title and tags (etsy-listing skill); a warning in the description. */
 const PRAISE_SOURCE =
   "\\b(?:unique|stunning|beautiful|amazing|gorgeous|perfect|premium|awesome|incredible|wonderful|exquisite|breathtaking|luxurious|luxury|bestseller)s?\\b|\\bgift idea\\b";
 
@@ -127,6 +157,15 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
     if (title.split(ch).length - 1 > 1) {
       push({ field: "title", severity: "error", code: "title_repeat_symbol", message: `“${ch}” may only be used once in a title.` });
     }
+  }
+  const titleWords = title.trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  if (title.trim() && (titleWords.length < ETSY_LIMITS.titleWordsMin || titleWords.length > ETSY_LIMITS.titleWordsMax)) {
+    push({ field: "title", severity: "error", code: "title_word_count",
+      message: `Title has ${titleWords.length} words; use ${ETSY_LIMITS.titleWordsMin}-${ETSY_LIMITS.titleWordsMax}.` });
+  }
+  if (d.primaryPhrase && title.trim() && !primaryPhraseUpFront(title, d.primaryPhrase)) {
+    push({ field: "title", severity: "error", code: "primary_not_first",
+      message: `Put the primary buyer phrase “${d.primaryPhrase}” in the first ${ETSY_LIMITS.primaryWithin} characters.` });
   }
   const capsWords = title.split(/\s+/).filter((w) => w.length > 1 && /\p{L}/u.test(w) && w === w.toUpperCase());
   if (capsWords.length > ETSY_LIMITS.maxAllCapsWords) {
@@ -265,7 +304,7 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
     if (words.length) {
       push({
         field,
-        severity: "warning",
+        severity: field === "title" ? "error" : "warning",
         code: "empty_praise",
         message: `Drop empty praise (${words.join(", ")}).`,
       });
@@ -275,7 +314,7 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
   if (praisedTags.length) {
     push({
       field: "tags",
-      severity: "warning",
+      severity: "error",
       code: "empty_praise",
       message: `Drop empty praise in tags (${[...new Set(praisedTags)].join(", ")}).`,
     });
@@ -314,6 +353,12 @@ export function validateListing(d: ListingDraft): { valid: boolean; issues: Vali
       code: "tag_repeated_word",
       message: `The same word is in too many tags: ${repeated.join(", ")}.`,
     });
+  }
+
+  const overused = overusedTagPhrases(tags);
+  if (overused.length) {
+    push({ field: "tags", severity: "warning", code: "tag_phrase_overused",
+      message: `The same phrase is in more than ${ETSY_LIMITS.phraseTagMax} tags: ${overused.join(", ")}. Reword some.` });
   }
 
   const lastWord = title.trim().split(/\s+/).pop()?.replace(/[^A-Za-z]/g, "").toLowerCase() ?? "";
@@ -517,10 +562,10 @@ export function repairTrivialCopy<T extends ListingDraft>(
 
 /** Distinct-word fillers so refills never pile onto one word ("art", "dark"). */
 const DIVERSE_TAGS = [
-  "home decor", "room accent", "gallery piece", "cozy style", "gift idea", "living room",
-  "wall hanging", "housewarming", "statement piece", "calm mood", "nature lover", "bedroom styling",
+  "home decor", "room accent", "gallery piece", "cozy style", "living room",
+  "wall hanging", "statement piece", "calm mood", "nature lover", "bedroom styling",
   "office corner", "hallway", "reading nook", "minimalist", "colour palette", "keepsake", "seasonal",
-  "birthday present", "illustration", "atmosphere", "texture", "heirloom look", "studio",
+  "illustration", "atmosphere", "texture", "heirloom look", "studio",
 ];
 
 function tagWords(tag: string) {
