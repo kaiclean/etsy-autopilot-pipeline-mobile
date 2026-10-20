@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { authorizedUpscaleJob, pendingUpscaleJobs } from "@/lib/upscale-jobs";
+import { authorizedUpscaleJob, pendingUpscaleJobs, type NeedsDesignRow } from "@/lib/upscale-jobs";
 
 export const dynamic = "force-dynamic";
 
@@ -8,5 +8,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   if (!authorizedUpscaleJob(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const limit = Math.min(10, Math.max(1, Number(new URL(req.url).searchParams.get("limit") ?? 3) || 3));
-  return NextResponse.json({ jobs: await pendingUpscaleJobs(await getDb(), limit) });
+  const needsDesign: NeedsDesignRow[] = [];
+  const jobs = await pendingUpscaleJobs(await getDb(), limit, needsDesign);
+  // needsDesign: print targets a 4× Real-ESRGAN pass cannot reach from the source; Design rebuilds these at full size.
+  return NextResponse.json({ jobs, needsDesign });
 }

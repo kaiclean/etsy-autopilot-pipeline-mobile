@@ -79,11 +79,18 @@ describe("box pull model", () => {
   });
 });
 
-import { strictestTargetKey } from "@/lib/upscale-jobs";
-describe("strictest product per design", () => {
-  it("upscales a shared design for its poster, not its mug", () => {
-    expect(strictestTargetKey(["printify:mug", "printify:posterA3", null], { productType: "pod", podPreset: "mug" })).toBe("posterA3");
-    expect(strictestTargetKey(["printify:mug", "printify:tshirt"], null)).toBe("tshirt");
-    expect(strictestTargetKey([null], { productType: "digital", podPreset: null })).toBe("digitalLarge");
+import { combineTargets, designPresets, reachableBy4x } from "@/lib/upscale-jobs";
+describe("print targets per design", () => {
+  it("lists every POD product of a shared design", () => {
+    expect(designPresets(["printify:mug", "printify:posterA3", null, "printify:mug"], { productType: "pod", podPreset: "mug" })).toEqual(["mug", "posterA3"]);
+    expect(designPresets([null], { productType: "digital", podPreset: null })).toEqual([]);
+  });
+  it("takes the max of each dimension", () => {
+    expect(combineTargets([{ minW: 3508, minH: 4961, targetW: 3508, targetH: 4961 }, { minW: 4500, minH: 5400, targetW: 4500, targetH: 5400 }]))
+      .toEqual({ minW: 4500, minH: 5400, targetW: 4500, targetH: 5400 });
+  });
+  it("sends sources a 4× pass cannot reach to Design", () => {
+    expect(reachableBy4x({ width: 1024, height: 1024 }, { minW: 3508, minH: 4961, targetW: 3508, targetH: 4961 })).toEqual({ reachable: false, scale: 4.84 });
+    expect(reachableBy4x({ width: 1024, height: 1536 }, { minW: 3508, minH: 4961, targetW: 3508, targetH: 4961 }).reachable).toBe(true);
   });
 });
