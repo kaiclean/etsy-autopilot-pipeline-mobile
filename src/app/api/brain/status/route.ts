@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
+import { designs, listings, orders } from "@/db/schema";
 import { config, isDemoMode } from "@/lib/config";
 import { readPublishMode, liveWritesEnabled } from "@/lib/read-publish-mode";
 import { getSetting } from "@/lib/settings";
@@ -27,7 +29,17 @@ export async function GET(req: NextRequest) {
   const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const shop = await resolveActiveShop(db);
   const round = (v: number) => Math.round(v * 100) / 100;
+  const tally = async (query: Promise<{ n: number }[]>) => Number((await query)[0]?.n ?? 0);
+  const counts = {
+    listings: await tally(db.select({ n: count() }).from(listings).where(eq(listings.isDemo, false))),
+    // Drafts = unactivated listings still awaiting review or held by the gates.
+    drafts: await tally(db.select({ n: count() }).from(listings).where(and(eq(listings.isDemo, false), isNull(listings.activatedAt), inArray(listings.status, ["pending_approval", "quality_failed"])))),
+    orders: await tally(db.select({ n: count() }).from(orders).where(eq(orders.isDemo, false))),
+    designs: await tally(db.select({ n: count() }).from(designs).where(eq(designs.isDemo, false))),
+  };
   return NextResponse.json({
+    publishMode: config.publishMode,
+    counts,
     publish: { dashboardMode: await readPublishMode(db), hostMode: config.publishMode, liveWritesEnabled: await liveWritesEnabled(db) },
     image: { provider: config.imageProvider, fallbackProvider: config.imageFallbackProvider ?? null, llmProvider: config.llmProvider },
     budget: {
