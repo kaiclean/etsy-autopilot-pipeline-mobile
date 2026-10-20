@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { authorizedUpscaleJob } from "@/lib/upscale-jobs";
-import { reviewQueue } from "@/lib/review-queue";
+import { listingsForDesigns, reviewQueue } from "@/lib/review-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   // CRON_SECRET, or the box worker's UPSCALER_SECRET (read-only audit from the box).
   if (!authorizedUpscaleJob(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const designs = (new URL(req.url).searchParams.get("designs") ?? "").split(",").map(Number).filter((id) => Number.isInteger(id) && id > 0);
+  if (designs.length) {
+    const rows = await listingsForDesigns(await getDb(), designs.slice(0, 100));
+    return NextResponse.json({ count: rows.length, listings: rows });
+  }
   const items = await reviewQueue(await getDb());
   return NextResponse.json({ count: items.length, items });
 }

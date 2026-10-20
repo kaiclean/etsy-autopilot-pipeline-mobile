@@ -31,3 +31,13 @@ export async function reviewQueue(db: DB) {
     };
   });
 }
+
+/** Every listing (any status) for the given designs: proves whether anything is live on Etsy or delivering. */
+export async function listingsForDesigns(db: DB, designIds: number[]) {
+  const rows = await db.select().from(listings).where(and(inArray(listings.designId, designIds), eq(listings.isDemo, false))).orderBy(listings.id);
+  return rows.map((l) => ({
+    id: l.id, designId: l.designId, status: l.status, productType: l.productType, podProvider: l.podProvider,
+    activatedAt: l.activatedAt, publishMode: l.publishMode, etsyListingId: l.etsyListingId, printifyProductId: l.printifyProductId,
+    podPublishedAt: l.podPublishedAt, deliveryUrl: l.deliveryUrl, etsyDeliveryFingerprint: l.etsyDeliveryFingerprint, publishAttemptedAt: l.publishAttemptedAt,
+  }));
+}
