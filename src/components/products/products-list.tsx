@@ -43,7 +43,11 @@ export function ProductsList({ listings, initialTriage = "all" }: { listings: Li
   const router = useRouter();
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: listings.length };
-    for (const l of listings) c[l.status] = (c[l.status] ?? 0) + 1;
+    // "On Etsy" counts only real live listings; dry-run drafts have fake ids and are not on Etsy.
+    for (const l of listings) {
+      const key = l.status === "published" && l.publishMode !== "live" ? "dryRunPublished" : l.status;
+      c[key] = (c[key] ?? 0) + 1;
+    }
     return c;
   }, [listings]);
   const rows = filterProducts(listings, { query, niche, status: filter, triage, art });

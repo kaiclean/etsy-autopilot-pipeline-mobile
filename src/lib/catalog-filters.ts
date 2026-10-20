@@ -127,6 +127,8 @@ export function filterProducts<T extends ProductRow>(listings: T[], filter: Prod
   const triage = filter.triage ?? "all";
   return listings.filter((listing) => {
     if (filter.status !== "all" && listing.status !== filter.status) return false;
+    // "On Etsy" (published) excludes dry-run drafts.
+    if (filter.status === "published" && (listing as { publishMode?: string | null }).publishMode !== "live") return false;
     if (filter.niche !== "all" && listing.niche !== filter.niche) return false;
     if (filter.art === "placeholder" && !isPlaceholderUrl(listing.imageUrl)) return false;
     if (!matchesTriage(listing, triage)) return false;

@@ -100,7 +100,7 @@ async function insertListing(
       netChf: 4.25,
       marginPct: 34,
       status: "published",
-      etsyListingId: extra.etsyListingId,
+      etsyListingId: extra.etsyListingId, publishMode: "live",
       views: extra.views ?? 0,
       isDemo: extra.isDemo ?? false,
     })
