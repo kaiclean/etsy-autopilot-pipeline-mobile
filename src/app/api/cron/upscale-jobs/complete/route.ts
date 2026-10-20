@@ -60,21 +60,35 @@ export async function POST(req: Request) {
   if (meta.width < target.minW || meta.height < target.minH) {
     return reject({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, 422);
   }
-  // Edge check applies to full-bleed redesigns only (white-background clipart legitimately has white edges).
-  const [flagged] = await db.select({ flag: designs.needsRedesign }).from(designs).where(eq(designs.id, designId));
-  const { blankEdgeBands } = await import("@/lib/edge-check");
-  const bands = flagged?.flag ? await blankEdgeBands(bytes) : { blank: false, top: 0, bottom: 0, left: 0, right: 0, trimmed: { width: meta.width, height: meta.height } };
-  console.log(`[upscale-jobs] design #${designId} edge check: top ${bands.top} bottom ${bands.bottom} left ${bands.left} right ${bands.right}px`);
-  if (bands.blank && (bands.trimmed.width < target.minW || bands.trimmed.height < target.minH)) {
-    return reject({ error: `blank edge bands; trimmed ${bands.trimmed.width}×${bands.trimmed.height} is below ${target.minW}×${target.minH}`, bands }, 422);
+  // Full edge check on every upload. Bright blank bands are trimmed (then the size floor is re-checked);
+  // dark/flat bands are never cut — they only mark the design for Design review.
+  const { flatEdgeBands, trimBlankEdges } = await import("@/lib/edge-check");
+  const trim = await trimBlankEdges(bytes, { width: target.minW, height: target.minH });
+  const b = trim.bands;
+  if (!trim.ok) {
+    console.log(`[upscale-jobs] design #${designId} edge check: REJECT ${trim.reason}`);
+    return reject({ error: trim.reason, bands: b }, 422);
   }
-  const stored = presetStored ?? await uploadImageBytes(bytes, "image/png");
+  const flat = await flatEdgeBands(trim.bytes);
+  console.log(`[upscale-jobs] design #${designId} edge check: bright top ${b.top} bottom ${b.bottom} left ${b.left} right ${b.right}px${b.blank ? ` → trimmed to ${b.trimmed.width}×${b.trimmed.height}` : " (clean)"}; dark/flat ${flat.review ? `top ${flat.top} bottom ${flat.bottom} left ${flat.left} right ${flat.right}px → Design review` : "none"}`);
+  let finalBytes = bytes;
+  let size = { width: meta.width, height: meta.height };
+  let stored: { url: string; key: string } | null = presetStored;
+  if (b.blank) {
+    finalBytes = trim.bytes;
+    size = { width: b.trimmed.width, height: b.trimmed.height };
+    stored = await uploadImageBytes(finalBytes, "image/png");
+    if (presetStored) await deleteStoredObject(presetStored.key).catch(() => false);
+  }
+  stored ??= await uploadImageBytes(finalBytes, "image/png");
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
-  const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: { width: meta.width, height: meta.height } };
+  const finalSha = b.blank ? createHash("sha256").update(finalBytes).digest("hex") : sha256;
+  const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: size };
   const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
-  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${meta.width}×${meta.height} stored ${stored.key} (${bytes.length} bytes, sha256 ${sha256}, measured server-side)`);
-  await db.update(designs).set({ upscaleFailure: null }).where(eq(designs.id, designId));
-  const digital = await attachA3Crop(db, designId, bytes, stored.url, { width: meta.width, height: meta.height });
-  const cleared = await clearRedesignFlag(db, designId, { width: meta.width, height: meta.height });
-  return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: bytes.length, sha256, outputPx: processed.outputPx, digital, redesignCleared: cleared, report });
+  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${size.width}×${size.height} stored ${stored.key} (${finalBytes.length} bytes, sha256 ${finalSha}, measured server-side)`);
+  await db.update(designs).set({ upscaleFailure: null, ...(flat.review ? { designReview: { status: "pending" as const, note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } } : {}) }).where(eq(designs.id, designId));
+  const digital = await attachA3Crop(db, designId, finalBytes, stored.url, size);
+  const cleared = await clearRedesignFlag(db, designId, size);
+  const edge = { bright: { top: b.top, bottom: b.bottom, left: b.left, right: b.right, trimmed: b.blank }, flat };
+  return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, digital, redesignCleared: cleared, report });
 }
