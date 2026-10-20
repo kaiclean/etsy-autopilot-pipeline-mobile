@@ -275,3 +275,22 @@
 .brain .funnel .step.goal{border-color:rgba(52,211,153,.45);background:linear-gradient(160deg,rgba(52,211,153,.12),transparent)}
 .brain .bar{height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:12px}
 .brain .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#34d399);border-radius:999px;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+/* Sessions */
+.brain .sess-start,.brain .sess-task-new{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.brain .sess-start label,.brain .sess-task-new label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);flex:1 1 160px;min-width:0}
+.brain .sess-h{margin:18px 0 8px;font-size:15px}
+.brain .sess-list{display:grid;gap:10px;margin-bottom:12px}
+.brain .sess summary{cursor:pointer;list-style:none}
+.brain .sess-log{margin:10px 0 0;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;background:rgba(0,0,0,.25);border-radius:8px;padding:8px 10px}
+.brain .sess-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.brain .sess-actions form{display:flex;gap:6px;flex-wrap:wrap}
+/* Mobile: thumb-sized controls, no sideways scroll */
+@media (max-width:720px){
+  .brain{max-width:100%;overflow-x:clip}
+  .brain button,.brain select,.brain input:not([type=checkbox]):not([type=hidden]){min-height:44px;font-size:16px}
+  .brain .bnav a{padding:10px 14px;min-height:40px;display:inline-flex;align-items:center;flex:0 0 auto}
+  .brain .page-head{flex-wrap:wrap;gap:8px}
+  .brain .card{min-width:0;overflow-wrap:anywhere}
+  .brain .kanban{scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}.brain .kanban>.col{scroll-snap-align:start}
+  .brain .sess-start button,.brain .sess-task-new button{flex:1 1 100%}
+}

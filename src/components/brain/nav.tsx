@@ -11,13 +11,17 @@ const ITEMS = [
   { href: "/brain/insights", label: "Insights" },
   { href: "/brain/timeline", label: "Timeline" },
   { href: "/brain/themes", label: "Themes" },
+  { href: "/brain/sessions", label: "Sessions" },
   { href: "/brain/search", label: "Search" },
 ];
 const isActive = (p: string, h: string) => (h === "/brain" ? p === "/brain" : p.startsWith(h));
 export function BrainNav() {
   const p = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+  // On narrow screens the tab row scrolls sideways; keep the current tab visible.
+  useEffect(() => { navRef.current?.querySelector<HTMLElement>("a.on")?.scrollIntoView({ block: "nearest", inline: "center" }); }, [p]);
   return (
-    <nav className="bnav" aria-label="Brain sections">
+    <nav ref={navRef} className="bnav" aria-label="Brain sections">
       <span className="brand-mark" aria-hidden>🧠</span>
       {ITEMS.map((i) => <Link key={i.href} href={i.href} className={isActive(p, i.href) ? "on" : ""} aria-current={isActive(p, i.href) ? "page" : undefined}>{i.label}</Link>)}
       <span className="grow" />

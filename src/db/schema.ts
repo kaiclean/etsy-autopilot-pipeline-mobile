@@ -601,3 +601,30 @@ export const ideaCandidates = pgTable("idea_candidates", {
   decidedAt: timestamp("decided_at", { withTimezone: true }),
 }, (table) => [index("idea_candidates_status_idx").on(table.status, table.createdAt)]);
 export type IdeaCandidate = typeof ideaCandidates.$inferSelect;
+
+/** Stage runs started from the Brain → Sessions page. Never publishes live. */
+export const brainSessions = pgTable("brain_sessions", {
+  id: serial("id").primaryKey(),
+  stage: text("stage").$type<StageName>().notNull(),
+  status: text("status").$type<"queued" | "running" | "success" | "warning" | "failed" | "skipped" | "cancelled">().notNull().default("queued"),
+  jobRunId: integer("job_run_id"),
+  summary: text("summary"),
+  retryOf: integer("retry_of"),
+  taskId: integer("task_id"),
+  cancelRequested: boolean("cancel_requested").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+/** Kai's task list, assigned by pipeline stage. */
+export const brainTasks = pgTable("brain_tasks", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  stage: text("stage").$type<StageName>().notNull().default("research"),
+  status: text("status").$type<"todo" | "doing" | "done">().notNull().default("todo"),
+  lastSessionId: integer("last_session_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
