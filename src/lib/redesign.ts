@@ -42,8 +42,11 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   if (bands.blank && (bands.trimmed.width < PRINT_RENDER.width || bands.trimmed.height < PRINT_RENDER.height)) {
     throw new Error(`re-render has blank edge bands (top ${bands.top}, bottom ${bands.bottom}, left ${bands.left}, right ${bands.right}px); trimmed ${bands.trimmed.width}×${bands.trimmed.height} is below ${PRINT_RENDER.width}×${PRINT_RENDER.height} — rejected`);
   }
+  const { flatEdgeBands } = await import("@/lib/edge-check");
+  const flat = await flatEdgeBands(raw);
+  if (flat.review) log(`[redesign] design #${id} dark/flat edge bands (top ${flat.top} bottom ${flat.bottom} left ${flat.left} right ${flat.right}px): not trimmed, flagged for Design review`);
   await db.update(designs).set({
-    designReview: null,
+    designReview: flat.review ? { status: "pending", note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } : null,
     imageUrl: img.url, sourceImageUrl: img.url, sourcePx: { width: measured.width, height: measured.height },
     imageWidth: measured.width, imageHeight: measured.height, upscaleMethod: null, outputPx: null, colorVariance: measured.variance,
   }).where(eq(designs.id, id));

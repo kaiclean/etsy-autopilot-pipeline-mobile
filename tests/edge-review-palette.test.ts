@@ -72,3 +72,25 @@ describe("design review gate", () => {
     expect(await designReviewBlocker(db, d.id)).toBeNull();
   });
 });
+
+describe("dark edges are never trimmed", () => {
+  it("a night-sky render with a flat dark top band: no trim, flagged for review", async () => {
+    const w = 200, h = 250;
+    const raw = Buffer.alloc(w * h * 3);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 3;
+      const v = y < 20 ? 12 : 10 + ((x * 7 + y * 13) % 60); // flat night sky band, then dark textured scene
+      raw[i] = v; raw[i + 1] = v; raw[i + 2] = v + 20;
+    }
+    const night = await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer();
+    const { flatEdgeBands } = await import("@/lib/edge-check");
+    const bright = await blankEdgeBands(night);
+    expect(bright.blank).toBe(false);
+    const trim = await trimBlankEdges(night, { width: w, height: h });
+    expect(trim.ok).toBe(true);
+    if (trim.ok) expect(await sharp(trim.bytes).metadata()).toMatchObject({ width: w, height: h });
+    const flat = await flatEdgeBands(night);
+    expect(flat.review).toBe(true);
+    expect(flat.top).toBe(20);
+  });
+});
