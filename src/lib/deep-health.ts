@@ -135,7 +135,7 @@ async function imageProbe(f: Fetch, which: string | undefined, label: string): P
 }
 
 function cronProbe(): Probe {
-  const env = has("CRON_SECRET", "SESSION_SECRET", "DASHBOARD_PASSWORD", "OMNIGRAM_API_TOKEN");
+  const env = has("CRON_SECRET", "AUTH_SECRET", "DASHBOARD_PASSWORD", "OMNIGRAM_API_TOKEN");
   const missing = Object.entries(env).filter(([, v]) => !v).map(([k]) => k);
   return { id: "secrets", name: "App secrets", env, status: missing.length ? "fail" : "ok", detail: missing.length ? `missing: ${missing.join(", ")}` : "all set", latencyMs: null };
 }
