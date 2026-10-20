@@ -149,7 +149,7 @@ describe("catalog filters", () => {
   const rows = [
     { id: 1, title: "Alpine lake print", tags: ["alps"], niche: "alpine", status: "pending_approval", validation: [] },
     { id: 2, title: "Gothic poster", tags: ["bat"], niche: "gothic", status: "pending_approval", validation: [{ severity: "error" }] },
-    { id: 3, title: "Birthday card", tags: ["invite"], niche: "birthday", status: "published", validation: [] },
+    { id: 3, title: "Birthday card", tags: ["invite"], niche: "birthday", status: "published", publishMode: "live", validation: [] },
   ];
 
   it("filters the queue by search, niche, and validation status", () => {

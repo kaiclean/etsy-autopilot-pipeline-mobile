@@ -2,7 +2,7 @@ import { and, eq, like, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { costs, dailyStats, listings, orders } from "@/db/schema";
 import { dayKey } from "@/lib/format";
-import { analyticsOrdersWhere, publishedListingsWhere } from "@/lib/real-orders";
+import { analyticsOrdersWhere, publishedListingsWhere, realPublishedListingsWhere } from "@/lib/real-orders";
 import { getSetting } from "@/lib/settings";
 import { stageResult, type StageFn } from "./types";
 
@@ -18,7 +18,8 @@ export const runAnalytics: StageFn = async (ctx) => {
       favorites: listings.favorites,
     })
     .from(listings)
-    .where(publishedListingsWhere(ctx.shopId));
+    // Live shops: only real Etsy listings (publishMode live, not dry-run ids). Dry-run ids have no Etsy metrics.
+    .where(ctx.demo ? publishedListingsWhere(ctx.shopId) : realPublishedListingsWhere(ctx.shopId));
 
   const stats = await etsy.getListingStats(
     published.map((l) => ({ etsyListingId: l.etsyListingId!, views: l.views, favorites: l.favorites })),
