@@ -38,3 +38,15 @@ export async function trimBlankEdges(bytes: Buffer, floor: { width: number; heig
   }
   return { ok: true as const, bands, bytes: await sharp(bytes).extract(t).png({ palette: false }).toBuffer() };
 }
+
+/**
+ * Dark or flat (non-bright) uniform bands — e.g. a night sky edge. These are NEVER trimmed (could be art);
+ * they only flag the render for Design review.
+ */
+export async function flatEdgeBands(bytes: Buffer) {
+  const flat = await blankEdgeBands(bytes, { maxStd: 6, minMean: 0 });
+  const bright = await blankEdgeBands(bytes);
+  const extra = { top: flat.top - bright.top, bottom: flat.bottom - bright.bottom, left: flat.left - bright.left, right: flat.right - bright.right };
+  const review = Object.values(extra).some((v) => v >= 8);
+  return { ...extra, review };
+}
