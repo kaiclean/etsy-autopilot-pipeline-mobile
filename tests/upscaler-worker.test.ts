@@ -82,7 +82,7 @@ describe("box pull model", () => {
 import { combineTargets, designPresets, reachableBy4x } from "@/lib/upscale-jobs";
 describe("print targets per design", () => {
   it("lists every POD product of a shared design", () => {
-    expect(designPresets(["printify:mug", "printify:posterA3", null, "printify:mug"], { productType: "pod", podPreset: "mug" })).toEqual(["mug", "posterA3"]);
+    expect(designPresets(["printify:mug", "printify:posterA3", null, "printify:mug"], { productType: "pod", podPreset: "mug" })).toEqual(["posterA3"]);
     expect(designPresets([null], { productType: "digital", podPreset: null })).toEqual([]);
   });
   it("takes the max of each dimension", () => {

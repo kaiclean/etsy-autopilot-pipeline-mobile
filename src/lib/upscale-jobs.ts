@@ -31,7 +31,8 @@ function absolute(url: string) {
  */
 /** Products a design feeds: POD presets from its listings, else its brief; empty = digital only. */
 export function designPresets(podProviders: readonly (string | null)[], brief: { productType: string | null; podPreset: string | null } | null): PrintTargetKey[] {
-  const presets = [...new Set(podProviders.map((value) => value?.replace(/^printify:/, "") ?? "").filter((value): value is PrintTargetKey => isPodPreset(value)))];
+  // Mugs need a wrap aspect (not 4:5) and stay held, so they don't shape the shared print target.
+  const presets = [...new Set(podProviders.map((value) => value?.replace(/^printify:/, "") ?? "").filter((value): value is PrintTargetKey => isPodPreset(value) && value !== "mug"))];
   if (!presets.length && brief?.productType === "pod") presets.push(isPodPreset(brief.podPreset ?? "") ? brief.podPreset as PrintTargetKey : "posterA3");
   return presets;
 }
@@ -152,9 +153,11 @@ export function a3CropSize(master: { width: number; height: number }) {
 
 /** Digital listings of the design ship the 4:5 master plus an A3 centre crop (≥3508×4961). Both sizes are logged. */
 export async function attachA3Crop(db: DB, designId: number, master: Buffer, masterUrl: string, size: { width: number; height: number }) {
-  const rows = await db.select({ id: listings.id }).from(listings)
-    .where(and(eq(listings.designId, designId), eq(listings.productType, "digital"), isNull(listings.activatedAt), inArray(listings.status, ["pending_approval", "quality_failed"])));
-  if (!rows.length) return null;
+  const open = await db.select({ id: listings.id, productType: listings.productType, podProvider: listings.podProvider }).from(listings)
+    .where(and(eq(listings.designId, designId), isNull(listings.activatedAt), inArray(listings.status, ["pending_approval", "quality_failed"])));
+  const rows = open.filter((row) => row.productType === "digital");
+  const posters = open.filter((row) => row.podProvider === "printify:posterA3" || row.podProvider === "printify:canvas");
+  if (!rows.length && !posters.length) return null;
   const crop = a3CropSize(size);
   if (crop.width < 3508 || crop.height < 4961) return { skipped: `A3 crop ${crop.width}×${crop.height} is below 3508×4961` };
   const { default: sharp } = await import("sharp");
@@ -166,6 +169,11 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
   const masterRecord = await inspectArtworkFile(master, `design-${designId}-4x5-master.png`);
   const cropRecord = await inspectArtworkFile(cropBytes, `design-${designId}-A3.png`);
   if (!stored || !masterRecord || !cropRecord) return { skipped: "could not store or inspect the A3 crop" };
+  // The A3 poster prints the A3 crop, not the 4:5 master.
+  for (const row of posters) {
+    await db.update(listings).set({ deliveryUrl: stored.url, updatedAt: new Date() }).where(eq(listings.id, row.id));
+  }
+  if (posters.length) console.log(`[upscale-jobs] design #${designId} poster print file = A3 crop ${crop.width}×${crop.height} on listings ${posters.map((row) => row.id).join(",")}`);
   for (const row of rows) {
     await db.update(listings).set({
       deliveryUrl: masterUrl,
@@ -174,7 +182,7 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
     }).where(eq(listings.id, row.id));
   }
   console.log(`[upscale-jobs] design #${designId} digital files: master ${size.width}×${size.height}, A3 crop ${crop.width}×${crop.height} (${stored.key}) on listings ${rows.map((row) => row.id).join(",")}`);
-  return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id) };
+  return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id), posters: posters.map((row) => row.id) };
 }
 
 /** Clears needs_redesign once the delivered master meets the flagged target. */

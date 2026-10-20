@@ -25,6 +25,22 @@ async function freshDb() {
 }
 
 describe("single-pass redesign", () => {
+  it("caps redesign generations per day even when they cost CHF 0", async () => {
+    const db = await freshDb();
+    png.url = `data:image/png;base64,${(await sharp({ create: { width: 1024, height: 1280, channels: 3, background: "#456" } }).png().toBuffer()).toString("base64")}`;
+    const [shop] = await db.select().from(schema.shops).limit(1);
+    for (let i = 0; i < 5; i++) await db.insert(schema.costs).values({ shopId: shop!.id, kind: "ai_image", amountChf: 0, note: `redesign #${i} (cloudflare)` });
+    const flag = { reason: "x", sourcePx: { width: 1024, height: 1024 }, target: { minW: 4016, minH: 5057, targetW: 4016, targetH: 5057 }, presets: ["tshirt"], scale: 4.94, at: "now" };
+    const [d] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "own original prompt", provider: "cloudflare", imageUrl: "https://e/old.png", needsRedesign: flag }).returning();
+    const { regenerateFlaggedDesign } = await import("@/lib/redesign");
+    await expect(regenerateFlaggedDesign(db, d.id, () => {})).rejects.toThrow(/redesign cap reached: 5\/5/);
+  });
+
+  it("mugs do not shape the shared print target", async () => {
+    const { designPresets } = await import("@/lib/upscale-jobs");
+    expect(designPresets(["printify:mug", "printify:posterA3"], null)).toEqual(["posterA3"]);
+  });
+
   it("A3 crop of the 4096×5120 master is 3620×5120", () => {
     expect(a3CropSize({ width: 4096, height: 5120 })).toEqual({ width: 3620, height: 5120 });
   });
@@ -45,6 +61,10 @@ describe("single-pass redesign", () => {
     const { regenerateFlaggedDesign } = await import("@/lib/redesign");
     const result = await regenerateFlaggedDesign(db, d.id, () => {});
     expect([result.width, result.height]).toEqual([1024, 1280]);
+    // POD listings go back to review with stale mockups.
+    const [pod] = await db.select().from(schema.listings);
+    expect(pod!.status).toBe("quality_failed");
+    expect(pod!.validation.map((issue) => issue.code)).toContain("mockups_stale");
     const jobs = await pendingUpscaleJobs(db, 5);
     expect(jobs.map((job) => job.designId)).toEqual([d.id]);
     expect(jobs[0]!.target).toMatchObject({ targetW: 4096, targetH: 5120 });
