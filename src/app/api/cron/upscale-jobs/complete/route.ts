@@ -1,5 +1,6 @@
 import sharp from "sharp";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
+import { primeArtworkBytes } from "@/lib/artwork-source";
 import { getDb } from "@/db";
 import { upscaleDesigns } from "@/db/upscale-designs";
 import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
@@ -67,14 +68,15 @@ export async function POST(req: Request) {
   }
   // Full edge check on every upload. Bright blank bands are trimmed (then the size floor is re-checked);
   // dark/flat bands are never cut — they only mark the design for Design review.
-  const { flatEdgeBands, trimBlankEdges } = await import("@/lib/edge-check");
-  const trim = await trimBlankEdges(bytes, { width: target.minW, height: target.minH });
+  const { analysisRaw, flatEdgeBands, trimBlankEdges } = await import("@/lib/edge-check");
+  const raw = await analysisRaw(bytes);
+  const trim = await trimBlankEdges(bytes, { width: target.minW, height: target.minH }, raw);
   const b = trim.bands;
   if (!trim.ok) {
     console.log(`[upscale-jobs] design #${designId} edge check: REJECT ${trim.reason}`);
     return reject({ error: trim.reason, bands: b }, 422);
   }
-  const flat = await flatEdgeBands(trim.bytes);
+  const flat = await flatEdgeBands(trim.bytes, trim.bytes === bytes ? raw : undefined);
   step("edge-check");
   console.log(`[upscale-jobs] design #${designId} edge check: bright top ${b.top} bottom ${b.bottom} left ${b.left} right ${b.right}px${b.blank ? ` → trimmed to ${b.trimmed.width}×${b.trimmed.height}` : " (clean)"}; dark/flat ${flat.review ? `top ${flat.top} bottom ${flat.bottom} left ${flat.left} right ${flat.right}px → Design review` : "none"}`);
   let finalBytes = bytes;
@@ -90,13 +92,28 @@ export async function POST(req: Request) {
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
   const finalSha = b.blank ? createHash("sha256").update(finalBytes).digest("hex") : sha256;
   const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: size };
-  const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
-  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${size.width}×${size.height} stored ${stored.key} (${finalBytes.length} bytes, sha256 ${finalSha}, measured server-side)`);
-  await db.update(designs).set({ upscaleFailure: null, ...(flat.review ? { designReview: { status: "pending" as const, note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } } : {}) }).where(eq(designs.id, designId));
-  step("stored+gates");
-  const digital = await attachA3Crop(db, designId, finalBytes, stored.url, size);
-  step("a3+print-files");
-  const cleared = await clearRedesignFlag(db, designId, size);
+  primeArtworkBytes(stored.url, finalBytes);
+  const storedKey = stored.key, storedUrl = stored.url;
+  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${size.width}×${size.height} stored ${storedKey} (${finalBytes.length} bytes, sha256 ${finalSha}, measured server-side)`);
+  step("stored");
+  // Copy/quality gates, A3 crop + per-product print files and the review flag run after the response
+  // (they read the primed bytes, not S3) so the worker gets its 200 well under the timeout.
+  const postStore = async () => {
+    try {
+      await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
+      step("gates");
+      await db.update(designs).set({ upscaleFailure: null, ...(flat.review ? { designReview: { status: "pending" as const, note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } } : {}) }).where(eq(designs.id, designId));
+      await attachA3Crop(db, designId, finalBytes, storedUrl, size);
+      step("a3+print-files");
+      await clearRedesignFlag(db, designId, size);
+      step("done");
+    } catch (error) {
+      console.error(`[upscale-jobs] design #${designId} post-store step failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`);
+    }
+  };
+  // Outside a Next request scope (tests, scripts) after() throws; run inline then.
+  let deferred = true;
+  try { after(postStore); } catch { deferred = false; await postStore(); }
   const edge = { bright: { top: b.top, bottom: b.bottom, left: b.left, right: b.right, trimmed: b.blank }, flat };
-  return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, digital, redesignCleared: cleared, report });
+  return NextResponse.json({ designId, key: storedKey, url: storedUrl, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, postStore: deferred ? "running" : "done" });
 }

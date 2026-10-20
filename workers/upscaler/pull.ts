@@ -69,7 +69,11 @@ export async function runOnce(limit = 3, saveTo?: string) {
       }
       const bytes = decodeDataUrl(result.url)?.bytes;
       if (!bytes) throw new Error("upscale output was not a data URL");
-      png = bytes;
+      // Light despeckle: 3px median on flat sky-like blocks only, before the file is cached/stored.
+      const { despeckleFlatRegions } = await import("@/lib/despeckle");
+      const clean = await despeckleFlatRegions(bytes);
+      console.log(`[upscaler-pull] design #${job.designId} despeckle: median 3px on ${clean.flatBlocks}/${clean.totalBlocks} flat blocks`);
+      png = clean.bytes;
       meta = { attempts: 0, sourcePx: result.sourcePx, outputPx: result.outputPx };
       fs.writeFileSync(pngPath, png);
       fs.writeFileSync(metaPath, JSON.stringify(meta));

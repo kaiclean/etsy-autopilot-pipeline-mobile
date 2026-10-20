@@ -4,17 +4,15 @@ import sharp from "sharp";
  * Blank-edge check: counts rows/columns from each edge that are near-uniform (std < 6 per channel)
  * and bright (mean > 235) — e.g. a white band the model left at the top. Returns band sizes and the trimmed box.
  */
-const ANALYSIS_MAX = 1024;
 type Raw = { data: Buffer; info: { width: number; height: number; channels: number }; full: { width: number; height: number } };
 
-/** One decode, downscaled to ≤1024 px wide for analysis (a 4096×5120 master is ~20× cheaper); bands are scaled back up. */
-async function analysisRaw(bytes: Buffer): Promise<Raw> {
-  const img = sharp(bytes, { limitInputPixels: 128_000_000 });
-  const meta = await img.metadata();
-  const full = { width: meta.width ?? 0, height: meta.height ?? 0 };
-  const pipeline = full.width > ANALYSIS_MAX ? img.resize({ width: ANALYSIS_MAX, kernel: "nearest" }) : img;
-  const { data, info } = await pipeline.removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  return { data, info, full };
+/**
+ * One full-resolution decode shared by every check (exact: no band can be missed by sampling).
+ * A 4096×5120 master takes ~1 s on the box.
+ */
+export async function analysisRaw(bytes: Buffer): Promise<Raw> {
+  const { data, info } = await sharp(bytes, { limitInputPixels: 128_000_000 }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { data, info, full: { width: info.width, height: info.height } };
 }
 
 export async function blankEdgeBands(bytes: Buffer, opts: { maxStd?: number; minMean?: number } = {}, pre?: Raw) {
@@ -37,17 +35,16 @@ export async function blankEdgeBands(bytes: Buffer, opts: { maxStd?: number; min
   let bottom = 0; while (bottom < height - top && row(height - 1 - bottom)) bottom++;
   let left = 0; while (left < width && col(left)) left++;
   let right = 0; while (right < width - left && col(width - 1 - right)) right++;
-  // Scale back to full size; round bands up so a trim removes the whole band.
-  const sx = full.width / width, sy = full.height / height;
-  const up = (v: number, k: number) => (v ? Math.min(Math.ceil(v * k), Math.round(k * (k === sx ? width : height))) : 0);
-  const T = up(top, sy), B = up(bottom, sy), L = up(left, sx), R = up(right, sx);
+  // Full resolution: bands are exact pixel counts (top/bottom bounded by height, left/right by width).
+  void full;
+  const T = Math.min(top, height), B = Math.min(bottom, height - T), L = Math.min(left, width), R = Math.min(right, width - L);
   return { width: full.width, height: full.height, top: T, bottom: B, left: L, right: R, blank: T + B + L + R > 0,
     trimmed: { left: L, top: T, width: Math.max(0, full.width - L - R), height: Math.max(0, full.height - T - B) } };
 }
 
 /** Trim blank bands, then re-check the size floor. Returns the trimmed PNG, or a rejection reason. */
-export async function trimBlankEdges(bytes: Buffer, floor: { width: number; height: number }) {
-  const bands = await blankEdgeBands(bytes);
+export async function trimBlankEdges(bytes: Buffer, floor: { width: number; height: number }, pre?: Raw) {
+  const bands = await blankEdgeBands(bytes, {}, pre);
   if (!bands.blank) return { ok: true as const, bytes, bands };
   const t = bands.trimmed;
   if (t.width < floor.width || t.height < floor.height) {
