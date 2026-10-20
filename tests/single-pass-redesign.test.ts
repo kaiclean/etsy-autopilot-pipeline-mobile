@@ -29,11 +29,12 @@ describe("single-pass redesign", () => {
     const db = await freshDb();
     png.url = `data:image/png;base64,${(await sharp({ create: { width: 1024, height: 1280, channels: 3, background: "#456" } }).png().toBuffer()).toString("base64")}`;
     const [shop] = await db.select().from(schema.shops).limit(1);
-    for (let i = 0; i < 5; i++) await db.insert(schema.costs).values({ shopId: shop!.id, kind: "ai_image", amountChf: 0, note: `redesign #${i} (cloudflare)` });
+    expect(shop).toBeTruthy();
+    await db.insert(schema.imageQuota).values({ key: `redesign:${new Date().toISOString().slice(0, 10)}`, used: 5 });
     const flag = { reason: "x", sourcePx: { width: 1024, height: 1024 }, target: { minW: 4016, minH: 5057, targetW: 4016, targetH: 5057 }, presets: ["tshirt"], scale: 4.94, at: "now" };
     const [d] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "own original prompt", provider: "cloudflare", imageUrl: "https://e/old.png", needsRedesign: flag }).returning();
     const { regenerateFlaggedDesign } = await import("@/lib/redesign");
-    await expect(regenerateFlaggedDesign(db, d.id, () => {})).rejects.toThrow(/redesign cap reached: 5\/5/);
+    await expect(regenerateFlaggedDesign(db, d.id, () => {})).rejects.toThrow(/redesign cap 5\/day reached/);
   });
 
   it("mugs do not shape the shared print target", async () => {

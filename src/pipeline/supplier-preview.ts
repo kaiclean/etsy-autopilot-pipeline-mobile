@@ -91,6 +91,10 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
     if (validateSupplierApproval(listing).issues.some((issue) => issue.code === "missing_provider_timings")) {
       throw new Error("Verified provider timings are required before creating a supplier product");
     }
+    const held = listing.validation.find((issue) => issue.code === "print_file_held");
+    if (held) throw new Error(held.message);
+    const stale = listing.validation.some((issue) => issue.code === "mockups_stale");
+    if (stale && !listing.deliveryUrl) throw new Error("Re-rendered artwork is still upscaling; no print file yet for new mockups");
     const preset = podPresetFromProvider(listing.podProvider);
     if (!preset || (listing.supplier && listing.supplier !== "printify")) throw new Error("A Printify product preset is required");
     let adapter = await getPrintifyAdapter({ db, intent: "write" });
@@ -102,8 +106,9 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
       if (adapter.mode !== "live") throw new Error(WAITING_FOR_PRINTIFY_MOCKUPS);
     } else {
       if (adapter.mode === "live" && productId?.startsWith("dry-")) productId = null;
+      // The listing's own print file (A3 crop, master, or padded apparel file) wins over the design master.
       let artwork = listing.deliveryUrl;
-      if (listing.designId) {
+      if (listing.designId && !artwork) {
         const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, listing.designId));
         artwork = design?.imageUrl ?? artwork;
       }
@@ -136,7 +141,8 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
       .map((view) => ({ ...view, source: "illustrative" as const }));
     const gallery = [...supplierViews, ...illustrative].slice(0, 10);
     const ready = supplierMockupCount({ gallery, publishMode: adapter.mode, isDemo: listing.isDemo }) >= MIN_SUPPLIER_MOCKUPS;
-    const validation = listing.validation.filter((issue) => issue.code !== waiting.code && issue.code !== "supplier_preview_error");
+    // Fresh Printify mockups of the current print file clear the stale-mockup flag.
+    const validation = listing.validation.filter((issue) => issue.code !== waiting.code && issue.code !== "supplier_preview_error" && !(ready && issue.code === "mockups_stale"));
     const [saved] = await db.update(listings).set({
       gallery, ...(supplierViews[0] ? { imageUrl: supplierViews[0].url } : {}),
       publishMode: adapter.mode,

@@ -1,3 +1,4 @@
+import { reserveImage } from "@/lib/image-quota";
 import { themeStyles } from "@/lib/themes";
 import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
@@ -267,6 +268,12 @@ export const runDesign: StageFn = async (ctx) => {
             isDemo: ctx.demo,
           });
           log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons (${estimatedNeuronsToday}/10,000 today)`);
+        }
+        const slot = await reserveImage(db, { provider: provider.name });
+        if (!slot.ok) {
+          log(`${slot.reason}; stopping before another image request.`, "warn");
+          budgetStopped = true;
+          break;
         }
         const img = await provider.generate({
           prompt,

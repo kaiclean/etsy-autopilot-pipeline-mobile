@@ -250,6 +250,10 @@ export const runPublish: StageFn = async (ctx) => {
         log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {
         // A POD listing with its own print file (e.g. the A3 crop for posters) uses it; otherwise the design master.
+        if ((l.validation ?? []).some((issue) => issue.code === "print_file_held" || issue.code === "mockups_stale")) {
+          log(`#${l.id} skipped: print file held or mockups stale`);
+          continue;
+        }
         let artwork = l.deliveryUrl || l.imageUrl;
         if (l.designId && !l.deliveryUrl) {
           const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));

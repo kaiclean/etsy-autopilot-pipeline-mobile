@@ -3,6 +3,7 @@ import type { DB } from "@/db";
 import { costs, designs, listings } from "@/db/schema";
 import { getImageProvider } from "@/adapters/image";
 import { getSetting } from "@/lib/settings";
+import { reserveImage } from "@/lib/image-quota";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { PRINT_RENDER, aiSpend } from "@/pipeline/design";
 
@@ -11,7 +12,7 @@ import { PRINT_RENDER, aiSpend } from "@/pipeline/design";
  * Stores the new clean source and leaves upscaleMethod null so the box worker runs one 4× Real-ESRGAN pass;
  * the flag is cleared by the upscale-complete route once the result meets the target.
  */
-export const MAX_REDESIGNS_PER_DAY = 5;
+export { MAX_REDESIGNS_PER_DAY } from "@/lib/image-quota";
 
 export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: string) => void = console.log) {
   const [design] = await db.select().from(designs).where(eq(designs.id, id));
@@ -22,10 +23,9 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   const spent = await aiSpend(db, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
   const provider = getImageProvider();
   if (spent + provider.estimatedCostChf > automation.dailyAiCapChf) throw new Error(`daily AI cap CHF ${automation.dailyAiCapChf} reached (spent ${spent.toFixed(2)})`);
-  // Count generations, not CHF: Cloudflare costs 0, so a CHF cap alone would never stop it.
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const [{ n }] = await db.select({ n: count() }).from(costs).where(and(eq(costs.kind, "ai_image"), like(costs.note, "redesign #%"), gte(costs.createdAt, dayStart)));
-  if (Number(n) >= MAX_REDESIGNS_PER_DAY) throw new Error(`redesign cap reached: ${n}/${MAX_REDESIGNS_PER_DAY} today`);
+  // Count generations, not CHF (Cloudflare costs 0). Atomic, shared with daily runs.
+  const slot = await reserveImage(db, { provider: provider.name, redesign: true });
+  if (!slot.ok) throw new Error(slot.reason);
   const img = await provider.generate({ prompt: design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
   await db.insert(costs).values({ shopId: design.shopId, kind: "ai_image", amountChf: img.costChf, note: `redesign #${id} (${img.provider})`, isDemo: false });
   const measured = await preparePrintFile(img.url);

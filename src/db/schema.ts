@@ -630,3 +630,10 @@ export const brainTasks = pgTable("brain_tasks", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Per-day generation counters, e.g. "cloudflare:2026-10-20" and "redesign:2026-10-20". Incremented by one row-locked upsert. */
+export const imageQuota = pgTable("image_quota", {
+  key: text("key").primaryKey(),
+  used: integer("used").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

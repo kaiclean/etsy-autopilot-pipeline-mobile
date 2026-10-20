@@ -57,6 +57,20 @@ export function atLeast(target: PrintTarget, floor: PrintTarget): PrintTarget {
 
 async function readPrintifyTarget(preset: PodPreset): Promise<PrintTarget> {
   const fallback = PRINT_TARGETS[preset];
+  const area = await readPrintifyArea(preset);
+  return area ? atLeast(targetFromPlaceholder(area.width, area.height), fallback) : fallback;
+}
+
+const areaCache = new Map<PodPreset, Promise<PixelSize | null>>();
+/** Raw live Printify print area (front placeholder), no floors applied — used for aspect matching. */
+export function getPrintArea(preset: PodPreset): Promise<PixelSize | null> {
+  let area = areaCache.get(preset);
+  if (!area) { area = readPrintifyArea(preset); areaCache.set(preset, area); }
+  return area;
+}
+
+async function readPrintifyArea(preset: PodPreset): Promise<PixelSize | null> {
+  const fallback = null;
   const { token } = config.printify;
   if (!token) return fallback;
   let pin: ReturnType<typeof resolvePrintifyPin>;
@@ -91,7 +105,7 @@ async function readPrintifyTarget(preset: PodPreset): Promise<PrintTarget> {
     if (!Array.isArray(placeholders)) return fallback;
     const preferred = placeholders.find((row) => row?.position === "front") ?? placeholders[0];
     if (!validPixels(preferred)) return fallback;
-    return atLeast(targetFromPlaceholder(preferred.width, preferred.height), fallback);
+    return { width: preferred.width, height: preferred.height };
   } catch {
     return fallback;
   }
@@ -115,6 +129,7 @@ export function hasMinimumPixels(width: number | null | undefined, height: numbe
 }
 
 export function clearPrintTargetCache() {
+  areaCache.clear();
   targetCache.clear();
 }
 
