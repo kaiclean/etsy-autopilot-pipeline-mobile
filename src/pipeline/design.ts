@@ -294,7 +294,8 @@ export const runDesign: StageFn = async (ctx) => {
         let upscaled: UpscaledArtwork | null = null;
         // Print (POD) files are Real-ESRGAN only. In pull mode the box worker does it; the item stays held meanwhile.
         const podPrint = targetKey !== "digitalLarge";
-        if (!isPlaceholderUrl(img.url) && !(podPrint && config.upscale.pull)) {
+        // Pull mode: every upscale (POD and large digital) is a box job; the app never loads Real-ESRGAN or uses Lanczos.
+        if (!isPlaceholderUrl(img.url) && !config.upscale.pull) {
           upscaled = await upscaleArtwork(
             img.url,
             target,

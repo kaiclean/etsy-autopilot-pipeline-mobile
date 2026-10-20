@@ -21,7 +21,10 @@ afterEach(() => {
 });
 
 describe("Real-ESRGAN model from URL", () => {
-  it("defaults to the pinned x4plus model and can be switched off", () => {
+  it("the app never loads the model by default; only the box worker defaults to the pinned URL; off disables", () => {
+    vi.stubEnv("UPSCALER_ROLE", "");
+    expect(config.upscale.modelUrl).toBeUndefined();
+    vi.stubEnv("UPSCALER_ROLE", "worker");
     expect(config.upscale.modelUrl).toBe(DEFAULT_REALESRGAN_MODEL_URL);
     expect(config.upscale.modelSha256).toBe(DEFAULT_REALESRGAN_MODEL_SHA256);
     vi.stubEnv("REALESRGAN_MODEL_URL", "off");
