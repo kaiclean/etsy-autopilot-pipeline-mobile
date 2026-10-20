@@ -249,8 +249,9 @@ export const runPublish: StageFn = async (ctx) => {
         etsyListingId = listingId;
         log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
       } else {
+        // A POD listing with its own print file (e.g. the A3 crop for posters) uses it; otherwise the design master.
         let artwork = l.deliveryUrl || l.imageUrl;
-        if (l.designId) {
+        if (l.designId && !l.deliveryUrl) {
           const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));
           artwork = printArtworkUrl(artwork, design?.imageUrl);
         }
