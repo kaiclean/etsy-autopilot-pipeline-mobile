@@ -154,6 +154,20 @@ export async function withStoredUrl<T extends { url: string }>(image: T): Promis
   return url === image.url ? image : { ...image, url };
 }
 
+/** Presigned S3 PUT for a large worker upload (bypasses the app's request-body limit). Null when not on S3. */
+export async function presignImageUpload(contentType = "image/png"): Promise<{ key: string; putUrl: string } | null> {
+  if (storageBackend() !== "s3") return null;
+  const key = newObjectKey(contentType);
+  const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+  const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+  const putUrl = await getSignedUrl(await s3Client(), new PutObjectCommand({ Bucket: config.storage.bucket, Key: key, ContentType: contentType }), { expiresIn: 15 * 60 });
+  return { key, putUrl };
+}
+
+export async function storedUrlForKey(key: string) {
+  return urlForStoredKey(key);
+}
+
 export async function readStoredObject(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   if (!MEDIA_KEY.test(key) || storageBackend() !== "s3") return null;
   const { GetObjectCommand } = await import("@aws-sdk/client-s3");

@@ -226,6 +226,7 @@ export const listings = pgTable("listings", {
   imageUrl: text("image_url").notNull(),
   /** Full-resolution digital file. The gallery `imageUrl` must be a different preview. */
   deliveryUrl: text("delivery_url"),
+  printFit: text("print_fit").$type<"fill" | "fitted">(),
   fileManifest: jsonb("file_manifest").$type<FileManifest>(),
   deliveryPack: jsonb("delivery_pack").$type<ArtworkPackManifest>(),
   etsyDeliveryFingerprint: text("etsy_delivery_fingerprint"),

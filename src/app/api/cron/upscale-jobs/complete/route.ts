@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { upscaleDesigns } from "@/db/upscale-designs";
 import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
-import { uploadImageBytes } from "@/lib/object-storage";
+import { readStoredObject, storedUrlForKey, uploadImageBytes, MEDIA_KEY } from "@/lib/object-storage";
+import { createHash } from "node:crypto";
 import { attachA3Crop, authorizedUpscaleJob, clearRedesignFlag, requiredUpscaleTarget } from "@/lib/upscale-jobs";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,21 @@ export async function POST(req: Request) {
   if (!Number.isInteger(designId) || designId < 1 || method !== "realesrgan" || !Number.isInteger(srcW) || !Number.isInteger(srcH)) {
     return NextResponse.json({ error: "designId, method=realesrgan, srcW and srcH are required" }, { status: 400 });
   }
-  const bytes = Buffer.from(await req.arrayBuffer());
+  // Preferred: the worker PUT the PNG to S3 via a presigned URL and sends only ?key=. The server downloads it and
+  // measures pixels + sha256 itself; worker-reported sizes are never trusted.
+  const key = params.get("key");
+  let bytes: Buffer;
+  let presetStored: { url: string; key: string } | null = null;
+  if (key) {
+    if (!MEDIA_KEY.test(key)) return NextResponse.json({ error: "invalid key" }, { status: 400 });
+    const object = await readStoredObject(key);
+    if (!object) return NextResponse.json({ error: "uploaded object not found" }, { status: 404 });
+    bytes = Buffer.from(object.bytes);
+    presetStored = { key, url: await storedUrlForKey(key) };
+  } else {
+    bytes = Buffer.from(await req.arrayBuffer());
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   if (!bytes.length || bytes.length > MAX_ARTWORK_BYTES) return NextResponse.json({ error: "PNG body missing or too large" }, { status: 413 });
   const meta = await sharp(bytes, { limitInputPixels: 128_000_000 }).metadata().catch(() => null);
   if (!meta || meta.format !== "png" || !meta.width || !meta.height) return NextResponse.json({ error: "body must be a PNG" }, { status: 415 });
@@ -33,12 +48,12 @@ export async function POST(req: Request) {
   if (meta.width < target.minW || meta.height < target.minH) {
     return NextResponse.json({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, { status: 422 });
   }
-  const stored = await uploadImageBytes(bytes, "image/png");
+  const stored = presetStored ?? await uploadImageBytes(bytes, "image/png");
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
   const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: { width: meta.width, height: meta.height } };
   const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
-  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${meta.width}×${meta.height} stored ${stored.key}`);
+  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${meta.width}×${meta.height} stored ${stored.key} (${bytes.length} bytes, sha256 ${sha256}, measured server-side)`);
   const digital = await attachA3Crop(db, designId, bytes, stored.url, { width: meta.width, height: meta.height });
   const cleared = await clearRedesignFlag(db, designId, { width: meta.width, height: meta.height });
-  return NextResponse.json({ designId, key: stored.key, outputPx: processed.outputPx, digital, redesignCleared: cleared, report });
+  return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: bytes.length, sha256, outputPx: processed.outputPx, digital, redesignCleared: cleared, report });
 }

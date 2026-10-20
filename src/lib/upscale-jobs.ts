@@ -192,6 +192,7 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
     const kept = (current?.validation ?? []).filter((issue) => issue.code !== "print_file_held");
     await db.update(listings).set({
       deliveryUrl: url,
+      printFit: choice.file === "padded" ? "fitted" as const : url ? "fill" as const : null,
       ...(url ? { validation: kept } : {
         status: "quality_failed" as const,
         validation: [...kept, { field: "image" as const, severity: "error" as const, code: "print_file_held", message: `Held: ${choice.reason}` }],
