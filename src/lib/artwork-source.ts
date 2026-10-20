@@ -31,8 +31,18 @@ export function ownMediaKey(url: string): string | null {
  * Raw bytes of generated artwork. Reads `data:` URLs and this app's own S3 objects directly,
  * so neither the server nor Printify has to fetch a localhost or inline URL. Other URLs must be public https.
  */
+/** Short-lived in-process cache so one request that just stored a file does not re-read it from S3 (≈10 s per 25 MB). */
+const primed = new Map<string, { bytes: Buffer; until: number }>();
+export function primeArtworkBytes(url: string, bytes: Buffer, ttlMs = 10 * 60_000) {
+  const now = Date.now();
+  for (const [key, row] of primed) if (row.until < now) primed.delete(key);
+  primed.set(url, { bytes, until: now + ttlMs });
+}
+
 export async function loadArtworkBytes(src: string, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
   if (!src) return null;
+  const hit = primed.get(src);
+  if (hit && hit.until >= Date.now()) return hit.bytes;
   if (src.startsWith("data:")) {
     // Bound the encoded input before the data URL parser allocates its decoded buffer.
     if (src.length > MAX_BYTES * 4 / 3 + 1024) return null;

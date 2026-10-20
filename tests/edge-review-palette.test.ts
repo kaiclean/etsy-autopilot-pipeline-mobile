@@ -94,3 +94,40 @@ describe("dark edges are never trimmed", () => {
     expect(flat.top).toBe(20);
   });
 });
+
+describe("edge check is exact at full resolution", () => {
+  it("finds a 1px and a 3px bright band on a 4096-wide master", async () => {
+    const w = 4096, h = 512;
+    const art = await noise(w - 3, h - 1);
+    const img = await sharp({ create: { width: w, height: h, channels: 3, background: "#ffffff" } }).composite([{ input: art, left: 3, top: 1 }]).png().toBuffer();
+    expect(await blankEdgeBands(img)).toMatchObject({ top: 1, left: 3, bottom: 0, right: 0 });
+  });
+  it("top/bottom bands are bounded by height, left/right by width (square and tall images)", async () => {
+    const white = await sharp({ create: { width: 64, height: 200, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    const b = await blankEdgeBands(white);
+    expect(b.top + b.bottom).toBeLessThanOrEqual(200);
+    expect(b.left + b.right).toBeLessThanOrEqual(64);
+    expect(b.trimmed.width).toBeGreaterThanOrEqual(0);
+    expect(b.trimmed.height).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("despeckle on flat regions only", () => {
+  it("removes isolated specks in a flat sky and leaves textured blocks unchanged", async () => {
+    const { despeckleFlatRegions } = await import("@/lib/despeckle");
+    const w = 128, h = 128;
+    const raw = Buffer.alloc(w * h * 3);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 3;
+      const v = y < 64 ? 200 : (x * 37 + y * 91) % 256; // flat sky over textured ground
+      raw[i] = v; raw[i + 1] = v; raw[i + 2] = v;
+    }
+    for (const [x, y] of [[10, 10], [40, 20], [90, 50]]) { const i = (y! * w + x!) * 3; raw[i] = raw[i + 1] = raw[i + 2] = 20; }
+    const png = await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer();
+    const out = await despeckleFlatRegions(png, { block: 32 });
+    expect(out.flatBlocks).toBe(8);
+    const { data } = await sharp(out.bytes).raw().toBuffer({ resolveWithObject: true });
+    for (const [x, y] of [[10, 10], [40, 20], [90, 50]]) expect(data[(y! * w + x!) * 3]).toBe(200);
+    for (let y = 64; y < h; y++) for (let x = 0; x < w; x++) expect(data[(y * w + x) * 3]).toBe(raw[(y * w + x) * 3]);
+  });
+});
