@@ -17,6 +17,8 @@ import { listingProvenance } from "@/lib/provenance";
 import { chf } from "@/lib/format";
 import { NICHE_LIST } from "@/lib/niches";
 import { cn } from "@/lib/utils";
+import { ETSY_LIMITS } from "@/lib/listing-validator";
+import { currentIssues, focusAfter, queueAction, QUEUE_SHORTCUTS, step } from "@/lib/queue-keys";
 import { ListingEditor } from "./listing-editor";
 import { SupplierGallery } from "./supplier-gallery";
 
@@ -42,9 +44,21 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
 
   const remaining = listings.filter((l) => !hidden.has(l.id));
   const visible = useMemo(() => filterQueue(remaining, { query, niche, status, triage }), [remaining, query, niche, status, triage]);
-  const top = visible[0];
+  const [focus, setFocus] = useState<{ id: number; index: number } | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const ids = visible.map((l) => l.id);
+  const currentId = focusAfter(ids, focus?.id ?? null, focus?.index ?? 0);
+  const top = visible.find((l) => l.id === currentId) ?? visible[0];
+  const topIndex = top ? ids.indexOf(top.id) : 0;
+  const fullDesc = expandedId != null && expandedId === top?.id;
+  const setFullDesc = (fn: (v: boolean) => boolean) => setExpandedId(fn(fullDesc) ? top?.id ?? null : null);
+  const setFocusedId = (id: number | null) => setFocus(id == null ? null : { id, index: ids.indexOf(id) });
+  useEffect(() => { if (top) document.getElementById(`q-row-${top.id}`)?.scrollIntoView({ block: "nearest" }); }, [top?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedVisible = visible.filter((l) => selected.has(l.id));
-  const hasErrors = (l: Listing) => listingHasErrors(l.validation.filter((issue) =>
+  const issueMap = useMemo(() => new Map(listings.map((l) => [l.id, currentIssues(l)])), [listings]);
+  const issuesOf = (l: Listing) => issueMap.get(l.id) ?? l.validation;
+  const hasErrors = (l: Listing) => listingHasErrors(issuesOf(l).filter((issue) =>
     issue.code !== "supplier_mockups_pending" && issue.code !== "missing_provider_timings"));
 
   const hide = useCallback((id: number, on: boolean) => {
@@ -69,7 +83,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
     async (l: Listing, d: Decision) => {
       if (d === "approved" && hasErrors(l)) {
         vibrate(30);
-        toast.warning("Fix validation issues before approving", { description: l.validation.find((i) => i.severity === "error")?.message });
+        toast.warning("Fix validation issues before approving", { description: issuesOf(l).find((i) => i.severity === "error")?.message });
         setEditing(l);
         return;
       }
@@ -138,34 +152,29 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (editing || (e.target as HTMLElement)?.closest("input,textarea,select")) return;
-      if (e.key === "/") {
-        e.preventDefault();
-        searchRef.current?.focus();
-        return;
-      }
-      if (e.key === "X" || e.key === "x") {
-        if (top) toggleSelected(top.id);
-        return;
-      }
-      if (e.shiftKey && (e.key === "A" || e.key === "a")) {
-        e.preventDefault();
-        void bulk("approved");
-        return;
-      }
-      if (e.shiftKey && (e.key === "R" || e.key === "r")) {
-        e.preventDefault();
-        void bulk("rejected");
-        return;
+      if (editing || (e.target as HTMLElement)?.closest("input,textarea,select,[contenteditable=true]")) return;
+      const act = queueAction(e);
+      if (!act) return;
+      e.preventDefault();
+      switch (act.type) {
+        case "search": searchRef.current?.focus(); return;
+        case "help": setShowHelp((v) => !v); return;
+        case "clear": if (showHelp) setShowHelp(false); else setSelected(new Set()); return;
+        case "bulkApprove": void bulk("approved"); return;
+        case "bulkReject": void bulk("rejected"); return;
+        case "selectReady": setSelected(new Set(visible.filter((l) => !hasErrors(l)).map((l) => l.id))); return;
+        case "selectAll": setSelected(new Set(ids)); return;
+        case "next": case "prev": setFocusedId(step(ids, top?.id ?? null, act.type === "next" ? 1 : -1)); return;
       }
       if (!top) return;
-      if (e.key === "ArrowRight") decide(top, "approved");
-      if (e.key === "ArrowLeft") decide(top, "rejected");
-      if (e.key.toLowerCase() === "e") setEditing(top);
+      if (act.type === "approve") decide(top, "approved");
+      if (act.type === "reject") decide(top, "rejected");
+      if (act.type === "edit") setEditing(top);
+      if (act.type === "toggle") toggleSelected(top.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [top, editing, decide, bulk, toggleSelected]);
+  }, [top, ids, visible, editing, showHelp, decide, bulk, toggleSelected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (remaining.length === 0) {
     return (
@@ -214,7 +223,8 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   const approveOpacity = Math.min(1, Math.max(0, x / THRESHOLD));
   const rejectOpacity = Math.min(1, Math.max(0, -x / THRESHOLD));
   const next = visible[1];
-  const errors = top ? top.validation.filter((i) => i.severity === "error" && i.code !== "supplier_mockups_pending") : [];
+  const errors = top ? issuesOf(top).filter((i) => i.severity === "error" && i.code !== "supplier_mockups_pending") : [];
+  const warnings = top ? issuesOf(top).filter((i) => i.severity === "warning" || i.code === "supplier_mockups_pending") : [];
 
   const clearFilters = () => {
     setQuery("");
@@ -258,6 +268,9 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
           <Button type="button" variant="secondary" className="h-9 rounded-xl px-3 text-xs" onClick={() => setSelected(new Set(visible.map((listing) => listing.id)))}>
             Select shown
           </Button>
+          <Button type="button" variant="secondary" className="h-9 rounded-xl px-3 text-xs" onClick={() => setSelected(new Set(visible.filter((l) => !hasErrors(l)).map((l) => l.id)))}>
+            Select ready · {visible.filter((l) => !hasErrors(l)).length}
+          </Button>
           <Button type="button" variant="ghost" className="h-9 rounded-xl px-3 text-xs" onClick={() => setSelected(new Set())} disabled={selectedVisible.length === 0}>
             Clear
           </Button>
@@ -270,10 +283,20 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
         </div>
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           Select rows for bulk approve or reject. Invalid listings stay in the queue, and each decision can be undone.
-          <span className="hidden md:inline"> Keys: ← reject · → approve · E edit · X select · Shift+A approve selected · Shift+R reject selected · / search.</span>
+          <button type="button" onClick={() => setShowHelp((v) => !v)} className="ml-1 hidden underline md:inline">Keyboard shortcuts (?)</button>
         </p>
       </div>
 
+      {showHelp && (
+        <Panel className="p-3">
+          <div className="mb-2 text-xs font-semibold">Keyboard shortcuts</div>
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+            {QUEUE_SHORTCUTS.map(([k, v]) => (
+              <div key={k} className="flex gap-2"><dt className="w-24 shrink-0 font-mono text-muted-foreground">{k}</dt><dd>{v}</dd></div>
+            ))}
+          </dl>
+        </Panel>
+      )}
       {!top ? (
         <EmptyState
           icon={Search}
@@ -335,14 +358,31 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
             </div>
             <div className="space-y-3 p-4 pt-1">
               <SupplierGallery listing={top} />
-              <h2 className="line-clamp-2 text-[15px] leading-snug font-semibold">{top.title}</h2>
-              <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4">
-                {top.tags.map((t) => (
-                  <span key={t} className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
-                    {t}
-                  </span>
-                ))}
+              <h2 className="text-[15px] leading-snug font-semibold">{top.title}</h2>
+              <div className="text-[11px] text-muted-foreground">
+                <span className={cn(top.title.length > ETSY_LIMITS.titleMax && "text-destructive")}>{top.title.length}/{ETSY_LIMITS.titleMax} chars</span>
+                {" · "}{top.title.trim().split(/\s+/).length} words · {topIndex + 1} of {visible.length}
               </div>
+              <div>
+                <div className={cn("mb-1 text-[11px] text-muted-foreground", top.tags.length !== ETSY_LIMITS.tagCount && "text-destructive")}>
+                  Tags {top.tags.length}/{ETSY_LIMITS.tagCount}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {top.tags.map((t) => (
+                    <span key={t} title={`${t.length} chars`} className={cn("rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground", t.length > ETSY_LIMITS.tagMax && "bg-destructive/15 text-destructive")}>
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {top.description && (
+                <div className="rounded-xl bg-muted/30 p-2.5 text-xs leading-relaxed whitespace-pre-line text-muted-foreground">
+                  <div className={cn(!fullDesc && "line-clamp-5")}>{top.description}</div>
+                  <button type="button" onClick={() => setFullDesc((v) => !v)} className="mt-1 text-[11px] font-medium text-foreground underline">
+                    {fullDesc ? "Show less" : "Full description"}
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2 rounded-2xl bg-muted/40 p-3">
                 <Stat label="Price" value={chf(top.priceChf)} />
                 <Stat label="Net / sale" value={chf(top.netChf)} />
@@ -357,6 +397,14 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
                     ))}
                   </ul>
                 </div>
+              )}
+              {warnings.length > 0 && (
+                <ul className="space-y-0.5 rounded-xl border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning">
+                  {warnings.map((issue) => <li key={`${issue.code}-${issue.message}`}>⚠ {issue.message}</li>)}
+                </ul>
+              )}
+              {errors.length === 0 && warnings.length === 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-success"><Check className="size-3.5" /> Passes every validator check</div>
               )}
             </div>
           </div>
@@ -397,7 +445,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
         <div className="mb-2.5 text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">In this filter · {visible.length}</div>
         <Panel className="divide-y divide-border">
           {visible.map((l) => (
-            <div key={l.id} className={cn("flex w-full items-center gap-3 p-3", l.id === top.id && "bg-muted/30")}>
+            <div key={l.id} id={`q-row-${l.id}`} className={cn("flex w-full items-center gap-3 p-3", l.id === top.id && "bg-muted/40 ring-1 ring-primary/40 ring-inset")}>
               <input
                 type="checkbox"
                 checked={selected.has(l.id)}
@@ -405,7 +453,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
                 aria-label={`Select ${l.title}`}
                 className="size-4 shrink-0 accent-primary"
               />
-              <button type="button" onClick={() => setEditing(l)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <button type="button" onClick={() => setFocusedId(l.id)} onDoubleClick={() => setEditing(l)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                 <Thumb src={l.imageUrl} alt="" className="size-12 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{l.title}</div>
@@ -413,7 +461,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
                     <NicheTag niche={l.niche} /> {chf(l.priceChf)} · net {chf(l.netChf)}
                     {hasErrors(l) && (
                       <span className="text-destructive">
-                        · {l.validation.filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" · ")}
+                        · {issuesOf(l).filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" · ")}
                       </span>
                     )}
                     {titleImageMismatch(l) && <span className="text-warning">· title/image mismatch</span>}
