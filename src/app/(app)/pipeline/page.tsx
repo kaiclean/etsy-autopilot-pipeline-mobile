@@ -5,11 +5,13 @@ import { NicheTag, PageHeader, Panel, SectionTitle } from "@/components/common";
 import { StageCard } from "@/components/pipeline/stage-card";
 import { RunPipelineButton } from "@/components/run-button";
 import { getPipelineData } from "@/lib/queries";
+import { failedUpscaleJobs } from "@/lib/upscale-failures";
 
 export const metadata = { title: "Pipeline" };
 
 export default async function PipelinePage() {
   const { stages, automation, keywords, recentDesigns } = await getPipelineData();
+  const upscaleFailed = await failedUpscaleJobs().catch(() => []);
   return (
     <div className="space-y-6">
       <PageHeader
@@ -35,6 +37,17 @@ export default async function PipelinePage() {
             </div>
           </Panel>
         </Link>
+      )}
+
+      {upscaleFailed.length > 0 && (
+        <Panel className="border-destructive/40 bg-destructive/10 p-4" data-testid="upscale-failed">
+          <div className="font-semibold text-destructive">Box upscale failed ({upscaleFailed.length})</div>
+          <ul className="mt-1 text-xs text-muted-foreground">
+            {upscaleFailed.map((row) => (
+              <li key={row.id}>Design #{row.id}: {row.failure.attempts} failed reports, last “{row.failure.lastError}” — not retried</li>
+            ))}
+          </ul>
+        </Panel>
       )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">

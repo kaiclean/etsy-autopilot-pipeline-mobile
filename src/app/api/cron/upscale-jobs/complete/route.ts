@@ -3,8 +3,11 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { upscaleDesigns } from "@/db/upscale-designs";
 import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
-import { readStoredObject, storedUrlForKey, uploadImageBytes, MEDIA_KEY } from "@/lib/object-storage";
+import { deleteStoredObject, readStoredObject, storedUrlForKey, uploadImageBytes, MEDIA_KEY } from "@/lib/object-storage";
 import { createHash } from "node:crypto";
+import { consumeUploadKey } from "@/lib/upscale-failures";
+import { designs } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { attachA3Crop, authorizedUpscaleJob, clearRedesignFlag, requiredUpscaleTarget } from "@/lib/upscale-jobs";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +34,9 @@ export async function POST(req: Request) {
   let presetStored: { url: string; key: string } | null = null;
   if (key) {
     if (!MEDIA_KEY.test(key)) return NextResponse.json({ error: "invalid key" }, { status: 400 });
+    if (!(await consumeUploadKey(await getDb(), key, designId))) {
+      return NextResponse.json({ error: `key was not issued for design #${designId} or was already used` }, { status: 403 });
+    }
     const object = await readStoredObject(key);
     if (!object) return NextResponse.json({ error: "uploaded object not found" }, { status: 404 });
     bytes = Buffer.from(object.bytes);
@@ -38,21 +44,28 @@ export async function POST(req: Request) {
   } else {
     bytes = Buffer.from(await req.arrayBuffer());
   }
+  // A rejected presigned upload is deleted from S3 so no unverified file lingers.
+  const reject = async (body: Record<string, unknown>, status: number) => {
+    if (presetStored) await deleteStoredObject(presetStored.key).catch(() => false);
+    if (presetStored) console.log(`[upscale-jobs] design #${designId} rejected upload ${presetStored.key} deleted (${status})`);
+    return NextResponse.json(body, { status });
+  };
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  if (!bytes.length || bytes.length > MAX_ARTWORK_BYTES) return NextResponse.json({ error: "PNG body missing or too large" }, { status: 413 });
+  if (!bytes.length || bytes.length > MAX_ARTWORK_BYTES) return reject({ error: "PNG body missing or too large" }, 413);
   const meta = await sharp(bytes, { limitInputPixels: 128_000_000 }).metadata().catch(() => null);
-  if (!meta || meta.format !== "png" || !meta.width || !meta.height) return NextResponse.json({ error: "body must be a PNG" }, { status: 415 });
+  if (!meta || meta.format !== "png" || !meta.width || !meta.height) return reject({ error: "body must be a PNG" }, 415);
   const db = await getDb();
   const target = await requiredUpscaleTarget(db, designId);
-  if (!target) return NextResponse.json({ error: `design #${designId} not found` }, { status: 404 });
+  if (!target) return reject({ error: `design #${designId} not found` }, 404);
   if (meta.width < target.minW || meta.height < target.minH) {
-    return NextResponse.json({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, { status: 422 });
+    return reject({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, 422);
   }
   const stored = presetStored ?? await uploadImageBytes(bytes, "image/png");
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
   const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: { width: meta.width, height: meta.height } };
   const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
   console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${meta.width}×${meta.height} stored ${stored.key} (${bytes.length} bytes, sha256 ${sha256}, measured server-side)`);
+  await db.update(designs).set({ upscaleFailure: null }).where(eq(designs.id, designId));
   const digital = await attachA3Crop(db, designId, bytes, stored.url, { width: meta.width, height: meta.height });
   const cleared = await clearRedesignFlag(db, designId, { width: meta.width, height: meta.height });
   return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: bytes.length, sha256, outputPx: processed.outputPx, digital, redesignCleared: cleared, report });

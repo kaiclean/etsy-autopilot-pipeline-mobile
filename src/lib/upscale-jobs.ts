@@ -111,6 +111,7 @@ export async function pendingUpscaleJobs(db: DB, limit = 3, needsDesign: NeedsDe
   const out: UpscaleJobRow[] = [];
   for (const { design, brief } of rows) {
     if (out.length >= limit) break;
+    if (design.upscaleFailure?.failed) continue; // 3 failed reports: shown on the dashboard, not retried
     const lanczos = design.upscaleMethod === "lanczos";
     const { key, target, presets } = await targetFor(brief, productsByDesign.get(design.id) ?? []);
     const minimum = key === "digitalLarge" ? PRINT_TARGETS.digital : target;

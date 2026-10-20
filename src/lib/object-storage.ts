@@ -164,6 +164,13 @@ export async function presignImageUpload(contentType = "image/png"): Promise<{ k
   return { key, putUrl };
 }
 
+export async function deleteStoredObject(key: string) {
+  if (!MEDIA_KEY.test(key) || storageBackend() !== "s3") return false;
+  const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+  await (await s3Client()).send(new DeleteObjectCommand({ Bucket: config.storage.bucket, Key: key }));
+  return true;
+}
+
 export async function storedUrlForKey(key: string) {
   return urlForStoredKey(key);
 }
