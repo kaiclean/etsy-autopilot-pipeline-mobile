@@ -23,7 +23,7 @@ export const TASK_STATUSES = ["todo", "doing", "done"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type Session = typeof brainSessions.$inferSelect;
 export type Task = typeof brainTasks.$inferSelect;
-export type Runner = (stage: StageName) => Promise<{ id: number; status: string; summary: string | null }>;
+export type Runner = (stage: StageName, signal: AbortSignal) => Promise<{ id: number; status: string; summary: string | null }>;
 
 export const isSessionStage = (s: unknown): s is SessionStage => SESSION_STAGES.some((x) => x.id === s);
 const ACTIVE = new Set(["queued", "running"]);
@@ -61,17 +61,32 @@ export async function executeSession(db: DB, id: number, run: Runner): Promise<S
   // Re-check the publish guard at run time: the mode may have changed since queueing.
   if (s.stage === "publish" && (await liveWritesEnabled(db))) return finish(db, id, "failed", "Blocked: publish sessions run in dry-run only");
   await db.update(brainSessions).set({ status: "running", startedAt: new Date() }).where(eq(brainSessions.id, id));
+  const controller = new AbortController();
+  const watch = setInterval(async () => {
+    try {
+      const [row] = await db.select({ cancel: brainSessions.cancelRequested }).from(brainSessions).where(eq(brainSessions.id, id));
+      if (row?.cancel) controller.abort();
+    } catch { /* keep polling */ }
+  }, CANCEL_POLL_MS);
+  const cancelled = new Promise<"cancelled">((resolve) => controller.signal.addEventListener("abort", () => resolve("cancelled"), { once: true }));
   try {
-    const result = await run(s.stage);
+    const raced = await Promise.race([run(s.stage, controller.signal), cancelled]);
+    if (raced === "cancelled") return finish(db, id, "cancelled", "Cancelled while running; the stage stopped at its next step");
+    const result = raced;
     const [now] = await db.select().from(brainSessions).where(eq(brainSessions.id, id));
     const status = now?.cancelRequested ? "cancelled" : (["success", "warning", "failed", "skipped"].includes(result.status) ? result.status : "failed");
     const summary = now?.cancelRequested ? `Cancelled. Stage result: ${result.summary ?? result.status}` : result.summary;
     await db.update(brainSessions).set({ jobRunId: result.id }).where(eq(brainSessions.id, id));
     return finish(db, id, status as Session["status"], summary);
   } catch (error) {
+    if (controller.signal.aborted) return finish(db, id, "cancelled", "Cancelled while running; the stage stopped at its next step");
     return finish(db, id, "failed", error instanceof Error ? error.message : "Session failed");
+  } finally {
+    clearInterval(watch);
   }
 }
+
+export const CANCEL_POLL_MS = 2000;
 
 async function finish(db: DB, id: number, status: Session["status"], summary: string | null) {
   const [row] = await db.update(brainSessions).set({ status, summary, finishedAt: new Date() }).where(eq(brainSessions.id, id)).returning();
@@ -81,7 +96,7 @@ async function finish(db: DB, id: number, status: Session["status"], summary: st
   return row ?? null;
 }
 
-/** Queued sessions cancel at once; a running stage finishes its current step and is then marked cancelled. */
+/** Queued sessions cancel at once; a running stage is aborted at its next step (polled every 2 s). */
 export async function cancelSession(db: DB, id: number) {
   const [s] = await db.select().from(brainSessions).where(eq(brainSessions.id, id));
   if (!s) return { ok: false as const, error: "Session not found" };

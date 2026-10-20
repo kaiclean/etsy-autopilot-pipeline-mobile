@@ -101,6 +101,25 @@ describe("brain sessions", () => {
     expect((await cancelSession(db, r.session.id)).ok).toBe(false);
   });
 
+  it("cancel stops a running stage instead of waiting for it", async () => {
+    const db = await freshDb();
+    const r = await createSession(db, "analytics");
+    if (!r.ok) throw new Error(r.error);
+    let aborted = false;
+    // A stage that would run for a minute unless it is aborted.
+    const started = Date.now();
+    const p = executeSession(db, r.session.id, (_stage, signal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => { aborted = true; });
+      setTimeout(() => resolve({ id: 0, status: "success", summary: "too late" }), 60_000);
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await cancelSession(db, r.session.id)).ok).toBe(true);
+    const s = await p;
+    expect(s?.status).toBe("cancelled");
+    expect(aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  }, 15_000);
+
   it("retries a finished session as a new linked one", async () => {
     const db = await freshDb();
     const a = await createSession(db, "health");

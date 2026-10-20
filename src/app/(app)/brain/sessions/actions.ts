@@ -24,7 +24,7 @@ function launch(id: number, stage: string) {
   after(async () => {
     try {
       const db = await getDb();
-      await executeSession(db, id, (s) => runStage(s, "manual"));
+      await executeSession(db, id, (s, signal) => runStage(s, "manual", { signal }));
     } catch (error) {
       writeStageLog(stage, "error", error instanceof Error ? error.message : "Session failed");
     }

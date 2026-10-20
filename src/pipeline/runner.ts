@@ -89,7 +89,11 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal };
+
+export class StageCancelled extends Error {
+  constructor() { super("Cancelled by the dashboard"); this.name = "StageCancelled"; }
+}
 
 async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigger"], summary: string, shopId: string, demo: boolean) {
   const [run] = await db
@@ -146,7 +150,10 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
     random: opts.random ?? Math.random,
     now: opts.now ?? new Date(),
     force: opts.force === true,
+    signal: opts.signal,
     log: (msg, level = "info") => {
+      // Cooperative cancel: the next step boundary after Cancel throws and ends the stage.
+      if (opts.signal?.aborted) throw new StageCancelled();
       const safe = writeStageLog(stage, level, msg);
       logs.push({ t: new Date().toISOString(), level, msg: safe });
       const snapshot = [...logs];

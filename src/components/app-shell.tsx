@@ -47,7 +47,7 @@ function isActive(pathname: string, href: string, match?: string[]) {
 
 function LiveDot() {
   const { status } = useLive();
-  const label = status === "live" ? "Live" : status === "polling" ? "Polling" : status === "offline" ? "Offline" : "Connecting";
+  const label = status === "live" ? "Realtime" : status === "polling" ? "Polling" : status === "offline" ? "Offline" : "Connecting";
   return (
     <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground" title={`Realtime: ${label}`}>
       <span className="relative flex size-2">
