@@ -30,6 +30,8 @@ export async function POST(req: Request) {
   // Preferred: the worker PUT the PNG to S3 via a presigned URL and sends only ?key=. The server downloads it and
   // measures pixels + sha256 itself; worker-reported sizes are never trusted.
   const key = params.get("key");
+  const t0 = Date.now();
+  const step = (name: string) => console.log(`[upscale-jobs] design #${designId} complete step ${name} +${Date.now() - t0}ms`);
   let bytes: Buffer;
   let presetStored: { url: string; key: string } | null = null;
   if (key) {
@@ -37,7 +39,9 @@ export async function POST(req: Request) {
     if (!(await consumeUploadKey(await getDb(), key, designId))) {
       return NextResponse.json({ error: `key was not issued for design #${designId} or was already used` }, { status: 403 });
     }
+    step("key-consumed");
     const object = await readStoredObject(key);
+    step(`s3-read ${object?.bytes.length ?? 0}B`);
     if (!object) return NextResponse.json({ error: "uploaded object not found" }, { status: 404 });
     bytes = Buffer.from(object.bytes);
     presetStored = { key, url: await storedUrlForKey(key) };
@@ -56,6 +60,7 @@ export async function POST(req: Request) {
   if (!meta || meta.format !== "png" || !meta.width || !meta.height) return reject({ error: "body must be a PNG" }, 415);
   const db = await getDb();
   const target = await requiredUpscaleTarget(db, designId);
+  step("target");
   if (!target) return reject({ error: `design #${designId} not found` }, 404);
   if (meta.width < target.minW || meta.height < target.minH) {
     return reject({ error: `upscale ${meta.width}×${meta.height} is below the ${target.minW}×${target.minH} minimum for this product`, target }, 422);
@@ -70,6 +75,7 @@ export async function POST(req: Request) {
     return reject({ error: trim.reason, bands: b }, 422);
   }
   const flat = await flatEdgeBands(trim.bytes);
+  step("edge-check");
   console.log(`[upscale-jobs] design #${designId} edge check: bright top ${b.top} bottom ${b.bottom} left ${b.left} right ${b.right}px${b.blank ? ` → trimmed to ${b.trimmed.width}×${b.trimmed.height}` : " (clean)"}; dark/flat ${flat.review ? `top ${flat.top} bottom ${flat.bottom} left ${flat.left} right ${flat.right}px → Design review` : "none"}`);
   let finalBytes = bytes;
   let size = { width: meta.width, height: meta.height };
@@ -87,7 +93,9 @@ export async function POST(req: Request) {
   const report = await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
   console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${size.width}×${size.height} stored ${stored.key} (${finalBytes.length} bytes, sha256 ${finalSha}, measured server-side)`);
   await db.update(designs).set({ upscaleFailure: null, ...(flat.review ? { designReview: { status: "pending" as const, note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } } : {}) }).where(eq(designs.id, designId));
+  step("stored+gates");
   const digital = await attachA3Crop(db, designId, finalBytes, stored.url, size);
+  step("a3+print-files");
   const cleared = await clearRedesignFlag(db, designId, size);
   const edge = { bright: { top: b.top, bottom: b.bottom, left: b.left, right: b.right, trimmed: b.blank }, flat };
   return NextResponse.json({ designId, key: stored.key, url: stored.url, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, digital, redesignCleared: cleared, report });
