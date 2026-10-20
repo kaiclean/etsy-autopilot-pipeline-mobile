@@ -10,6 +10,8 @@ export type StageContext = {
   now: Date;
   /** When true, the daily chain ignores a success already recorded today. */
   force?: boolean;
+  /** Aborted when a dashboard session is cancelled; checked at every step (log line). */
+  signal?: AbortSignal;
   log: (msg: string, level?: LogLine["level"]) => void;
 };
 
