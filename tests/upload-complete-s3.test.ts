@@ -9,7 +9,7 @@ vi.mock("@/lib/object-storage", async (orig) => ({
   storedUrlForKey: vi.fn(async (key: string) => `https://app/api/media/${key}`),
   uploadImageBytes: vi.fn(async () => { throw new Error("must not re-upload a presigned object"); }),
 }));
-vi.mock("@/db", () => ({ getDb: async () => ({}) }));
+vi.mock("@/db", () => ({ getDb: async () => ({ update: () => ({ set: () => ({ where: () => Object.assign(Promise.resolve([]), { returning: async () => [{ key: "k" }] }) }) }) }) }));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: vi.fn(async () => ({})) }));
 vi.mock("@/lib/upscale-jobs", () => ({
   authorizedUpscaleJob: () => true,
@@ -45,7 +45,7 @@ describe("worker report()", () => {
     const calls: { url: string; method?: string; hasBody: boolean }[] = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method, hasBody: init?.body != null });
-      if (String(url).endsWith("/upload-url")) return new Response(JSON.stringify({ key: "designs/2026-10-20/k.png", putUrl: "https://s3/put" }));
+      if (String(url).includes("/upload-url?designId=130")) return new Response(JSON.stringify({ key: "designs/2026-10-20/k.png", putUrl: "https://s3/put" }));
       if (String(url) === "https://s3/put") return new Response(null, { status: 200 });
       return new Response(JSON.stringify({ ok: true }));
     }) as unknown as typeof fetch;

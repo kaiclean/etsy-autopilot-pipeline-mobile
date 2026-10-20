@@ -25,17 +25,14 @@ type Cached = { attempts: number; sourcePx: { width: number; height: number }; o
 /** Presigned S3 PUT, then complete?key= (no image body through the app). Falls back to a body upload if S3 is absent. */
 export async function report(designId: number, sourcePx: { width: number; height: number }, png: Buffer, fetchImpl: typeof fetch = fetch) {
   const query = new URLSearchParams({ designId: String(designId), method: "realesrgan", srcW: String(sourcePx.width), srcH: String(sourcePx.height) });
-  const signed = await fetchImpl(`${APP}/api/cron/upscale-jobs/upload-url`, { method: "POST", headers: auth, signal: AbortSignal.timeout(30_000) });
-  let init: RequestInit = { method: "POST", headers: auth, signal: AbortSignal.timeout(300_000) };
-  if (signed.ok) {
-    const { key, putUrl } = await signed.json() as { key: string; putUrl: string };
-    const put = await fetchImpl(putUrl, { method: "PUT", headers: { "content-type": "image/png" }, body: new Uint8Array(png), signal: AbortSignal.timeout(300_000) });
-    if (!put.ok) return { status: put.status, body: { error: `S3 PUT HTTP ${put.status}` } };
-    query.set("key", key);
-  } else {
-    init = { ...init, headers: { ...auth, "content-type": "image/png" }, body: new Uint8Array(png) };
-  }
-  const done = await fetchImpl(`${APP}/api/cron/upscale-jobs/complete?${query}`, init);
+  // No silent fallback to a body upload: a presign failure is a loud failure.
+  const signed = await fetchImpl(`${APP}/api/cron/upscale-jobs/upload-url?designId=${designId}`, { method: "POST", headers: auth, signal: AbortSignal.timeout(30_000) });
+  if (!signed.ok) throw new Error(`presign failed HTTP ${signed.status}`);
+  const { key, putUrl } = await signed.json() as { key: string; putUrl: string };
+  const put = await fetchImpl(putUrl, { method: "PUT", headers: { "content-type": "image/png" }, body: new Uint8Array(png), signal: AbortSignal.timeout(300_000) });
+  if (!put.ok) throw new Error(`S3 PUT failed HTTP ${put.status}`);
+  query.set("key", key);
+  const done = await fetchImpl(`${APP}/api/cron/upscale-jobs/complete?${query}`, { method: "POST", headers: auth, signal: AbortSignal.timeout(300_000) });
   return { status: done.status, body: await done.json().catch(() => ({})) };
 }
 
@@ -85,6 +82,7 @@ export async function runOnce(limit = 3, saveTo?: string) {
       ({ status, body } = await report(job.designId, meta.sourcePx, png));
     } catch (error) {
       body = { error: error instanceof Error ? error.message.slice(0, 200) : "report failed" };
+      console.error(`[upscaler-pull] design #${job.designId} report FAILED: ${(body as { error: string }).error}`);
     }
     console.log(`[upscaler-pull] design #${job.designId} report → HTTP ${status}`);
     if (status >= 200 && status < 300) {
@@ -93,6 +91,9 @@ export async function runOnce(limit = 3, saveTo?: string) {
     } else {
       meta.attempts += 1;
       fs.writeFileSync(metaPath, JSON.stringify(meta));
+      const reason = (body as { error?: string })?.error ?? `HTTP ${status}`;
+      await fetch(`${APP}/api/cron/upscale-jobs/fail?${new URLSearchParams({ designId: String(job.designId), error: reason })}`, { method: "POST", headers: auth, signal: AbortSignal.timeout(30_000) })
+        .catch(() => console.error(`[upscaler-pull] design #${job.designId}: could not record failure`));
     }
     results.push({ job, outputPx: meta.outputPx, status, body });
   }

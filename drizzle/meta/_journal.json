@@ -197,6 +197,13 @@
       "when": 1792496400000,
       "tag": "0029_listing_print_fit",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792500000000,
+      "tag": "0030_upscale_uploads",
+      "breakpoints": true
     }
   ]
 }
