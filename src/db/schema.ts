@@ -143,6 +143,8 @@ export const keywords = pgTable("keywords", {
   status: text("status").$type<"new" | "selected" | "used" | "rejected">().notNull().default("new"),
   /** Provider attempts that did not produce a design. Research prefers a lower count. */
   designFailures: integer("design_failures").notNull().default(0),
+  /** Theme registry row (themes.id) this keyword came from; null for plain niche research. */
+  themeId: text("theme_id"),
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -552,3 +554,50 @@ export const brainDecisions = pgTable("brain_decisions", {
   index("brain_decisions_created_idx").on(table.createdAt),
 ]);
 export type BrainDecision = typeof brainDecisions.$inferSelect;
+
+export type ThemeStatus = "proposed" | "active" | "paused" | "retired";
+export type ThemeProduct = "wall-art" | "poster" | "pod-apparel" | "pod-mug" | "planner" | "template" | "prompt-pack";
+
+/**
+ * Editable theme registry. A theme rides on a production niche (`base_niche`) whose product mix,
+ * prices and delivery rules the pipeline already enforces; the theme adds its own look and seed phrases.
+ * Only `active` themes feed research. `proposed` rows come from the daily idea step and wait for Kai.
+ */
+export const themes = pgTable("themes", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  baseNiche: text("base_niche").$type<Niche>().notNull(),
+  status: text("status").$type<ThemeStatus>().notNull().default("proposed"),
+  /** Image prompt look; null = the base niche look. */
+  style: text("style"),
+  seeds: jsonb("seeds").$type<string[]>().notNull().default([]),
+  products: jsonb("products").$type<ThemeProduct[]>().notNull().default([]),
+  /** Month indexes 0-11; empty = evergreen. */
+  peakMonths: jsonb("peak_months").$type<number[]>().notNull().default([]),
+  /** Why it cannot run yet (missing real files etc). Research skips themes with a blocker. */
+  blocker: text("blocker"),
+  notes: text("notes"),
+  source: text("source").notNull().default("manual"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type Theme = typeof themes.$inferSelect;
+
+/** Daily idea step output: candidate ideas Kai approves (into the pipeline) or rejects. */
+export const ideaCandidates = pgTable("idea_candidates", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  title: text("title").notNull(),
+  phrase: text("phrase").notNull(),
+  themeId: text("theme_id"),
+  niche: text("niche").$type<Niche>(),
+  product: text("product").$type<ThemeProduct>(),
+  rationale: text("rationale").notNull(),
+  source: text("source").notNull(),
+  status: text("status").$type<"pending" | "approved" | "rejected">().notNull().default("pending"),
+  keywordId: integer("keyword_id").references(() => keywords.id),
+  designBriefId: integer("design_brief_id").references(() => designBriefs.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+}, (table) => [index("idea_candidates_status_idx").on(table.status, table.createdAt)]);
+export type IdeaCandidate = typeof ideaCandidates.$inferSelect;

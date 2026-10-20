@@ -1,3 +1,4 @@
+import { themeStyles } from "@/lib/themes";
 import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { getLLMProvider } from "@/adapters/llm";
@@ -219,7 +220,10 @@ export const runDesign: StageFn = async (ctx) => {
       log(`Deferred duplicate brief for “${kw.phrase}”: no unused concept/palette in this run`, "warn");
       continue;
     }
-    const prompt = previous[0]?.prompt ?? buildPrompt(kw.phrase, niche.style, kw.niche, concept!);
+    const themeStyle = kw.themeId ? (await themeStyles(db, [kw.themeId])).get(kw.themeId) : undefined;
+    const prompt = previous[0]?.prompt ?? (themeStyle
+      ? buildPrompt(kw.phrase, themeStyle, undefined, concept!)
+      : buildPrompt(kw.phrase, niche.style, kw.niche, concept!));
     const brief = await ensureDesignBrief(ctx, kw, prompt, concept ?? previous[0]?.concept ?? undefined);
     const targetKey: PrintTargetKey = brief.brief?.productType === "pod"
       ? (isPodPreset(brief.brief.podPreset ?? "") ? brief.brief.podPreset! as PrintTargetKey : "posterA3")

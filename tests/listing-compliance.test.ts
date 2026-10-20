@@ -6,14 +6,14 @@ import { buildProductTitle } from "@/lib/product-title";
 import { draftListing } from "@/pipeline/listing";
 
 const providerDetails = { processingMin: 2, processingMax: 4, shippingMin: 5, shippingMax: 9 };
-const tags = ["alpine scene", "swiss alps", "mountain view", "lake decor", "home accent", "gift idea", "cabin style", "nature lover", "living room", "calm mood", "hiking fan", "snow peaks", "pine forest"];
+const tags = ["alpine scene", "swiss alps", "mountain view", "lake decor", "home accent", "mountain art", "cabin style", "nature lover", "living room", "calm mood", "hiking fan", "snow peaks", "pine forest"];
 const facts = measuredDigitalDeliverable("jpeg", { width: 2048, height: 3072 });
 const digital = (): ListingDraft => ({
-  title: "Swiss Alps Printable Wall Art", tags, productType: "digital", priceChf: 8, deliverable: facts,
+  title: "Swiss Alps Printable Wall Art in Calm Alpine Colors", tags, productType: "digital", priceChf: 8, deliverable: facts,
   description: withDisclosures(digitalFileBlurb("jpeg", facts), "digital"),
 });
 const pod = (): ListingDraft => ({
-  title: "Swiss Alps Mug", tags, productType: "pod", podPreset: "mug", priceChf: 20, providerDetails,
+  title: "Swiss Alps Mug with Calm Alpine Lake Scene", tags, productType: "pod", podPreset: "mug", priceChf: 20, providerDetails,
   description: appendProviderDetails(withDisclosures("Alpine mountain design.", "pod"), providerDetails),
 });
 

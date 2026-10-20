@@ -244,7 +244,7 @@ describe("supplier previews before approval", () => {
     expect(await setListingStatus(row.id, "approved")).toEqual({ ok: true });
     await setListingStatus(row.id, "pending_approval");
     const saved = await reload(row.id);
-    const title = "Alpine Mountain Poster";
+    const title = "Alpine Mountain Poster with Lake and Pine Forest";
     const description = `${saved.description}\n\nA revised alpine composition.`;
     expect(await updateListing(row.id, { title, description, tags: saved.tags, priceChf: saved.priceChf }, true)).toMatchObject({ ok: true });
     expect(mocks.createAndPublish).toHaveBeenLastCalledWith(expect.objectContaining({

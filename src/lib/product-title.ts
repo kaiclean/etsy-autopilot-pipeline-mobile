@@ -40,9 +40,20 @@ export function buildProductTitle(keyword: string, copy: string, product: PodPre
         !normalized.has(`${base} | ${part}`.toLowerCase()) && !normalized.has(part.toLowerCase()) &&
         !siblingTitles.some((title) => title.toLowerCase().includes(` | ${part.toLowerCase()}`));
     });
-  if (!suffix || suffix.toLowerCase() === trimmed.toLowerCase()) return base;
+  if (!suffix || suffix.toLowerCase() === trimmed.toLowerCase()) return padTitle(base);
   const extra = suffix.toLowerCase().startsWith(trimmed.toLowerCase()) ? suffix.slice(trimmed.length).trim() : suffix;
   const available = ETSY_LIMITS.titleMax - base.length - 3;
   const fitting = extra.slice(0, available).trim().replace(/\s+\S*$/, (tail) => extra.length > available ? "" : tail);
-  return fitting.length > 4 ? `${base} | ${fitting}` : base;
+  return padTitle(fitting.length > 4 ? `${base} | ${fitting}` : base);
+}
+
+const PAD = ["Original", "Illustrated", "Artwork", "Design"];
+/** Etsy-listing skill: 6-14 title words. Pads short generated titles with neutral, true descriptors (no praise). */
+export function padTitle(title: string) {
+  const count = (t: string) => t.trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  if (count(title) >= ETSY_LIMITS.titleWordsMin) return title;
+  const have = new Set(title.toLowerCase().split(/\W+/));
+  const extra = PAD.filter((w) => !have.has(w.toLowerCase())).slice(0, ETSY_LIMITS.titleWordsMin - count(title));
+  const padded = `${title}${title.includes(" | ") ? " " : " | "}${extra.join(" ")}`.trim();
+  return padded.length <= ETSY_LIMITS.titleMax ? padded : title;
 }

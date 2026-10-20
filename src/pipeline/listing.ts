@@ -150,7 +150,7 @@ export async function draftListing(opts: {
   }, { keyword: productKeyword(keyword), product: opts.product });
   const draft = stripped.draft;
   const fees = calculateFees({ priceChf, podCostChf: pod, offsiteAds: opts.priceChf != null ? true : opts.assumeOffsiteAds });
-  const { issues } = validateListing(draft);
+  const { issues } = validateListing({ ...draft, primaryPhrase: productKeyword(keyword) });
   return {
     draft,
     fees,

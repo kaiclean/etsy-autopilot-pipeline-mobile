@@ -259,3 +259,19 @@
 .brain .decide .pipe-ok input{width:auto;flex:0 0 auto}
 .brain .pipe-ok span{flex:1}
 .brain .pipe:has(input[name=confirm]:checked){border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.07)}
+.brain .map{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+.brain .map > div{flex-basis:100%}
+.brain .themes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.brain .theme-form{display:grid;gap:8px}
+.brain .theme-form label{display:grid;gap:4px;font-size:12.5px;color:var(--muted)}
+.brain .theme-form textarea{min-height:64px;resize:vertical}
+.brain .theme-form .chk{display:flex;flex-wrap:wrap;gap:6px 12px}
+.brain .theme-form .chk label{display:flex;gap:6px;align-items:center;color:var(--text)}
+.brain .theme-form .chk input{width:auto}
+.brain .funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.brain .funnel .step{position:relative;padding:14px;border-radius:14px;background:var(--panel);border:1px solid var(--line);transition:transform .2s,border-color .2s}
+.brain .funnel .step:hover{transform:translateY(-2px);border-color:var(--line2)}
+.brain .funnel .step b{display:block;font-size:26px;line-height:1.1;margin-top:4px}
+.brain .funnel .step.goal{border-color:rgba(52,211,153,.45);background:linear-gradient(160deg,rgba(52,211,153,.12),transparent)}
+.brain .bar{height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:12px}
+.brain .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#34d399);border-radius:999px;transition:width 1s cubic-bezier(.2,.8,.2,1)}

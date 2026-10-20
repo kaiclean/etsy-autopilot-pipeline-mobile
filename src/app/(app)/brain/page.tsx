@@ -5,6 +5,12 @@ import { getVault, noteHref, searchIndex } from "@/lib/brain/vault";
 import ReelCard from "@/components/brain/ReelCard";
 import CountUp from "@/components/brain/CountUp";
 import { latestByIdea } from "@/lib/brain/decisions";
+import FirstSaleTracker from "@/components/brain/first-sale";
+import { getFirstSale, type FirstSale } from "@/lib/brain/first-sale";
+import { getDb } from "@/db";
+import { resolveRequestShop } from "@/lib/shops";
+import { isDemoMode } from "@/lib/config";
+import { readPublishMode } from "@/lib/read-publish-mode";
 export const dynamic = "force-dynamic";
 const POT: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const fmt = (d: string | Date) => new Date(d).toLocaleString("en-GB", { timeZone: "Europe/Zurich", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -23,6 +29,12 @@ export default async function Overview() {
   const reels = v.notes.filter((n) => n.kind === "reel");
   const ideas = v.notes.filter((n) => n.kind === "idea");
   const dec = await latestByIdea();
+  let tracker: { f: FirstSale; mode: string } | null = null;
+  try {
+    const db = await getDb();
+    const shop = await resolveRequestShop(db);
+    tracker = { f: await getFirstSale(db, shop.id, isDemoMode(shop.id)), mode: await readPublishMode(db) };
+  } catch (e) { console.error("brain: first-sale tracker failed:", (e as Error).message); }
   const pending = ideas.filter((i) => !dec.has(i.id) || dec.get(i.id)!.verdict === "needs_research");
   const byStatus: Record<string, number> = {};
   for (const i of ideas) { const s = String(i.data.status || "idea"); byStatus[s] = (byStatus[s] || 0) + 1; }
@@ -39,6 +51,7 @@ export default async function Overview() {
   return (
     <Shell>
       <div className="page-head"><div><h2>Command center</h2><p>{reels.length} reels distilled into {ideas.length} ideas for Designed by Kai.</p></div></div>
+      {tracker && <FirstSaleTracker f={tracker.f} publishMode={tracker.mode} />}
       <div className="stats">
         <Stat label="Reels" value={reels.length} color="var(--reel)" href="/brain/reels" sub={Object.entries(reelStatus).map(([k, n]) => `${n} ${k}`).join(" · ")} />
         <Stat label="Ideas" value={ideas.length} color="var(--idea)" href="/brain/ideas" sub={Object.entries(byStatus).map(([k, n]) => `${n} ${k}`).join(" · ")} />
