@@ -156,7 +156,7 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
   const open = await db.select({ id: listings.id, productType: listings.productType, podProvider: listings.podProvider }).from(listings)
     .where(and(eq(listings.designId, designId), isNull(listings.activatedAt), inArray(listings.status, ["pending_approval", "quality_failed"])));
   const rows = open.filter((row) => row.productType === "digital");
-  const posters = open.filter((row) => row.podProvider === "printify:posterA3" || row.podProvider === "printify:canvas");
+  const posters = open.filter((row) => row.productType === "pod" && row.podProvider?.startsWith("printify:"));
   if (!rows.length && !posters.length) return null;
   const crop = a3CropSize(size);
   if (crop.width < 3508 || crop.height < 4961) return { skipped: `A3 crop ${crop.width}×${crop.height} is below 3508×4961` };
@@ -169,11 +169,38 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
   const masterRecord = await inspectArtworkFile(master, `design-${designId}-4x5-master.png`);
   const cropRecord = await inspectArtworkFile(cropBytes, `design-${designId}-A3.png`);
   if (!stored || !masterRecord || !cropRecord) return { skipped: "could not store or inspect the A3 crop" };
-  // The A3 poster prints the A3 crop, not the 4:5 master.
+  // Ratio rule: each POD product gets the file closest to its live Printify print-area aspect (≤3%), covering its pixels;
+  // apparel may get the master fitted with transparent padding; mugs and anything else are held with no file.
+  const { assignPrintFile } = await import("@/lib/print-file-assign");
+  const { getPrintArea } = await import("@/lib/print-targets");
+  const assigned: Record<number, string> = {};
   for (const row of posters) {
-    await db.update(listings).set({ deliveryUrl: stored.url, updatedAt: new Date() }).where(eq(listings.id, row.id));
+    const preset = row.podProvider!.replace(/^printify:/, "");
+    const fallback = PRINT_TARGETS[preset as PrintTargetKey];
+    const area = isPodPreset(preset) ? (await getPrintArea(preset)) ?? (fallback ? { width: fallback.targetW, height: fallback.targetH } : null) : null;
+    const choice = area ? assignPrintFile(preset, area, size, crop) : { file: "none" as const, reason: "no print area" };
+    let url: string | null = null;
+    if (choice.file === "a3") url = stored.url;
+    else if (choice.file === "master") url = masterUrl;
+    else if (choice.file === "padded" && area) {
+      const fitted = await sharp(master, { limitInputPixels: 128_000_000 }).resize(choice.fit.width, choice.fit.height).png().toBuffer();
+      const padded = await sharp({ create: { width: area.width, height: area.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+        .composite([{ input: fitted, left: Math.floor((area.width - choice.fit.width) / 2), top: 0 }]).png().toBuffer();
+      url = (await uploadImageBytes(padded, "image/png"))?.url ?? null;
+    }
+    const [current] = await db.select({ validation: listings.validation }).from(listings).where(eq(listings.id, row.id));
+    const kept = (current?.validation ?? []).filter((issue) => issue.code !== "print_file_held");
+    await db.update(listings).set({
+      deliveryUrl: url,
+      ...(url ? { validation: kept } : {
+        status: "quality_failed" as const,
+        validation: [...kept, { field: "image" as const, severity: "error" as const, code: "print_file_held", message: `Held: ${choice.reason}` }],
+      }),
+      updatedAt: new Date(),
+    }).where(eq(listings.id, row.id));
+    assigned[row.id] = choice.file;
+    console.log(`[upscale-jobs] design #${designId} listing ${row.id} ${preset}: print file = ${choice.file} (${choice.reason})`);
   }
-  if (posters.length) console.log(`[upscale-jobs] design #${designId} poster print file = A3 crop ${crop.width}×${crop.height} on listings ${posters.map((row) => row.id).join(",")}`);
   for (const row of rows) {
     await db.update(listings).set({
       deliveryUrl: masterUrl,
@@ -182,7 +209,7 @@ export async function attachA3Crop(db: DB, designId: number, master: Buffer, mas
     }).where(eq(listings.id, row.id));
   }
   console.log(`[upscale-jobs] design #${designId} digital files: master ${size.width}×${size.height}, A3 crop ${crop.width}×${crop.height} (${stored.key}) on listings ${rows.map((row) => row.id).join(",")}`);
-  return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id), posters: posters.map((row) => row.id) };
+  return { master: size, a3: crop, a3Url: stored.url, listings: rows.map((row) => row.id), posters: assigned };
 }
 
 /** Clears needs_redesign once the delivered master meets the flagged target. */

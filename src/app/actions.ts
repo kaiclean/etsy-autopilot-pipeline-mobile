@@ -113,6 +113,11 @@ export async function updateListing(id: number, edit: ListingEdit, approve = fal
   return { ok: true as const, issues };
 }
 
+/** Stale mockups or a held print file block approval until Printify mockups are regenerated from the current file. */
+function approvalBlocker(validation: { code: string; message: string }[] | null | undefined) {
+  return (validation ?? []).find((issue) => issue.code === "mockups_stale" || issue.code === "print_file_held")?.message ?? null;
+}
+
 export async function setListingStatus(id: number, status: "approved" | "rejected" | "pending_approval", reason?: string) {
   await requireAuth();
   const db = await getDb();
@@ -120,6 +125,8 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   if (!l) return { ok: false as const, error: "Listing not found" };
   if (status === "approved") {
     if (isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
+    const blocker = approvalBlocker(l.validation);
+    if (blocker) return { ok: false as const, error: blocker };
     const refreshed = await refreshSupplierDescription(db, l);
     const { valid, issues } = validateSupplierApproval(refreshed);
     if (!valid) {
