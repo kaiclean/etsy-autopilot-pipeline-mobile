@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { DB } from "@/db";
 import { designBriefs, designs, listings } from "@/db/schema";
 import { config, publicAppUrl } from "@/lib/config";
@@ -68,6 +68,30 @@ export async function requiredUpscaleTarget(db: DB, designId: number): Promise<P
   return key === "digitalLarge" ? PRINT_TARGETS.digital : target;
 }
 
+/** Resolved combined target for a design from all its listings (and brief). */
+export async function designTarget(db: DB, designId: number) {
+  const [row] = await db.select({ brief: designBriefs }).from(designs)
+    .leftJoin(designBriefs, eq(designs.keywordId, designBriefs.keywordId)).where(eq(designs.id, designId)).limit(1);
+  const products = await db.select({ podProvider: listings.podProvider }).from(listings).where(eq(listings.designId, designId));
+  return targetFor(row?.brief ?? null, products.map((item) => item.podProvider));
+}
+
+/** Persist + log the full-size redesign flag once; Design reads the list from /api/cron/redesign-queue. */
+export async function flagRedesign(db: DB, row: NeedsDesignRow) {
+  const [current] = await db.select({ flag: designs.needsRedesign }).from(designs).where(eq(designs.id, row.designId));
+  if (current?.flag) return false;
+  const reason = `source ${row.sourcePx.width}×${row.sourcePx.height} needs ${row.scale}× to reach ${row.target.minW}×${row.target.minH} (${row.presets.join(",")}); Real-ESRGAN is 4×`;
+  await db.update(designs).set({ needsRedesign: { reason, sourcePx: row.sourcePx, target: row.target, presets: row.presets, scale: row.scale, at: new Date().toISOString() } }).where(eq(designs.id, row.designId));
+  console.log(`[upscale-jobs] design #${row.designId} needs full-size redesign: ${reason}`);
+  return true;
+}
+
+export async function redesignQueue(db: DB) {
+  const rows = await db.select({ id: designs.id, prompt: designs.prompt, niche: designs.niche, keywordId: designs.keywordId, flag: designs.needsRedesign, imageUrl: designs.imageUrl })
+    .from(designs).where(and(eq(designs.isDemo, false), isNotNull(designs.needsRedesign)));
+  return rows;
+}
+
 export type NeedsDesignRow = { designId: number; sourcePx: { width: number; height: number }; presets: PrintTargetKey[]; target: PrintTarget; scale: number };
 
 export async function pendingUpscaleJobs(db: DB, limit = 3, needsDesign: NeedsDesignRow[] = []): Promise<UpscaleJobRow[]> {
@@ -98,7 +122,9 @@ export async function pendingUpscaleJobs(db: DB, limit = 3, needsDesign: NeedsDe
     if (presets.length && sourcePx) {
       const reach = reachableBy4x(sourcePx, target);
       if (!reach.reachable) {
-        needsDesign.push({ designId: design.id, sourcePx, presets, target, scale: reach.scale });
+        const row = { designId: design.id, sourcePx, presets, target, scale: reach.scale };
+        needsDesign.push(row);
+        await flagRedesign(db, row);
         continue;
       }
     }
