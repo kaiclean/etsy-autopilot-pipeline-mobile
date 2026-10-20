@@ -33,7 +33,7 @@ describe("print targets", () => {
     vi.stubEnv("PRINTIFY_VARIANT_IDS", "");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/catalog/blueprints.json")) return Response.json([{ id: 1, title: "Poster" }]);
+      if (url.endsWith("/catalog/blueprints.json")) return Response.json([{ id: 1, title: "Unisex Jersey Short Sleeve Tee" }]);
       if (url.endsWith("/print_providers.json")) return Response.json([{ id: 2, title: "Printify Choice" }]);
       return Response.json({ variants: [{ id: 3, title: "A3", placeholders: [{ position: "front", width: 4000, height: 6000 }] }] });
     });
