@@ -9,8 +9,7 @@ import { evaluateQualityGate, podPresetFromProvider } from "@/lib/quality-gate";
 import { repairTrivialCopy, validateListing } from "@/lib/listing-validator";
 import { buildFileManifest } from "@/lib/file-manifest";
 import { digitalMidPrice } from "@/lib/pricing-ladder";
-import { isPodPreset } from "@/lib/fees";
-import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
+import { PRINT_TARGETS, type PrintTargetKey } from "@/lib/print-targets";
 import { preparePrintFile } from "@/pipeline/artwork";
 import { upscaleArtwork } from "@/pipeline/upscale";
 import { designTarget, flagRedesign, reachableBy4x } from "@/lib/upscale-jobs";
@@ -46,7 +45,7 @@ export async function upscaleDesigns(db: DB, ids: number[], apply = false, preco
       report.push({ id, skipped: "Design not found." });
       continue;
     }
-    const { design, brief } = row;
+    const { design } = row;
     if (design.status === "discarded") {
       report.push({ id, skipped: "Discarded designs are not reprocessed." });
       continue;

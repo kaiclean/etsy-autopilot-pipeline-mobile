@@ -1,5 +1,6 @@
 "use client";
 import { clip } from "@/lib/brain/quicksearch";
+import Image from "next/image";
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState, Fragment } from "react";
 import type { IndexDoc } from "@/lib/brain/vault";
@@ -78,7 +79,7 @@ export default function SearchList({ docs, mode, initial = {} as Facets & { q?: 
             const sn = snippet(d.text, terms);
             return (
               <Link key={d.id} href={href(d.id)} className="reel-row">
-                <div style={{ minWidth: 0, display: "flex", gap: 12 }}>{d.thumb && <img src={d.thumb} alt="" className="mini-thumb" loading="lazy" />}<div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, display: "flex", gap: 12 }}>{d.thumb && <Image src={d.thumb} alt="" width={48} height={48} className="mini-thumb" unoptimized />}<div style={{ minWidth: 0 }}>
                   <div className="t"><Hl text={clip(d.title, 110)} terms={terms} /></div>
                   <div className="snip">{sn ? <Hl text={sn} terms={terms} /> : d.summary}</div>
                   <div style={{ marginTop: 4 }}>{d.tags.filter((t) => t !== "reel" && t !== "idea").slice(0, 4).map((t) => <span key={t} className="pill">{t}</span>)}</div>

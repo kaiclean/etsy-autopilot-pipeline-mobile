@@ -1,4 +1,4 @@
-import { and, count, eq, gte, isNull, like } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { DB } from "@/db";
 import { costs, designs, listings } from "@/db/schema";
 import { getImageProvider } from "@/adapters/image";

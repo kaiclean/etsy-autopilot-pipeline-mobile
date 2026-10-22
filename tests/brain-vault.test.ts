@@ -1,7 +1,30 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
-import { parseVault, buildResolver, wikilinksToMarkdown, graphData, sectionOf } from "@/lib/brain/vault";
+import { parseFrontMatter, parseVault, buildResolver, wikilinksToMarkdown, graphData, sectionOf } from "@/lib/brain/vault";
 const v = parseVault(path.join(__dirname, "..", "data", "omnibrain", "vault"));
+describe("frontmatter", () => {
+  it("parses scalar, numeric and array values used by the vault", () => {
+    const raw = `---
+# ignored comment
+status: idea
+short: "reel one"
+number: 31.7
+tags: [reel, ig/ainews]
+empty: []
+---
+# Body
+`;
+    expect(parseFrontMatter(raw)).toEqual({
+      data: { status: "idea", short: "reel one", number: 31.7, tags: ["reel", "ig/ainews"], empty: [] },
+      content: "# Body\n",
+    });
+  });
+
+  it("returns the raw markdown when frontmatter is malformed", () => {
+    expect(parseFrontMatter("not frontmatter")).toEqual({ data: {}, content: "not frontmatter" });
+  });
+});
+
 describe("vault", () => {
   it("loads reels and ideas with frontmatter", () => {
     const reels = v.notes.filter((n) => n.kind === "reel");

@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -62,7 +63,7 @@ function QuickSearch() {
           {docs && !hits.length && <div className="qs-empty">No quick matches</div>}
           {hits.map((d, i) => (
             <a key={d.id} href={noteHref(d.id)} className={"qs-item" + (idx === i + 1 ? " on" : "")} onMouseEnter={() => setIdx(i + 1)} onMouseDown={(e) => { e.preventDefault(); go(noteHref(d.id)); }}>
-              {d.thumb ? <img src={d.thumb} alt="" /> : <span className={"qs-ico k-" + d.kind}>{d.kind === "idea" ? "✦" : d.kind === "summary" ? "≡" : "●"}</span>}
+              {d.thumb ? <Image src={d.thumb} alt="" width={24} height={24} unoptimized /> : <span className={"qs-ico k-" + d.kind}>{d.kind === "idea" ? "✦" : d.kind === "summary" ? "≡" : "●"}</span>}
               <span className="qs-t"><b>{d.title}</b><small>{d.kind}{d.handle ? " · @" + d.handle : ""}{d.date ? " · " + d.date : ""}</small></span>
             </a>
           ))}

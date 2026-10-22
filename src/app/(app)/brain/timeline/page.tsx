@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { BrainPage as Shell, Empty } from "@/components/brain/shell";
 import { getVault, noteHref, thumbFor, Note } from "@/lib/brain/vault";
@@ -33,7 +34,7 @@ export default async function Timeline({ searchParams }: { searchParams: Promise
                     <span className="tl-dot" />
                     <span className="tl-date">{DAY(e.date)}</span>
                     <div className="tl-card">
-                      {th ? <img src={th} alt="" loading="lazy" className="tl-thumb" /> : <div className="tl-icon">{e.kind === "idea" ? "✦" : "▶"}</div>}
+                      {th ? <Image src={th} alt="" width={96} height={54} className="tl-thumb" unoptimized /> : <div className="tl-icon">{e.kind === "idea" ? "✦" : "▶"}</div>}
                       <div style={{ minWidth: 0 }}>
                         <div className="tl-title">{e.note.title}</div>
                         <div className="xs muted">{e.kind === "idea" ? `New idea · ${e.note.data.potential} potential · effort ${e.note.data.effort}` : `@${e.note.data.author_handle || "unknown"} · ${e.note.data.status}`}</div>

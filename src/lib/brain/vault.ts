@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import matter from "gray-matter";
 
 export type NoteKind = "reel" | "idea" | "summary" | "home" | "template";
 export interface Note {
@@ -16,6 +15,41 @@ export interface Note {
 export interface Vault { notes: Note[]; byId: Map<string, Note>; loadedAt: number }
 
 const WIKILINK = /\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
+
+function parseScalar(value: string): string | number {
+  const v = value.trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  if (v !== "" && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
+  return v;
+}
+
+function parseValue(value: string): string | number | Array<string | number> {
+  const v = value.trim();
+  if (!v.startsWith("[") || !v.endsWith("]")) return parseScalar(v);
+  const inner = v.slice(1, -1).trim();
+  if (!inner) return [];
+  return inner.split(",").map((item) => parseScalar(item));
+}
+
+export function parseFrontMatter(raw: string): { data: Record<string, unknown>; content: string } {
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/);
+  if (!m) return { data: {}, content: raw };
+  const data: Record<string, unknown> = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const colon = t.indexOf(":");
+    if (colon < 0) continue;
+    const key = t.slice(0, colon).trim();
+    let value = t.slice(colon + 1).trim();
+    if (!value.startsWith('"') && !value.startsWith("'")) {
+      const hash = value.indexOf(" #");
+      if (hash >= 0) value = value.slice(0, hash).trim();
+    }
+    data[key] = parseValue(value);
+  }
+  return { data, content: raw.slice(m[0].length) };
+}
 
 export function vaultDir(): string {
   const d = process.env.BRAIN_VAULT_DIR || "data/omnibrain/vault";
@@ -76,8 +110,7 @@ export function parseVault(dir: string): Vault {
   const resolve = buildResolver(ids);
   const notes: Note[] = files.map((f, i) => {
     const raw = fs.readFileSync(path.join(dir, f), "utf8");
-    let parsed: { data: Record<string, unknown>; content: string };
-    try { parsed = matter(raw) as unknown as typeof parsed; } catch { parsed = { data: {}, content: raw }; }
+    const parsed = parseFrontMatter(raw);
     const data: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(parsed.data || {})) data[k] = normDate(v);
     const id = ids[i];

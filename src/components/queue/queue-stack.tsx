@@ -57,9 +57,9 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   useEffect(() => { if (top) document.getElementById(`q-row-${top.id}`)?.scrollIntoView({ block: "nearest" }); }, [top?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedVisible = visible.filter((l) => selected.has(l.id));
   const issueMap = useMemo(() => new Map(listings.map((l) => [l.id, currentIssues(l)])), [listings]);
-  const issuesOf = (l: Listing) => issueMap.get(l.id) ?? l.validation;
-  const hasErrors = (l: Listing) => listingHasErrors(issuesOf(l).filter((issue) =>
-    issue.code !== "supplier_mockups_pending" && issue.code !== "missing_provider_timings"));
+  const issuesOf = useCallback((l: Listing) => issueMap.get(l.id) ?? l.validation, [issueMap]);
+  const hasErrors = useCallback((l: Listing) => listingHasErrors(issuesOf(l).filter((issue) =>
+    issue.code !== "supplier_mockups_pending" && issue.code !== "missing_provider_timings")), [issuesOf]);
 
   const hide = useCallback((id: number, on: boolean) => {
     setHidden((s) => {
@@ -114,7 +114,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
         },
       });
     },
-    [hide],
+    [hide, hasErrors, issuesOf],
   );
 
   const bulk = useCallback(

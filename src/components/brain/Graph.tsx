@@ -2,6 +2,7 @@
 import { clip } from "@/lib/brain/quicksearch";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const Graph3D = dynamic(() => import("./Graph3DInner"), { ssr: false, loading: () => <div className="graph-loading"><div className="pulse-orb" />Igniting the 3D brain…</div> });
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false, loading: () => <div className="empty" style={{ border: 0, marginTop: 120 }}>Laying out the brain…</div> });
@@ -12,6 +13,7 @@ const href = (id: string) => "/brain/note/" + id.split("/").map(encodeURICompone
 const sid = (x: string | N) => (typeof x === "string" ? x : x.id);
 
 export default function Graph({ data }: { data: { nodes: N[]; links: { source: string; target: string; kind: string }[] } }) {
+  const router = useRouter();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fg = useRef<any>(null);
   const box = useRef<HTMLDivElement>(null); const fitted = useRef(false);
@@ -69,7 +71,7 @@ export default function Graph({ data }: { data: { nodes: N[]; links: { source: s
       </div>
       <div className="card graph-box" ref={box}>
         {graph.nodes.length === 0 ? <div className="empty" style={{ margin: 80 }}>No notes match these filters.</div> : mode === "3d" ?
-        <Graph3D graph={graph as never} width={size.w} height={size.h} focusId={sel?.id || null} neighbors={neighbors} flyTo={fly} onSelect={(n) => { if (n && n.kind === "tag") { window.location.href = "/brain/reels?tag=" + encodeURIComponent((n as N).tags?.[0] || n.name.slice(1)); return; } if (n && sel?.id === n.id) { window.location.href = href(n.id); return; } setSel(n as N | null); setFly(n?.id || null); }} /> :
+        <Graph3D graph={graph as never} width={size.w} height={size.h} focusId={sel?.id || null} neighbors={neighbors} flyTo={fly} onSelect={(n) => { if (n && n.kind === "tag") { router.push("/brain/reels?tag=" + encodeURIComponent((n as N).tags?.[0] || n.name.slice(1))); return; } if (n && sel?.id === n.id) { router.push(href(n.id)); return; } setSel(n as N | null); setFly(n?.id || null); }} /> :
         <ForceGraph2D ref={fg} graphData={graph} width={size.w} height={size.h} backgroundColor="rgba(0,0,0,0)"
           warmupTicks={60} cooldownTicks={180} d3VelocityDecay={0.32} d3AlphaDecay={0.025} enableNodeDrag
           nodeRelSize={4} nodeVal={(n: object) => { const x = n as N; return (x.kind === "reel" ? 1 : 3) + (x.deg || 0) * 0.35; }}
@@ -92,7 +94,7 @@ export default function Graph({ data }: { data: { nodes: N[]; links: { source: s
           }}
           nodePointerAreaPaint={(n: object, color: string, ctx: CanvasRenderingContext2D) => { const x = n as N; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x.x!, x.y!, 8, 0, 2 * Math.PI); ctx.fill(); }}
           onNodeHover={(n: object | null) => { setHover((n as N) || null); if (box.current) box.current.style.cursor = n ? "pointer" : "grab"; }}
-          onNodeClick={(n: object) => { const x = n as N; if (x.kind === "tag") { window.location.href = "/brain/reels?tag=" + encodeURIComponent(x.tags[0]); return; } if (sel?.id === x.id) window.location.href = href(x.id); else { setSel(x); fg.current?.centerAt(x.x, x.y, 500); } }}
+          onNodeClick={(n: object) => { const x = n as N; if (x.kind === "tag") { router.push("/brain/reels?tag=" + encodeURIComponent(x.tags[0])); return; } if (sel?.id === x.id) router.push(href(x.id)); else { setSel(x); fg.current?.centerAt(x.x, x.y, 500); } }}
           onBackgroundClick={() => setSel(null)} onEngineStop={() => { if (!fitted.current) { fitted.current = true; fg.current?.zoomToFit(600, 50); } }} />}
         <div className="legend">{Object.entries(COLORS).map(([k, c]) => <label key={k} className="row" style={{ gap: 5, cursor: "pointer" }}>
           <input type="checkbox" checked={kinds[k]} onChange={(e) => setKinds({ ...kinds, [k]: e.target.checked })} style={{ accentColor: c }} />

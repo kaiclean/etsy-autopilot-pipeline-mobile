@@ -1,5 +1,6 @@
 import type { ProviderCreditSignal } from "./provider-errors";
 import { upscalerState } from "@/lib/upscaler-status";
+import type { PublishMode } from "./publish-mode";
 import { isPodPreset, type PodPreset } from "./fees";
 
 export type PrintifyPin = { blueprintId: number; printProviderId: number; variantIds: number[] };
@@ -240,8 +241,10 @@ export const config = {
     return env("RESEARCH_GOOGLE_TRENDS") !== "false";
   },
   /** Live publishing needs explicit opt-in on top of credentials. */
-  get publishMode(): "dry-run" | "live" {
-    return env("PUBLISH_MODE") === "live" ? "live" : "dry-run";
+  get publishMode(): PublishMode {
+    const value = env("PUBLISH_MODE") ?? "dry-run";
+    if (value !== "dry-run" && value !== "live") throw new Error(`PUBLISH_MODE=${value} is invalid. Use dry-run or live.`);
+    return value;
   },
 };
 

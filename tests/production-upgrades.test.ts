@@ -46,12 +46,16 @@ afterEach(() => {
   restoreEnv();
 });
 
-describe("publish mode stays dry-run", () => {
-  it("treats anything other than live as dry-run", () => {
+describe("publish mode stays fail-safe", () => {
+  it("accepts dry-run/live and rejects every other value instead of silently downgrading", () => {
     delete process.env.PUBLISH_MODE;
     expect(config.publishMode).toBe("dry-run");
-    process.env.PUBLISH_MODE = "LIVE";
-    expect(config.publishMode).toBe("dry-run");
+    process.env.PUBLISH_MODE = "live";
+    expect(config.publishMode).toBe("live");
+    for (const value of ["PUBLISH_MODE", "LIVE", "production"]) {
+      process.env.PUBLISH_MODE = value;
+      expect(() => config.publishMode).toThrow(new RegExp(`PUBLISH_MODE=${value} is invalid`));
+    }
   });
 });
 
