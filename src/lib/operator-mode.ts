@@ -3,6 +3,8 @@ export type PublishMode = "dry-run" | "live";
 export type OperatorMode = {
   publishMode: PublishMode;
   demo: boolean;
+  envMode?: PublishMode;
+  paused?: boolean;
 };
 
 export type DryRunNotice = {
@@ -22,6 +24,8 @@ export function dryRunNotice(mode: OperatorMode): DryRunNotice | null {
 }
 
 export function settingsModeSubtitle(mode: OperatorMode): string {
+  if(mode.paused) return "Automation paused";
+  if(mode.publishMode=== "live" && mode.envMode=== "dry-run") return "Live selected; host blocks publishing";
   if (mode.publishMode === "dry-run") {
     return mode.demo
       ? "Demo data · dry-run publishes (nothing is sent to Etsy or Printify)"

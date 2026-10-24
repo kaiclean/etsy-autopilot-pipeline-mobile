@@ -21,7 +21,7 @@ import { isProviderCreditsError, yieldStatus } from "@/lib/provider-errors";
 import { getSetting } from "@/lib/settings";
 import { digitalPreviewUrl } from "@/lib/png";
 import { preparePrintFile, type PreparedArt } from "./artwork";
-import { stageSucceededToday } from "./chain-day";
+import { stageProcessedToday } from "./chain-day";
 import { ensureDesignBrief } from "./design-brief";
 import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
@@ -153,7 +153,7 @@ export const runDesign: StageFn = async (ctx) => {
     .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(200), queueDayStart, automation.designsPerRun);
   if (queue.length === 0) {
-    const chainDone = ctx.trigger === "cron" && (await stageSucceededToday(db, ctx.shopId, "daily", ctx.now));
+    const chainDone = ctx.trigger === "cron" && (await stageProcessedToday(db, ctx.shopId, "daily", ctx.now));
     if (chainDone) return "No selected keywords. The daily chain already ran today, so the backlog stays put.";
     queue = await db
       .select()
@@ -477,6 +477,7 @@ export const runDesign: StageFn = async (ctx) => {
       failures++;
       await noteFailure(kw);
       log(`Generation failed for “${kw.phrase}”: ${message}`, "error");
+      if (/AI budget reached|AI budget busy/.test(message)) { budgetStopped=true; break; }
       if (isProviderCreditsError(message)) {
         creditsStopped = true;
         log("Image provider out of credits. Stopping this run so the provider is not called again.", "error");
@@ -487,8 +488,8 @@ export const runDesign: StageFn = async (ctx) => {
   if (made) {
     await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" }, ctx.demo);
   }
-  const summary = `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
-  const status = yieldStatus(made, failures);
+  const summary = `${budgetStopped ? "Blocked by AI quota or budget. " : ""}Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
+  const status = budgetStopped ? "warning" : yieldStatus(made, failures);
   if (status === "success") return summary;
   return stageResult(creditsStopped ? `Image provider out of credits. ${summary}` : summary, status);
 };

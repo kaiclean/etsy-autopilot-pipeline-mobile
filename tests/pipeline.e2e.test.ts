@@ -46,7 +46,7 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     expect(await count(db, designs, eq(designs.status, "generated"))).toBeGreaterThan(0);
 
     const l = await runStage("listing", "manual", { db, random });
-    expect(l.status).toBe("success");
+    expect(l.status).toBe("warning");
     const pendingAfter = await count(db, listings, eq(listings.status, "pending_approval"));
     expect(pendingAfter).toBe(pendingBefore);
     const held = await db.select().from(listings).where(eq(listings.status, "quality_failed"));

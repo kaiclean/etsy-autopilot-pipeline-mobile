@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const params = new URL(req.url).searchParams;
   const designId = Number(params.get("designId"));
   if (!Number.isInteger(designId) || designId < 1) return NextResponse.json({ error: "designId required" }, { status: 400 });
-  const failure = await recordUpscaleFailure(await getDb(), designId, params.get("error") ?? "unknown");
+  const failure = await recordUpscaleFailure(await getDb(), designId, params.get("error") ?? "unknown",req.headers.get("idempotency-key")??undefined);
   if (!failure) return NextResponse.json({ error: "design not found" }, { status: 404 });
   return NextResponse.json({ designId, ...failure });
 }

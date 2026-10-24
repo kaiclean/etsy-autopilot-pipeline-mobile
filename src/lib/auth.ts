@@ -24,6 +24,7 @@ export async function createSessionToken(secret: string, now = Date.now()) {
 
 export async function verifySessionToken(token: string | undefined, secret: string | undefined, now = Date.now()) {
   if (!token || !secret) return false;
+  if(!/^\d{1,12}\.[a-f0-9]{64}$/.test(token)) return false;
   const [expStr, sig] = token.split(".");
   const exp = Number(expStr);
   if (!exp || !sig || exp * 1000 < now) return false;

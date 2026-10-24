@@ -1,9 +1,11 @@
+import { upscaleFixture } from "./helpers-upscale";
 import sharp from "sharp";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const upload = vi.fn(async () => ({ url: "/api/media/x.png", key: "x.png" }));
 const apply = vi.fn(async () => []);
-vi.mock("@/db", () => ({ getDb: async () => ({ select: () => ({ from: () => ({ where: async () => [] }) }), update: () => ({ set: () => ({ where: async () => [] }) }) }) }));
+const fixture=vi.hoisted(()=>({db:null as unknown}));
+vi.mock("@/db",()=>({getDb:async()=>fixture.db}));
 vi.mock("@/lib/object-storage", () => ({ MAX_ARTWORK_BYTES: 80e6, uploadImageBytes: upload }));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: apply }));
 vi.mock("@/lib/upscale-jobs", () => ({
@@ -20,7 +22,9 @@ const post = async (body: Buffer) => {
 };
 
 describe("upscale complete size check", () => {
-  beforeEach(() => { upload.mockClear(); apply.mockClear(); });
+  let close:()=>Promise<void>;
+  beforeEach(async()=>{ const f=await upscaleFixture(130); fixture.db=f.db;close=()=>f.client.close(); upload.mockClear();apply.mockClear(); });
+  afterEach(async()=>{await close();});
   it("rejects an A3 result below 3508×4961 with 422 and stores nothing", async () => {
     const res = await post(await png(3510, 4950));
     expect(res.status).toBe(422);
@@ -30,6 +34,7 @@ describe("upscale complete size check", () => {
   it("accepts an exact A3 result", async () => {
     const res = await post(await png(3508, 4961));
     expect(res.status).toBe(200);
-    expect(apply).toHaveBeenCalledOnce();
+    expect((await res.json()).postStore).toBe("queued");
+    expect(apply).not.toHaveBeenCalled();
   });
 });

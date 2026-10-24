@@ -79,7 +79,7 @@ describe("long-running cron stages", () => {
     expect((await runStage(stage, "cron", { db, force: true })).status).toBe("success");
     const failures = await db.select().from(events).where(eq(events.type, "job.failed"));
     expect(failures.length).toBeGreaterThan(0);
-    if (stage === "orders") expect(stages.maintenance).toHaveBeenCalledTimes(2);
+    if (stage === "orders") expect(stages.maintenance).not.toHaveBeenCalled();
   });
 
   it("persists redacted logs and activity progress while daily work is still running", async () => {
@@ -120,4 +120,17 @@ describe("long-running cron stages", () => {
     }
     expect((await runStage("daily", "cron", { db, force: true })).status).toBe("success");
   });
+  it("does not undo an operator's publish-mode change while a daily run is active",async()=>{
+    let finish!:(value:string)=>void;
+    stages.research.mockImplementationOnce(()=>new Promise<string>(resolve=>{finish=resolve;}));
+    const old=await getSetting(db,"automation");
+    await setSetting(db,"automation",{...old,publishMode:"live"});
+    const run=runStage("daily","manual",{db,force:true});
+    await vi.waitFor(()=>expect(stages.research).toHaveBeenCalledOnce());
+    await setSetting(db,"automation",{...old,publishMode:"dry-run"});
+    finish("done"); await run;
+    expect((await getSetting(db,"automation")).publishMode).toBe("dry-run");
+    await setSetting(db,"automation",old);
+  });
+
 });

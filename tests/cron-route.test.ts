@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const jobs=vi.hoisted(()=>({enqueueJob:vi.fn(async()=>({id:"test-job",status:"queued"})),drainJobs:vi.fn(async()=>[])}));
+vi.mock("@/db",()=>({getDb:async()=>({})}));
+vi.mock("@/lib/shops",()=>({resolveActiveShop:async()=>({id:"shop"})}));
+vi.mock("@/lib/durable-jobs",()=>jobs);
+
 const runner = vi.hoisted(() => ({ runStage: vi.fn() }));
 const background = vi.hoisted(() => ({ callbacks: [] as Array<() => Promise<void>> }));
 
@@ -34,12 +39,12 @@ describe("cron stage route", () => {
     runner.runStage.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
     const res = await call(stage);
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ stage, status: "accepted" });
+    expect(await res.json()).toMatchObject({ stage, status: "accepted",jobId:"test-job" });
     expect(runner.runStage).not.toHaveBeenCalled();
     expect(background.callbacks).toHaveLength(1);
     const work = background.callbacks[0]();
-    expect(runner.runStage).toHaveBeenCalledWith(stage, "cron", { force: false });
-    finish();
+    expect(jobs.drainJobs).toHaveBeenCalled();
+    finish?.();
     await work;
   });
 
@@ -49,7 +54,8 @@ describe("cron stage route", () => {
     runner.runStage.mockRejectedValue(new Error("Could not start background run"));
     expect((await call("daily")).status).toBe(202);
     await expect(background.callbacks[0]()).resolves.toBeUndefined();
-    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("Could not start background run"));
+    expect(jobs.enqueueJob).toHaveBeenCalled();
+    expect(errorLog).not.toHaveBeenCalled();
   });
 
   it.each(["daily", "orders"])("does not schedule unauthorized %s work", async (stage) => {
@@ -122,7 +128,7 @@ describe("cron stage route", () => {
     const open = await call("daily", "?force=1");
     expect(open.status).toBe(202);
     await background.callbacks[0]();
-    expect(runner.runStage).toHaveBeenCalledWith("daily", "cron", { force: true });
+    expect(jobs.enqueueJob).toHaveBeenCalledWith({},"shop","stage",expect.any(String),{stage:"daily",force:true});
 
     process.env.CRON_SECRET = "unit-test-cron-secret";
     runner.runStage.mockClear();
@@ -137,6 +143,6 @@ describe("cron stage route", () => {
     });
     expect(authed.status).toBe(202);
     await background.callbacks[1]();
-    expect(runner.runStage).toHaveBeenCalledWith("daily", "cron", { force: true });
+    expect(jobs.enqueueJob).toHaveBeenCalledWith({},"shop","stage",expect.any(String),{stage:"daily",force:true});
   });
 });

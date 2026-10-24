@@ -39,7 +39,7 @@ const complete = async (designId: number, key = KEY) => {
 const png = (w: number, hgt: number) => sharp({ create: { width: w, height: hgt, channels: 3, background: "#222" } }).png().toBuffer();
 
 describe("upload hardening", () => {
-  it("(d) complete only accepts a key bound to that design, once", async () => {
+  it("(d) complete binds a key to one design and returns the durable job on replay", async () => {
     const db = await freshDb();
     const [a] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/a.png" }).returning();
     const [b] = await db.insert(schema.designs).values({ niche: "alpine", prompt: "p", provider: "cloudflare", imageUrl: "https://e/b.png" }).returning();
@@ -48,7 +48,9 @@ describe("upload hardening", () => {
     h.bytes = await png(200, 250);
     expect((await complete(b.id)).status).toBe(403);
     expect((await complete(a.id)).status).toBe(200);
-    expect((await complete(a.id)).status).toBe(403);
+    const retry=await complete(a.id);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).jobId).toBeTruthy();
   });
 
   it("(c) a rejected upload is deleted from S3", async () => {

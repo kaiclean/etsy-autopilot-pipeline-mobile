@@ -1,4 +1,6 @@
-import { and, eq, gte } from "drizzle-orm";
+import { withAiBudgetContext } from "@/lib/ai-budget";
+import { eq } from "drizzle-orm";
+import { OperationBusy, withOperationLease } from "@/lib/operation-lease";
 import { getDb, type DB } from "@/db";
 import { jobRuns, type JobRun, type LogLine, type StageName } from "@/db/schema";
 import { isDemoMode } from "@/lib/config";
@@ -6,10 +8,10 @@ import { emit } from "@/lib/events";
 import { formatMaintenanceSummary } from "@/lib/maintenance-summary";
 import { isProviderCreditsError } from "@/lib/provider-errors";
 import { utcDayKey } from "@/lib/utc-day";
-import { getSetting, setSetting } from "@/lib/settings";
+import { getSetting } from "@/lib/settings";
 import { resolveActiveShop } from "@/lib/shops";
 import { runAnalytics } from "./analytics";
-import { stageSucceededToday } from "./chain-day";
+import { stageProcessedToday } from "./chain-day";
 import { runDesign } from "./design";
 import { publishHealthReport } from "./health-report";
 import { runHot } from "./hot-signals";
@@ -23,16 +25,11 @@ import { STAGES, asStageResult, stageResult, type StageContext, type StageFn, ty
 
 const CHAIN_STAGES = ["research", "design", "listing"] as const;
 
-// Keep long-running stages exclusive for their entire lifetime, including across hot reloads.
-const server = globalThis as typeof globalThis & { __autopilotActiveStages?: Set<StageName> };
-const activeStages = (server.__autopilotActiveStages ??= new Set<StageName>());
-
 /** Research, then a design brief, then a listing draft. Never publishes or arms go-live. */
 async function runDailyChain(ctx: StageContext) {
-  if (!ctx.force && (await stageSucceededToday(ctx.db, ctx.shopId, "daily", ctx.now))) {
-    return `Daily chain already completed for ${utcDayKey(ctx.now)}. Drafts stay pending approval. Publish mode was not changed.`;
+  if (!ctx.force && (await stageProcessedToday(ctx.db, ctx.shopId, "daily", ctx.now))) {
+    return stageResult(`Daily chain already completed for ${utcDayKey(ctx.now)}. Drafts stay pending approval or blocked. Publish mode was not changed.`, (await stageProcessedToday(ctx.db,ctx.shopId,"daily",ctx.now)) === "warning" ? "warning" : "success");
   }
-  const before = await getSetting(ctx.db, "automation");
   const stageSettings = await getSetting(ctx.db, "stages");
   const parts: string[] = [];
   let warned = false;
@@ -42,7 +39,7 @@ async function runDailyChain(ctx: StageContext) {
       ctx.log(`${stage} is paused; daily chain skipped it`);
       continue;
     }
-    if (!ctx.force && (await stageSucceededToday(ctx.db, ctx.shopId, stage, ctx.now))) {
+    if (!ctx.force && (await stageProcessedToday(ctx.db, ctx.shopId, stage, ctx.now))) {
       parts.push(`${stage}: already completed today`);
       ctx.log(`${stage} already completed today`);
       continue;
@@ -51,16 +48,11 @@ async function runDailyChain(ctx: StageContext) {
     await emit(ctx.db, {
       type: "job.progress", title: `Daily chain: starting ${stage}`, href: "/pipeline/live", shopId: ctx.shopId,
     }, ctx.demo, { push: false });
-    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force });
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force, shopId: ctx.shopId });
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
     if (run.status === "warning") warned = true;
-  }
-  const after = await getSetting(ctx.db, "automation");
-  if (after.publishMode !== before.publishMode) {
-    await setSetting(ctx.db, "automation", { ...after, publishMode: before.publishMode });
-    ctx.log("Restored publish mode. The daily chain does not change go-live.", "warn");
   }
   const summary = `Daily chain finished (${parts.join(" · ")}). New drafts are pending approval or held by the quality gate. Nothing was activated.`;
   if (warned) return stageResult(summary, "warning");
@@ -89,7 +81,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal; shopId?: string };
 
 export class StageCancelled extends Error {
   constructor() { super("Cancelled by the dashboard"); this.name = "StageCancelled"; }
@@ -104,24 +96,19 @@ async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigg
 }
 
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
-  if (stage !== "daily" && stage !== "orders") return executeStage(stage, trigger, opts);
-  if (activeStages.has(stage)) {
-    const db = opts.db ?? (await getDb());
-    const shop = await resolveActiveShop(db);
-    return recordSkip(db, stage, trigger, "Already running", shop.id, isDemoMode(shop.etsyShopId ?? undefined));
-  }
-  // Acquire before any await: concurrent cron/manual/force requests cannot race.
-  activeStages.add(stage);
+  const db = opts.db ?? await getDb();
+  const shop = await resolveActiveShop(db, opts.shopId);
   try {
-    return await executeStage(stage, trigger, opts);
-  } finally {
-    activeStages.delete(stage);
+    return await withOperationLease(db, `stage:${shop.id}:${stage}`, () => withAiBudgetContext(db, shop.id, () => executeStage(stage, trigger, { ...opts, db, shopId: shop.id })));
+  } catch (error) {
+    if (!(error instanceof OperationBusy)) throw error;
+    return recordSkip(db, stage, trigger, "Already running", shop.id, isDemoMode(shop.etsyShopId ?? undefined));
   }
 }
 
 async function executeStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions): Promise<JobRun> {
   const db = opts.db ?? (await getDb());
-  const shop = await resolveActiveShop(db);
+  const shop = await resolveActiveShop(db, opts.shopId);
   const demo = isDemoMode(shop.etsyShopId ?? undefined);
   const automation = await getSetting(db, "automation");
   // Global settings.killSwitch pauses every shop. shops.kill_switch pauses this shop only.
@@ -132,12 +119,6 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
 
   const stages = await getSetting(db, "stages");
   if (stages[stage]?.paused && trigger === "cron") return recordSkip(db, stage, trigger, "Stage paused", shop.id, demo);
-
-  const [running] = await db
-    .select({ id: jobRuns.id })
-    .from(jobRuns)
-    .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
-  if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
 
   const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();
   const logs: LogLine[] = [];
@@ -165,16 +146,6 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
     },
   };
   const label = STAGES.find((s) => s.id === stage)!.label;
-  const afterOrders = async () => {
-    if (stage !== "orders" || trigger !== "cron") return;
-    try {
-      const maintenance = await runStage("maintenance", "cron", opts);
-      ctx.log(`maintenance ${maintenance.status}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "maintenance failed";
-      ctx.log(`maintenance failed: ${message.slice(0, 200)}`, "error");
-    }
-  };
   try {
     ctx.log(`Starting ${stage}`);
     if (stage === "daily" || stage === "orders") {
@@ -183,7 +154,6 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
       }, demo, { push: false });
     }
     const result = asStageResult(await STAGE_FNS[stage](ctx));
-    await afterOrders();
     await pendingLogs;
     const [done] = await db
       .update(jobRuns)
@@ -195,7 +165,6 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
   } catch (e) {
     const msg = writeStageLog(stage, "error", (e as Error).message);
     logs.push({ t: new Date().toISOString(), level: "error", msg });
-    await afterOrders();
     await pendingLogs;
     const [done] = await db
       .update(jobRuns)

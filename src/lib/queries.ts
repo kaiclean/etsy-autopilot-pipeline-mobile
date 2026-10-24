@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents } from "@/db/schema";
 import type { HotTodayItem } from "@/components/hot-today-card";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
@@ -108,7 +108,7 @@ export async function getShellData() {
     resolveRequestShop(db).catch(() => null),
   ]);
   const demo = isDemoMode(shop?.etsyShopId ?? undefined);
-  const publishMode = effectivePublishMode(automation.publishMode);
+  const publishMode = automation.killSwitch || shop?.killSwitch || config.publishMode !== "live" ? "dry-run" : effectivePublishMode(automation.publishMode);
   const killSwitch = automation.killSwitch || Boolean(shop?.killSwitch);
   return {
     pendingCount: pending.length,
@@ -151,11 +151,12 @@ type RangeKey = "today" | "7d" | "30d";
 
 async function loadWindow(days: number, now = new Date()) {
   const db = await getDb();
+  const shop=await resolveRequestShop(db);
   const since = new Date(now.getTime() - days * DAY);
   const [o, c, s] = await Promise.all([
-    db.select().from(orders).where(and(gte(orders.createdAt, since), dashboardOrdersWhere(), revenueEligibleOrderWhere())),
-    db.select().from(costs).where(and(gte(costs.createdAt, since), visible(costs.isDemo))),
-    db.select().from(dailyStats).where(visible(dailyStats.isDemo)),
+    db.select().from(orders).where(and(eq(orders.shopId,shop.id),gte(orders.createdAt, since), dashboardOrdersWhere(), revenueEligibleOrderWhere())),
+    db.select().from(costs).where(and(eq(costs.shopId,shop.id),gte(costs.createdAt, since), visible(costs.isDemo))),
+    db.select().from(dailyStats).where(and(eq(dailyStats.shopId,shop.id),visible(dailyStats.isDemo))),
   ]);
   return { orders: o, costs: c, stats: s };
 }
@@ -233,16 +234,18 @@ export async function getHomeData() {
 
 export async function getLastRuns() {
   const db = await getDb();
-  const runs = await db.select().from(jobRuns).where(visible(jobRuns.isDemo)).orderBy(desc(jobRuns.id)).limit(200);
-  const last: Partial<Record<StageName, JobRun>> = {};
-  for (const r of runs) if (!last[r.stage]) last[r.stage] = r;
-  return STAGES.map((s) => ({ ...s, run: last[s.id] ?? null }));
+  const shop=await resolveRequestShop(db);
+  return Promise.all(STAGES.map(async(stage)=>{
+    const [run]=await db.select().from(jobRuns).where(and(eq(jobRuns.shopId,shop.id),eq(jobRuns.stage,stage.id),visible(jobRuns.isDemo))).orderBy(desc(jobRuns.id)).limit(1);
+    return {...stage,run:run??null};
+  }));
 }
 
 export async function getPipelineData() {
   const db = await getDb();
+  const shop=await resolveRequestShop(db);
   const [runs, stageSettings, automation, kw, recentDesigns] = await Promise.all([
-    db.select().from(jobRuns).where(visible(jobRuns.isDemo)).orderBy(desc(jobRuns.id)).limit(300),
+    db.select().from(jobRuns).where(and(eq(jobRuns.shopId,shop.id),visible(jobRuns.isDemo))).orderBy(desc(jobRuns.id)).limit(300),
     getSetting(db, "stages"),
     getSetting(db, "automation"),
     db
@@ -368,16 +371,18 @@ export async function getDashboardOps() {
 
 export async function getQueue() {
   const db = await getDb();
+  const shop=await resolveRequestShop(db);
   return db
     .select(listingDisplayColumns())
     .from(listings)
-    .where(and(eq(listings.status, "pending_approval"), visible(listings.isDemo)))
+    .where(and(eq(listings.shopId,shop.id), inArray(listings.status, ["pending_approval","quality_failed"]), visible(listings.isDemo)))
     .orderBy(asc(listings.createdAt));
 }
 
 export async function getListings() {
   const db = await getDb();
-  return db.select(listingDisplayColumns()).from(listings).where(visible(listings.isDemo)).orderBy(desc(listings.updatedAt));
+  const shop=await resolveRequestShop(db);
+  return db.select(listingDisplayColumns()).from(listings).where(and(eq(listings.shopId,shop.id),visible(listings.isDemo))).orderBy(desc(listings.updatedAt));
 }
 
 export async function getOrders() {
@@ -519,6 +524,7 @@ export async function getConnectionsData() {
   const webhooksRegistered = registeredWebhookCount(lastRuns.find((stage) => stage.id === "maintenance")?.run?.summary);
   const designRun = lastRuns.find((stage) => stage.id === "design")?.run ?? null;
   const providerCredits = providerCreditSignal(designRun);
+  const podProducts=await getSetting(db,"podProducts");
   return {
     checks: connectionHealth({
       etsyConnected,
@@ -527,6 +533,7 @@ export async function getConnectionsData() {
       etsyShopId: shop?.etsyShopId,
       webhooksRegistered,
       providerCredits,
+      enabledPresets:podProducts.enabledPresets,
       imageRun: designRun,
     }),
     webhooksRegistered,

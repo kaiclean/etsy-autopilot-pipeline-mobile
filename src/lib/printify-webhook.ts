@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { advanceOrder } from "./fulfillment-state";
+import { and, eq, sql } from "drizzle-orm";
 import type { DB } from "@/db";
 import { listings, orders, printifyEvents, type FulfillmentStatus } from "@/db/schema";
 import { config } from "@/lib/config";
@@ -156,7 +157,8 @@ export async function ingestPrintifyWebhook(
   input: { rawBody: string; payload: unknown; verified: boolean },
 ): Promise<PrintifyIngestResult> {
   const mapping = extractPrintifyMapping(input.payload, input.rawBody);
-  const payload = redactWebhookPayload(input.payload);
+  // Persist only operational identifiers, never the supplier's raw buyer payload.
+  const payload = { eventId: mapping.eventId, topic: mapping.topic };
   const inserted = await db
     .insert(printifyEvents)
     .values({
@@ -191,7 +193,7 @@ export async function ingestPrintifyWebhook(
             ...(awaitingId && incoming ? { status: "published" as const, publishError: null, publishedAt: listing.publishedAt ?? now } : {}),
             updatedAt: now,
           })
-          .where(eq(listings.id, listing.id));
+          .where(and(eq(listings.id, listing.id), listing.etsyListingId ? eq(listings.etsyListingId,listing.etsyListingId) : sql`${listings.etsyListingId} is null`));
         listingUpdated = true;
       }
       if (incoming && (fill || listing.etsyListingId === incoming)) {
@@ -215,15 +217,7 @@ export async function ingestPrintifyWebhook(
       const nextStatus = advanceFulfillment(order.fulfillmentStatus, mapping.fulfillment);
       const nextPod = shouldFillExternalId(order.podOrderId, mapping.printifyOrderId) ? mapping.printifyOrderId : undefined;
       if (nextStatus || nextPod) {
-        await db
-          .update(orders)
-          .set({
-            ...(nextStatus ? { fulfillmentStatus: nextStatus, fulfillmentChangedAt: new Date(), fulfillmentStalledAt: null } : {}),
-            ...(nextPod ? { podOrderId: nextPod } : {}),
-            updatedAt: new Date(),
-          })
-          .where(eq(orders.id, order.id));
-        orderUpdated = true;
+        orderUpdated = await advanceOrder(db,order.id,mapping.fulfillment,nextPod);
       }
     }
   }

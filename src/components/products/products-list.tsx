@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { activateListing, publishPodListing, queueArtRegeneration, readDeliveryFile, savePodSample, verifyDeliveryFile } from "@/app/actions";
+import { activateListing, publishPodListing, queueDesignRepair, queueArtRegeneration, readDeliveryFile, savePodSample, verifyDeliveryFile } from "@/app/actions";
 import { EmptyState, ListingStatusPill, NicheTag, Panel, Thumb } from "@/components/common";
 import { ProvenanceBadge } from "@/components/provenance-badge";
 import { FeeBreakdown } from "@/components/fee-breakdown";
@@ -325,6 +325,7 @@ function HumanPublish({ l }: { l: Listing }) {
         <p className="text-muted-foreground">Record a physical sample for this blueprint and provider, then publish this listing to Etsy.</p>
       )}
       <div className="flex flex-wrap gap-2">
+        {l.designId && l.status === "quality_failed" && <Button type="button" variant="secondary" disabled={pending} onClick={()=>run("Artwork repair queued",()=>queueDesignRepair(l.designId!))}>Queue artwork repair</Button>}
         <Button
           type="button"
           variant="secondary"

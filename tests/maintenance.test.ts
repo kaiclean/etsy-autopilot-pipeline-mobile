@@ -179,7 +179,7 @@ describe("Printify webhook registration", () => {
       return new Response("nope", { status: 500 });
     });
     const failed = await ensurePrintifyWebhooks();
-    expect(failed.reason).toContain("[redacted]");
+    expect(failed.reason).toContain("HTTP 500");
     expect(failed.reason).not.toContain(secret);
     expect(failed.reason).not.toContain(token);
     expect(JSON.stringify(failed)).not.toContain(secret);
@@ -290,13 +290,14 @@ describe("inline image backfill batch", () => {
 });
 
 describe("maintenance cron", () => {
-  it("records a maintenance job from the orders cron without failing that stage", async () => {
+  it("runs maintenance independently from the orders cron", async () => {
     process.env.DEMO_MODE = "true";
     const db = await memoryDb();
     const ordersRun = await runStage("orders", "cron", { db, random: () => 0 });
     expect(ordersRun.status).toBe("success");
     expect(ordersRun.summary).toContain("new order");
-    expect(ordersRun.logs.some((line) => line.msg === "maintenance success")).toBe(true);
+    expect(ordersRun.logs.some((line) => line.msg === "maintenance success")).toBe(false);
+    await runStage("maintenance","cron",{db});
     const [maintenance] = await db.select().from(jobRuns).where(eq(jobRuns.stage, "maintenance"));
     expect(maintenance.status).toBe("success");
     const summary = JSON.parse(maintenance.summary ?? "{}") as { webhooks: { reason: string } };

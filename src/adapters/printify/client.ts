@@ -46,6 +46,8 @@ function redactPrintifyError(error: unknown, secrets: Array<string | undefined>)
   return new Error(message);
 }
 
+class PrintifyHttpError extends Error { constructor(readonly status:number,readonly retryAfter:number) {super(`Printify request failed: HTTP ${status}`);} }
+
 export class PrintifyPublishError extends Error {
   constructor(
     message: string,
@@ -58,13 +60,25 @@ export class PrintifyPublishError extends Error {
 
 export class PrintifyLiveClient implements PrintifyAdapter {
   readonly mode = "live" as const;
+  constructor(private beforeWrite?: () => Promise<void>) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path:string,init:RequestInit={}):Promise<T> {
+    const read=["GET","HEAD"].includes((init.method??"GET").toUpperCase());
+    for(let attempt=0;;attempt++) {
+      try { return await this.requestOnce<T>(path,init); }
+      catch(error) {
+        if(!read || attempt>=2 || !(error instanceof PrintifyHttpError) || ![429,500,502,503,504].includes(error.status) || error.retryAfter>5000) throw error;
+        await new Promise(resolve=>setTimeout(resolve,error.retryAfter || 250*2**attempt));
+      }
+    }
+  }
+  private async requestOnce<T>(path: string, init: RequestInit = {}): Promise<T> {
     const method = init.method ?? "GET";
+    if (!["GET", "HEAD"].includes(method.toUpperCase())) await this.beforeWrite?.();
     let res: Response;
     try {
       res = await fetch(`${API}${path}`, {
-        ...init,
+        ...init, signal: AbortSignal.timeout(20_000), redirect: "error", cache: "no-store",
         headers: {
           Authorization: `Bearer ${config.printify.token}`,
           "Content-Type": "application/json",
@@ -75,8 +89,9 @@ export class PrintifyLiveClient implements PrintifyAdapter {
     } catch (error) {
       throw describeFetchError(error, `Printify ${method} ${path}`);
     }
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Printify ${method} ${path} → ${res.status}: ${text.slice(0, 400)}`);
+    const { readBoundedText } = await import("@/lib/request-body");
+    const text = await readBoundedText(res, 8 * 1024 * 1024);
+    if (!res.ok) throw new PrintifyHttpError(res.status,Math.max(0,Number(res.headers.get("retry-after"))||0)*1000);
     if (!text) return undefined as T;
     return JSON.parse(text) as T;
   }
@@ -141,14 +156,18 @@ export class PrintifyLiveClient implements PrintifyAdapter {
       || current.variants.some((variant) => !Number.isSafeInteger(variant?.id) || variant.id <= 0 || typeof variant.is_enabled !== "boolean")) {
       throw new Error("Cannot synchronize existing Printify product: valid supplier variants are required");
     }
+    if (!Number.isFinite(input.priceChf) || input.priceChf <= 0) throw new Error("Invalid product price");
     await this.request(path, {
       method: "PUT",
       body: JSON.stringify({
         title: input.title,
         description: input.description,
         tags: input.tags,
+        variants: current.variants.map((variant) => ({ id: variant.id, is_enabled: variant.is_enabled, price: Math.round(input.priceChf * 100) })),
       }),
     });
+    const confirmed=await this.request<{variants?:{id:number;price:number;is_enabled:boolean}[]}>(path);
+    if(!confirmed.variants || current.variants.some(v=>!confirmed.variants!.some(row=>row.id===v.id && row.is_enabled===v.is_enabled && row.price===Math.round(input.priceChf*100)))) throw new Error("Supplier price verification failed; publishing held");
     return {
       productId: input.existingProductId!,
       blueprintId: current.blueprint_id ?? input.blueprintId,

@@ -1,3 +1,5 @@
+import { withAiBudgetContext } from "./ai-budget";
+import { assertOperationAllowed } from "./operation-policy";
 import { and, eq, isNull } from "drizzle-orm";
 import type { DB } from "@/db";
 import { costs, designs, listings } from "@/db/schema";
@@ -18,6 +20,7 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   const [design] = await db.select().from(designs).where(eq(designs.id, id));
   if (!design) throw new Error(`design #${id} not found`);
   if (!design.needsRedesign) throw new Error(`design #${id} is not flagged for redesign`);
+  await assertOperationAllowed(db, design.shopId);
   const automation = await getSetting(db, "automation");
   const now = new Date();
   const spent = await aiSpend(db, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
@@ -26,7 +29,8 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   // Count generations, not CHF (Cloudflare costs 0). Atomic, shared with daily runs.
   const slot = await reserveImage(db, { provider: provider.name, redesign: true });
   if (!slot.ok) throw new Error(slot.reason);
-  const img = await provider.generate({ prompt: opts.hint ? `${design.prompt}, ${opts.hint}` : design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
+  const render = /upscale|blank|edge|trim/i.test(design.needsRedesign.reason) ? {width:1280,height:1600} : PRINT_RENDER;
+  const img = await withAiBudgetContext(db,design.shopId,()=>provider.generate({ prompt: opts.hint ? `${design.prompt}, ${opts.hint}` : design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...render, label: `redesign #${id}`, print: true }));
   await db.insert(costs).values({ shopId: design.shopId, kind: "ai_image", amountChf: img.costChf, note: `redesign #${id} (${img.provider})`, isDemo: false });
   const measured = await preparePrintFile(img.url);
   if (!measured.width || !measured.height) throw new Error("re-rendered image could not be measured");
@@ -47,6 +51,7 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   if (flat.review) log(`[redesign] design #${id} dark/flat edge bands (top ${flat.top} bottom ${flat.bottom} left ${flat.left} right ${flat.right}px): not trimmed, flagged for Design review`);
   await db.update(designs).set({
     designReview: flat.review ? { status: "pending", note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } : null,
+    upscaleFailure:null,
     imageUrl: img.url, sourceImageUrl: img.url, sourcePx: { width: measured.width, height: measured.height },
     imageWidth: measured.width, imageHeight: measured.height, upscaleMethod: null, outputPx: null, colorVariance: measured.variance,
   }).where(eq(designs.id, id));

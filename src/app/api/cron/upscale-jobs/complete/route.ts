@@ -1,15 +1,16 @@
+import { sql } from "drizzle-orm";
+import { enqueueJob, findJob, drainJobs } from "@/lib/durable-jobs";
+import { assertOperationAllowed } from "@/lib/operation-policy";
 import sharp from "sharp";
 import { NextResponse, after } from "next/server";
-import { primeArtworkBytes } from "@/lib/artwork-source";
 import { getDb } from "@/db";
-import { upscaleDesigns } from "@/db/upscale-designs";
 import { MAX_ARTWORK_BYTES } from "@/lib/object-storage";
 import { deleteStoredObject, readStoredObject, storedUrlForKey, uploadImageBytes, MEDIA_KEY } from "@/lib/object-storage";
 import { createHash } from "node:crypto";
 import { consumeUploadKey } from "@/lib/upscale-failures";
 import { designs } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { attachA3Crop, authorizedUpscaleJob, clearRedesignFlag, requiredUpscaleTarget } from "@/lib/upscale-jobs";
+import { authorizedUpscaleJob, requiredUpscaleTarget } from "@/lib/upscale-jobs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -25,11 +26,14 @@ export async function POST(req: Request) {
   const method = params.get("method");
   const srcW = Number(params.get("srcW"));
   const srcH = Number(params.get("srcH"));
-  if (!Number.isInteger(designId) || designId < 1 || method !== "realesrgan" || !Number.isInteger(srcW) || !Number.isInteger(srcH)) {
+  if (!Number.isInteger(designId) || designId < 1 || method !== "realesrgan" || !Number.isInteger(srcW) || srcW < 1 || !Number.isInteger(srcH) || srcH < 1) {
     return NextResponse.json({ error: "designId, method=realesrgan, srcW and srcH are required" }, { status: 400 });
   }
   // Preferred: the worker PUT the PNG to S3 via a presigned URL and sends only ?key=. The server downloads it and
   // measures pixels + sha256 itself; worker-reported sizes are never trusted.
+  const dbGuard=await getDb();
+  const lease=await dbGuard.execute<{owner:string;valid:boolean}>(sql`select owner,expires_at>now() as valid from upscale_work_leases where design_id=${designId}`);
+  if(lease.rows.length && (!lease.rows[0].valid || lease.rows[0].owner!==params.get("token"))) return NextResponse.json({error:"Worker lease lost"},{status:409});
   const key = params.get("key");
   const t0 = Date.now();
   const step = (name: string) => console.log(`[upscale-jobs] design #${designId} complete step ${name} +${Date.now() - t0}ms`);
@@ -37,10 +41,14 @@ export async function POST(req: Request) {
   let presetStored: { url: string; key: string } | null = null;
   if (key) {
     if (!MEDIA_KEY.test(key)) return NextResponse.json({ error: "invalid key" }, { status: 400 });
-    if (!(await consumeUploadKey(await getDb(), key, designId))) {
+    const db=await getDb();
+    const existing=await findJob(db,`upscale:${designId}:${key}`);
+    if(existing) return NextResponse.json({designId,jobId:existing.id,status:existing.status,postStore:existing.status});
+    const issued=await db.execute(sql`select u.key from upscale_uploads u join designs d on d.id=u.design_id where u.key=${key} and u.design_id=${designId} and u.consumed_at is null and (u.source_url is null or u.source_url=d.image_url)`);
+    if (!issued.rows.length) {
       return NextResponse.json({ error: `key was not issued for design #${designId} or was already used` }, { status: 403 });
     }
-    step("key-consumed");
+    step("key-validated");
     const object = await readStoredObject(key);
     step(`s3-read ${object?.bytes.length ?? 0}B`);
     if (!object) return NextResponse.json({ error: "uploaded object not found" }, { status: 404 });
@@ -60,6 +68,9 @@ export async function POST(req: Request) {
   const meta = await sharp(bytes, { limitInputPixels: 128_000_000 }).metadata().catch(() => null);
   if (!meta || meta.format !== "png" || !meta.width || !meta.height) return reject({ error: "body must be a PNG" }, 415);
   const db = await getDb();
+  const [source]=await db.select().from(designs).where(eq(designs.id,designId));
+  if(!source) return reject({error:"design not found"},404);
+  await assertOperationAllowed(db,source.shopId);
   const target = await requiredUpscaleTarget(db, designId);
   step("target");
   if (!target) return reject({ error: `design #${designId} not found` }, 404);
@@ -91,29 +102,13 @@ export async function POST(req: Request) {
   stored ??= await uploadImageBytes(finalBytes, "image/png");
   if (!stored) return NextResponse.json({ error: "object storage is not configured" }, { status: 503 });
   const finalSha = b.blank ? createHash("sha256").update(finalBytes).digest("hex") : sha256;
-  const processed = { url: stored.url, upscaleMethod: "realesrgan" as const, sourcePx: { width: srcW, height: srcH }, outputPx: size };
-  primeArtworkBytes(stored.url, finalBytes);
-  const storedKey = stored.key, storedUrl = stored.url;
-  console.log(`[upscale-jobs] design #${designId} realesrgan ${srcW}×${srcH} → ${size.width}×${size.height} stored ${storedKey} (${finalBytes.length} bytes, sha256 ${finalSha}, measured server-side)`);
-  step("stored");
-  // Copy/quality gates, A3 crop + per-product print files and the review flag run after the response
-  // (they read the primed bytes, not S3) so the worker gets its 200 well under the timeout.
-  const postStore = async () => {
-    try {
-      await upscaleDesigns(db, [designId], true, new Map([[designId, processed]]));
-      step("gates");
-      await db.update(designs).set({ upscaleFailure: null, ...(flat.review ? { designReview: { status: "pending" as const, note: "dark/flat edge bands — check at zoom", at: new Date().toISOString() } } : {}) }).where(eq(designs.id, designId));
-      await attachA3Crop(db, designId, finalBytes, storedUrl, size);
-      step("a3+print-files");
-      await clearRedesignFlag(db, designId, size);
-      step("done");
-    } catch (error) {
-      console.error(`[upscale-jobs] design #${designId} post-store step failed: ${error instanceof Error ? error.message.slice(0, 200) : "error"}`);
-    }
-  };
-  // Outside a Next request scope (tests, scripts) after() throws; run inline then.
-  let deferred = true;
-  try { after(postStore); } catch { deferred = false; await postStore(); }
+  const job=await enqueueJob(db,source.shopId,"upscale",`upscale:${designId}:${key ?? stored.key}`,{
+    designId,key:stored.key,url:stored.url,sourceUrl:source.imageUrl,sourcePx:{width:srcW,height:srcH},outputPx:size,flatReview:flat.review,sha256:finalSha,
+  });
+  if(key) await consumeUploadKey(db,key,designId);
+  // The bytes and durable intent survive a lost post-response callback or deployment.
+  try { after(async()=>{ await drainJobs(db,1); }); } catch { /* Scheduled drain owns recovery outside request scope. */ }
+  const storedKey=stored.key,storedUrl=stored.url;
   const edge = { bright: { top: b.top, bottom: b.bottom, left: b.left, right: b.right, trimmed: b.blank }, flat };
-  return NextResponse.json({ designId, key: storedKey, url: storedUrl, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, postStore: deferred ? "running" : "done" });
+  return NextResponse.json({ designId, key: storedKey, url: storedUrl, bytes: finalBytes.length, sha256: finalSha, outputPx: size, edge, jobId:job.id,postStore:"queued" });
 }

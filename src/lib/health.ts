@@ -100,7 +100,7 @@ function etsyCheck(etsyConnected: boolean, publishMode: PublishMode, accessExpir
   };
 }
 
-function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
+function printifyCheck(webhooksRegistered?: number | null, enabledPresets?: PodPreset[]): HealthCheck {
   const envVars = ["PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID", "PRINTIFY_PRESETS_JSON", "PRINTIFY_PIN_PRESET", "PRINTIFY_BLUEPRINT_ID", "PRINTIFY_PRINT_PROVIDER_ID", "PRINTIFY_VARIANT_IDS", "PRINTIFY_WEBHOOK_SECRET"];
   const registered = webhooksRegistered == null ? " Webhooks: registration not checked." :
     webhooksRegistered > 0 ? ` Webhooks: ${webhooksRegistered} registered.` : " Webhooks: none registered.";
@@ -123,12 +123,12 @@ function printifyCheck(webhooksRegistered?: number | null): HealthCheck {
     .join("; ");
   const pins = `Preset pins — ${presets}.`;
   if (hasPrintifyCredentials()) {
-    const allPinned = (Object.keys(POD_PRESETS) as PodPreset[]).every((preset) => resolvePrintifyPin(preset));
+    const allPinned = (enabledPresets ?? Object.keys(POD_PRESETS) as PodPreset[]).every((preset) => resolvePrintifyPin(preset));
     return {
       id: "printify",
       name: "Printify API",
       level: allPinned ? "green" : "yellow",
-      label: allPinned ? "Ready" : "Pins missing",
+      label: allPinned ? "Configured" : "Pins missing",
       detail: `API token and shop id are set. ${pins} Unpinned products are held; blanks are never auto-selected. ${webhookNote(p.webhookSecret)}${registered}`,
       envVars,
     };
@@ -587,6 +587,7 @@ export function connectionHealth(input: {
   accessExpired?: boolean;
   etsyShopId?: string | null;
   webhooksRegistered?: number | null;
+  enabledPresets?: PodPreset[];
   /** Latest design run. 402/credit errors turn the image check red or amber. */
   providerCredits?: ProviderCreditSignal;
   /** Latest design run. A 401, 404, or model error replaces the image check's Ready. */
@@ -597,7 +598,7 @@ export function connectionHealth(input: {
   return [
     databaseCheck(),
     etsyCheck(input.etsyConnected, publishMode, input.accessExpired === true, input.etsyShopId),
-    printifyCheck(input.webhooksRegistered),
+    printifyCheck(input.webhooksRegistered,input.enabledPresets),
     gelatoCheck(),
     storageCheck(),
     pushCheck(),

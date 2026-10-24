@@ -211,6 +211,13 @@
       "when": 1792503600000,
       "tag": "0031_design_review",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0032_operation_recovery",
+      "breakpoints": true
     }
   ]
 }

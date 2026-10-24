@@ -51,12 +51,12 @@ export const runAnalytics: StageFn = async (ctx) => {
   const today = dayKey(ctx.now);
   if ((unavailable === 0 && published.length > 0) || dViews > 0 || dFavs > 0) {
     const [row] = await db.select().from(dailyStats)
-      .where(and(eq(dailyStats.date, today), eq(dailyStats.isDemo, ctx.demo)));
+      .where(and(eq(dailyStats.shopId,ctx.shopId),eq(dailyStats.date, today), eq(dailyStats.isDemo, ctx.demo)));
     if (row) {
       await db.update(dailyStats).set({ views: row.views + dViews, favorites: row.favorites + dFavs })
         .where(eq(dailyStats.id, row.id));
     } else {
-      await db.insert(dailyStats).values({ date: today, views: dViews, favorites: dFavs, isDemo: ctx.demo });
+      await db.insert(dailyStats).values({ shopId:ctx.shopId,date: today, views: dViews, favorites: dFavs, isDemo: ctx.demo });
     }
   }
   log(`Views +${dViews}, favorites +${dFavs} across ${published.length} live listings (${etsy.mode})`);

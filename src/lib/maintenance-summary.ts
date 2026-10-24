@@ -25,12 +25,9 @@ export function formatMaintenanceSummary(summary: string | null | undefined): st
     if (!isSummary(parsed)) return summary;
     const ok = Number(parsed.webhooks.existing) + Number(parsed.webhooks.created);
     const skipped = Number(parsed.webhooks.skipped) || 0;
-    const benign = parsed.webhooks.reason === "demo mode" || parsed.webhooks.reason === "dry-run";
     const webhooks =
       parsed.webhooks.reason && ok === 0
-        ? benign
-          ? `${skipped} ok`
-          : `skipped (${parsed.webhooks.reason})`
+        ? `${skipped} skipped (${parsed.webhooks.reason})`
         : skipped > 0 && parsed.webhooks.reason
           ? `${ok} ok, ${skipped} failed`
           : `${ok} ok`;

@@ -5,7 +5,7 @@ import { designs } from "@/db/schema";
 /** Approval is blocked while a design is flagged for redesign or awaiting Design's sign-off. */
 export async function designReviewBlocker(db: DB, designId: number) {
   const [row] = await db.select({ flag: designs.needsRedesign, review: designs.designReview }).from(designs).where(eq(designs.id, designId));
-  if (!row) return null;
+  if (!row) return "Design is missing; review the artwork before approval.";
   if (row.review?.status === "pending") return "Design review pending: Design must sign off the new artwork before approval.";
   if (row.review?.status === "rejected") return `Design rejected the artwork${row.review.note ? `: ${row.review.note}` : ""}.`;
   if (row.flag) return "Design is flagged for redesign.";
@@ -26,4 +26,11 @@ export async function signOffDesign(db: DB, designId: number, verdict: "approve"
   }
   console.log(`[design-review] design #${designId} ${verdict}${note ? `: ${note}` : ""}`);
   return { designId, verdict, at };
+}
+
+/** Shared by every approval and publication entry point. */
+export async function approvalBlocker(db: DB, listing: { designId: number | null; validation: {code:string;message:string}[] }) {
+  const held = listing.validation.find(issue => ["mockups_stale", "print_file_held"].includes(issue.code));
+  if (held) return held.message;
+  return listing.designId ? designReviewBlocker(db, listing.designId) : null;
 }

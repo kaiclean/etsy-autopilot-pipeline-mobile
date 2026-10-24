@@ -88,7 +88,7 @@ describe("supplier previews before approval", () => {
     expect(mocks.createAndPublish).toHaveBeenCalledWith(expect.objectContaining({
       description: expect.stringContaining("Processing: 2–4 business days.\nShipping: 3–7 business days."),
     }));
-    expect(mocks.getPrintifyAdapter).toHaveBeenCalledWith({ db, intent: "write" });
+    expect(mocks.getPrintifyAdapter).toHaveBeenCalledWith({ db, intent: "write",shopId:expect.any(String) });
   });
 
   it("reuses the created product, refreshes delayed images, and preserves illustrative views", async () => {
@@ -175,7 +175,7 @@ describe("supplier previews before approval", () => {
     expect((await prepareSupplierPreview(db, row)).ready).toBe(false);
     expect(mocks.createAndPublish).not.toHaveBeenCalled();
     expect(mocks.getProductImages).not.toHaveBeenCalled();
-    expect(mocks.getPrintifyAdapter).toHaveBeenLastCalledWith({ db, intent: "read" });
+    expect(mocks.getPrintifyAdapter).toHaveBeenLastCalledWith(expect.objectContaining({ db, intent: "read",shopId:expect.any(String) }));
   });
 
   it("never creates a live supplier product from a demo listing", async () => {

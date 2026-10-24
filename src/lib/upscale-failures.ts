@@ -5,18 +5,24 @@ import { designs, upscaleUploads } from "@/db/schema";
 export const MAX_UPSCALE_ATTEMPTS = 3;
 
 /** Worker-reported failure; on the 3rd the design is marked failed and leaves the job list (no re-upscale loop). */
-export async function recordUpscaleFailure(db: DB, designId: number, error: string) {
-  const [row] = await db.select({ f: designs.upscaleFailure }).from(designs).where(eq(designs.id, designId));
-  if (!row) return null;
-  const attempts = (row.f?.attempts ?? 0) + 1;
-  const failure = { attempts, lastError: error.slice(0, 300), at: new Date().toISOString(), failed: attempts >= MAX_UPSCALE_ATTEMPTS };
-  await db.update(designs).set({ upscaleFailure: failure }).where(eq(designs.id, designId));
-  console.log(`[upscale-jobs] design #${designId} upload failure ${attempts}/${MAX_UPSCALE_ATTEMPTS}${failure.failed ? " — marked FAILED" : ""}: ${failure.lastError}`);
-  return failure;
+export async function recordUpscaleFailure(db: DB, designId: number, error: string, reportId?:string) {
+  const result = await db.execute<{failure: NonNullable<typeof designs.$inferSelect.upscaleFailure>}>(sql`
+    with accepted as (
+      insert into upscale_failure_reports (report_id,design_id) select ${reportId??null},${designId} where ${reportId??null}::text is not null
+      on conflict do nothing returning report_id
+    )
+    update designs set upscale_failure = jsonb_build_object(
+      'attempts', coalesce((upscale_failure->>'attempts')::integer,0) + 1,
+      'failed', coalesce((upscale_failure->>'attempts')::integer,0) + 1 >= ${MAX_UPSCALE_ATTEMPTS},
+      'lastError', ${error.slice(0,300)}::text, 'at', now()) where id=${designId} and (${reportId??null}::text is null or exists(select 1 from accepted)) returning upscale_failure as failure
+  `);
+  return result.rows[0]?.failure ?? (await db.select({failure:designs.upscaleFailure}).from(designs).where(eq(designs.id,designId)))[0]?.failure ?? null;
 }
 
 export async function bindUploadKey(db: DB, key: string, designId: number) {
-  await db.insert(upscaleUploads).values({ key, designId });
+  const [design]=await db.select().from(designs).where(eq(designs.id,designId));
+  if(!design) throw new Error("Design missing");
+  await db.insert(upscaleUploads).values({ key, designId,sourceUrl:design.imageUrl });
 }
 
 /** True only for an unconsumed key issued for this design; consumes it atomically. */

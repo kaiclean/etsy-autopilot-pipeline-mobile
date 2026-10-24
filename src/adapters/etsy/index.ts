@@ -1,3 +1,4 @@
+import { assertOperationAllowed } from "@/lib/operation-policy";
 import type { DB } from "@/db";
 import { config, hasEtsyCredentials } from "@/lib/config";
 import { liveWritesEnabled } from "@/lib/read-publish-mode";
@@ -16,12 +17,14 @@ export async function getEtsyAdapter(db: DB, random?: () => number, intent: "rea
   const shop = await resolveActiveShop(db, requestedShopId);
   if (requestedShopId && shop.id !== requestedShopId) throw new Error("Etsy shop is not registered");
   const shopId = shop.etsyShopId?.trim() || (shop.slug === OMNISHOP_SLUG ? config.etsy.shopId : undefined);
-  const allowed = intent === "read" || (await liveWritesEnabled(db));
+  if(intent === "write") await assertOperationAllowed(db,shop.id);
+  const allowed = intent === "read" || (await liveWritesEnabled(db,shop.id));
   if (allowed && hasEtsyCredentials(shopId)) {
     const tokens = await readEtsyTokens(db, shop.id);
     if (tokens) return new EtsyLiveClient(
       tokens, (t, expected) => writeEtsyTokens(db, shop.id, t, expected), shopId,
       () => readEtsyTokens(db, shop.id), (work) => withEtsyRefreshLease(db, shop.id, work),
+      () => assertOperationAllowed(db, shop.id, true),
     );
   }
   return new EtsyDryRunAdapter(random);

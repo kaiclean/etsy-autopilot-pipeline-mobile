@@ -416,7 +416,7 @@ export const runListing: StageFn = async (ctx) => {
   }
   const detail = notes.length ? `: ${notes.join(" | ").slice(0, 420)}` : "";
   const summary = `Drafted ${queued} listings for approval${held ? `, held ${held} at the quality gate` : ""}${invalid ? ` (${invalid} need fixes)` : ""}${detail}`;
-  const status = yieldStatus(created, rungFailures);
+  const status = held > 0 || invalid > 0 ? "warning" : yieldStatus(created, rungFailures);
   if (status === "success") return summary;
   return stageResult(summary, status);
 };

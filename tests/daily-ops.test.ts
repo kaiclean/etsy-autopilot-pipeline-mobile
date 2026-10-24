@@ -387,7 +387,7 @@ describe("daily chain", () => {
     expect(before.publishMode).toBe("dry-run");
     const now = new Date();
     const first = await runStage("daily", "cron", { db, now, random: () => 0.1 });
-    expect(first.status).toBe("success");
+    expect(first.status).toBe("warning");
     expect(first.summary).toMatch(/pending approval|quality gate/i);
     expect(first.summary).toMatch(/Nothing was activated/);
 
@@ -411,7 +411,7 @@ describe("daily chain", () => {
     expect(after.publishMode).toBe("dry-run");
 
     const second = await runStage("daily", "cron", { db, now, random: () => 0.9 });
-    expect(second.status).toBe("success");
+    expect(second.status).toBe("warning");
     expect(second.summary).toMatch(/already completed/);
     const [count] = await db.select({ n: sql<number>`count(*)::int` }).from(listings);
     expect(count.n).toBe(drafts.length);

@@ -460,6 +460,7 @@ export const costs = pgTable("costs", {
 });
 
 export const dailyStats = pgTable("daily_stats", {
+  shopId: uuid("shop_id").notNull().default(omnishopId).references(()=>shops.id),
   id: serial("id").primaryKey(),
   date: text("date").notNull(),
   views: integer("views").notNull().default(0),
@@ -644,6 +645,7 @@ export const imageQuota = pgTable("image_quota", {
 /** A presigned S3 key is valid only for the design it was issued for, and only once. */
 export const upscaleUploads = pgTable("upscale_uploads", {
   key: text("key").primaryKey(),
+  sourceUrl:text("source_url"),
   designId: integer("design_id").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),

@@ -1,3 +1,4 @@
+import { budgetedAi } from "@/lib/ai-budget";
 import { config } from "@/lib/config";
 import { CloudflareImageProvider } from "./cloudflare";
 import { imageErrorDetail } from "./errors";
@@ -19,7 +20,7 @@ export function setImageProviderForTests(provider: ImageProvider | null) {
  * Mock artwork is only for demo shops. A live shop with IMAGE_PROVIDER unset throws
  * instead of queueing a flat placeholder.
  */
-export function getImageProvider(opts?: { demo?: boolean; log?: (message: string, level: "warn") => void }): ImageProvider {
+function getRawImageProvider(opts?: { demo?: boolean; log?: (message: string, level: "warn") => void }): ImageProvider {
   if (providerOverride) return providerOverride;
   const primary = createProvider(config.imageProvider, opts?.demo);
   const fallbackName = config.imageFallbackProvider;
@@ -80,3 +81,9 @@ function createProvider(name: string, demo?: boolean): ImageProvider {
 }
 
 export type { ImageProvider, ImageRequest, GeneratedImage } from "./types";
+
+export function getImageProvider(opts?: {demo?:boolean;log?:(message:string,level:"warn")=>void}):ImageProvider {
+  const provider=getRawImageProvider(opts);
+  return {...provider,name:provider.name,estimatedCostChf:provider.estimatedCostChf,estimatedNeuronsPerImage:provider.estimatedNeuronsPerImage,
+    generate:(req)=>budgetedAi(provider.estimatedCostChf,()=>provider.generate(req))};
+}

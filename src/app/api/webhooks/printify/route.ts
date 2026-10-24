@@ -1,3 +1,4 @@
+import { readBoundedText } from "@/lib/request-body";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { authorizePrintifyWebhook, ingestPrintifyWebhook } from "@/lib/printify-webhook";
@@ -11,7 +12,8 @@ export const dynamic = "force-dynamic";
  * in the `x-pfy-signature` header. Stores the mapping only — no live API calls.
  */
 export async function POST(req: Request) {
-  const rawBody = await req.text();
+  let rawBody:string;
+  try { rawBody=await readBoundedText(req,1024*1024); } catch { return NextResponse.json({error:"payload too large"},{status:413}); }
   const auth = authorizePrintifyWebhook(rawBody, req.headers.get("x-pfy-signature"));
   if (auth === "missing-secret") {
     return NextResponse.json({ error: "PRINTIFY_WEBHOOK_SECRET is required in production" }, { status: 401 });

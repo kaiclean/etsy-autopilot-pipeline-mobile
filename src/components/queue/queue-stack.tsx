@@ -181,7 +181,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
       <EmptyState
         icon={CheckCheck}
         title="Queue cleared"
-        body="Every listing has been reviewed. New drafts appear here after the Listing stage runs."
+        body="No items are ready for review. Check Products for rejected items and repair work."
         action={
           <Link href="/pipeline">
             <Button variant="secondary" className="h-10 rounded-xl">Open pipeline</Button>

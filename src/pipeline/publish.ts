@@ -1,3 +1,6 @@
+import { withOperationLease,OperationBusy } from "@/lib/operation-lease";
+import { approvalBlocker } from "@/lib/design-review";
+import { assertOperationAllowed } from "@/lib/operation-policy";
 import { and, count, eq, isNotNull, isNull, like, lt, notLike, or } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { EtsyAmbiguousWriteError } from "@/adapters/etsy/transport";
@@ -106,7 +109,7 @@ export const runPublish: StageFn = async (ctx) => {
   }
 
   const etsy = await getEtsyAdapter(db, ctx.random, "write", ctx.shopId);
-  const printify = await getPrintifyAdapter({ db, random: ctx.random });
+  const printify = await getPrintifyAdapter({ db, random: ctx.random, shopId:ctx.shopId });
   log(`Etsy adapter: ${etsy.mode} · Printify adapter: ${printify.mode}`);
 
   let ok = 0;
@@ -114,27 +117,66 @@ export const runPublish: StageFn = async (ctx) => {
   let returnedToQueue = 0; // re-validation sent it back for review: a warning, not a broken run
   let skipped = 0;
   for (let l of approved) {
-    if (l.productType === "pod" && l.isDemo && printify.mode === "live") {
-      skipped++;
-      log(`#${l.id} held: demo artwork cannot create a live supplier product`, "warn");
-      continue;
-    }
-    if (l.productType === "pod" && printify.mode === "dry-run" && l.printifyProductId && !l.printifyProductId.startsWith("dry-")) {
-      skipped++;
-      log(`#${l.id} held: live supplier products cannot use simulated fulfillment metadata`, "warn");
-      continue;
-    }
-    if (publishRetryBlocked(l, ctx.now)) {
-      skipped++;
-      log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
-      continue;
-    }
-    l = await refreshSupplierDescription(db, l);
-    const check = validateSupplierApproval(l);
-    if (!check.valid) {
-      const [returned] = await db
+    const handle=async()=>{
+      const [fresh]=await db.select().from(listings).where(eq(listings.id,l.id));
+      if(!fresh || !["approved","failed"].includes(fresh.status)) {skipped++;return;}
+      l=fresh;
+      await assertOperationAllowed(db, ctx.shopId);
+      const blocker = await approvalBlocker(db, l);
+      if (blocker) { returnedToQueue++; log(`#${l.id} held: ${blocker}`, "warn"); return; }
+      if (l.productType === "pod" && l.isDemo && printify.mode === "live") {
+        skipped++;
+        log(`#${l.id} held: demo artwork cannot create a live supplier product`, "warn");
+        return;
+      }
+      if (l.productType === "pod" && printify.mode === "dry-run" && l.printifyProductId && !l.printifyProductId.startsWith("dry-")) {
+        skipped++;
+        log(`#${l.id} held: live supplier products cannot use simulated fulfillment metadata`, "warn");
+        return;
+      }
+      if (publishRetryBlocked(l, ctx.now)) {
+        skipped++;
+        log(`#${l.id} skipped: publish error unchanged for under 24h: ${l.publishError}`, "warn");
+        return;
+      }
+      l = await refreshSupplierDescription(db, l);
+      const check = validateSupplierApproval(l);
+      if (!check.valid) {
+        const [returned] = await db
+          .update(listings)
+          .set({ status: "pending_approval", validation: check.issues, updatedAt: ctx.now })
+          .where(
+            and(
+              eq(listings.id, l.id),
+              eq(listings.status, l.status),
+              eq(listings.publishAttemptCount, l.publishAttemptCount),
+              eq(listings.updatedAt, l.updatedAt),
+              l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
+            ),
+          )
+          .returning({ id: listings.id });
+        if (!returned) {
+          skipped++;
+          log(`#${l.id} skipped: listing changed during validation`, "warn");
+          return;
+        }
+        log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
+        returnedToQueue++;
+        return;
+      }
+      if (l.productType === "pod" && (supplierMockupCount(l) < MIN_SUPPLIER_MOCKUPS ||
+        (printify.mode === "live" && l.publishMode !== "live"))) {
+        const preview = await prepareSupplierPreview(db, l, { timingsRefreshed: true });
+        if (!preview.ready) {
+          skipped++;
+          log(`#${l.id} held: ${preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS}`, "warn");
+          return;
+        }
+        l = preview.listing;
+      }
+      const [claimed] = await db
         .update(listings)
-        .set({ status: "pending_approval", validation: check.issues, updatedAt: ctx.now })
+        .set({ status: "publishing", publishAttemptedAt: ctx.now, publishAttemptCount: l.publishAttemptCount + 1, publishError: null, updatedAt: ctx.now })
         .where(
           and(
             eq(listings.id, l.id),
@@ -144,199 +186,171 @@ export const runPublish: StageFn = async (ctx) => {
             l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
           ),
         )
-        .returning({ id: listings.id });
-      if (!returned) {
+        .returning({ id: listings.id, publishAttemptCount: listings.publishAttemptCount });
+      if (!claimed) {
         skipped++;
-        log(`#${l.id} skipped: listing changed during validation`, "warn");
-        continue;
+        log(`#${l.id} skipped: another publish run claimed it`, "warn");
+        return;
       }
-      log(`#${l.id} failed validation at publish time; returned to queue`, "warn");
-      returnedToQueue++;
-      continue;
-    }
-    if (l.productType === "pod" && (supplierMockupCount(l) < MIN_SUPPLIER_MOCKUPS ||
-      (printify.mode === "live" && l.publishMode !== "live"))) {
-      const preview = await prepareSupplierPreview(db, l, { timingsRefreshed: true });
-      if (!preview.ready) {
-        skipped++;
-        log(`#${l.id} held: ${preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS}`, "warn");
-        continue;
-      }
-      l = preview.listing;
-    }
-    const [claimed] = await db
-      .update(listings)
-      .set({ status: "publishing", publishAttemptedAt: ctx.now, publishAttemptCount: l.publishAttemptCount + 1, publishError: null, updatedAt: ctx.now })
-      .where(
-        and(
-          eq(listings.id, l.id),
-          eq(listings.status, l.status),
-          eq(listings.publishAttemptCount, l.publishAttemptCount),
-          eq(listings.updatedAt, l.updatedAt),
-          l.publishAttemptedAt ? eq(listings.publishAttemptedAt, l.publishAttemptedAt) : isNull(listings.publishAttemptedAt),
-        ),
-      )
-      .returning({ id: listings.id, publishAttemptCount: listings.publishAttemptCount });
-    if (!claimed) {
-      skipped++;
-      log(`#${l.id} skipped: another publish run claimed it`, "warn");
-      continue;
-    }
-    const claimWhere = and(
-      eq(listings.id, claimed.id),
-      eq(listings.status, "publishing"),
-      eq(listings.publishAttemptCount, claimed.publishAttemptCount),
-      eq(listings.publishAttemptedAt, ctx.now),
-    );
-    let createdEtsyDraft = false;
-    try {
-      let etsyListingId: string | null = null;
-      let deliveredFingerprint: string | null = null;
-      let printifyProductId: string | null = null;
-      let podBlueprintId: number | null = null;
-      let podPrintProviderId: number | null = null;
-      let nextStatus: "published" | "pod_created" = "published";
-      if (l.productType === "digital") {
-        const [design] = l.designId
-          ? await db.select({ provider: designs.provider, imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId))
-          : [];
-        let manifest = l.fileManifest;
-        if (l.deliveryUrl && !manifestIsComplete(manifest)) {
-          const built = await buildFileManifest(l.deliveryUrl, l.imageUrl);
-          if (manifestIsComplete(built)) {
-            manifest = built;
-            const [saved] = await db.update(listings).set({ fileManifest: manifest, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
-            if (!saved) throw new Error("Publish claim changed before recording the file manifest");
+      const claimWhere = and(
+        eq(listings.id, claimed.id),
+        eq(listings.status, "publishing"),
+        eq(listings.publishAttemptCount, claimed.publishAttemptCount),
+        eq(listings.publishAttemptedAt, ctx.now),
+      );
+      let createdEtsyDraft = false;
+      try {
+        let etsyListingId: string | null = null;
+        let deliveredFingerprint: string | null = null;
+        let printifyProductId: string | null = null;
+        let podBlueprintId: number | null = null;
+        let podPrintProviderId: number | null = null;
+        let nextStatus: "published" | "pod_created" = "published";
+        if (l.productType === "digital") {
+          const [design] = l.designId
+            ? await db.select({ provider: designs.provider, imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId))
+            : [];
+          let manifest = l.fileManifest;
+          if (l.deliveryUrl && !manifestIsComplete(manifest)) {
+            const built = await buildFileManifest(l.deliveryUrl, l.imageUrl);
+            if (manifestIsComplete(built)) {
+              manifest = built;
+              const [saved] = await db.update(listings).set({ fileManifest: manifest, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+              if (!saved) throw new Error("Publish claim changed before recording the file manifest");
+            }
           }
-        }
-        const refusal = digitalDraftRefusal({
-          etsyMode: etsy.mode,
-          imageProvider: config.imageProvider,
-          designProvider: design?.provider ?? null,
-          imageUrl: l.imageUrl,
-          deliveryUrl: l.deliveryUrl,
-          manifest,
-          deliveryPack: l.deliveryPack,
-          deliveryPackVerified: await verifyListingDeliveryPack({ ...l, fileManifest: manifest }),
-          fileVerifiedAt: l.fileVerifiedAt,
-        });
-        if (refusal) throw new Error(refusal);
-        let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
-        if (!listingId) {
-          const created = await etsy.createDraftListing({
+          const refusal = digitalDraftRefusal({
+            etsyMode: etsy.mode,
+            imageProvider: config.imageProvider,
+            designProvider: design?.provider ?? null,
+            imageUrl: l.imageUrl,
+            deliveryUrl: l.deliveryUrl,
+            manifest,
+            deliveryPack: l.deliveryPack,
+            deliveryPackVerified: await verifyListingDeliveryPack({ ...l, fileManifest: manifest }),
+            fileVerifiedAt: l.fileVerifiedAt,
+          });
+          if (refusal) throw new Error(refusal);
+          let listingId = reusableId(l.etsyListingId, etsy.mode, "dry-");
+          if (!listingId) {
+            const created = await etsy.createDraftListing({
+              title: l.title,
+              description: l.description,
+              priceChf: l.priceChf,
+              tags: l.tags,
+              type: "download",
+            });
+            createdEtsyDraft = true;
+            listingId = created.listingId;
+            const [saved] = await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+            if (!saved) throw new Error("Publish claim changed before recording the Etsy draft");
+          }
+          // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
+          const buyerFiles = new Set([l.deliveryUrl, ...(l.deliveryPack?.files.map((file) => file.url) ?? [])]);
+          const previews = [...new Set([l.imageUrl, ...(l.gallery ?? [])
+            .filter((view) => view.role === "artwork-preview").map((view) => view.url)])]
+            .filter((url) => !buyerFiles.has(url)).slice(0, 10);
+          for (const preview of previews) await etsy.uploadListingImage(listingId, absoluteUrl(preview));
+          await etsy.uploadListingFile(listingId, { name: manifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
+          for (const file of l.deliveryPack?.files ?? []) {
+            await etsy.uploadListingFile(listingId, { name: file.filename, url: absoluteUrl(file.url) });
+          }
+          deliveredFingerprint = etsyDeliveryFingerprint({ deliveryUrl: l.deliveryUrl, fileManifest: manifest, deliveryPack: l.deliveryPack });
+          etsyListingId = listingId;
+          log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
+        } else {
+          // A POD listing with its own print file (e.g. the A3 crop for posters) uses it; otherwise the design master.
+          if ((l.validation ?? []).some((issue) => issue.code === "print_file_held" || issue.code === "mockups_stale")) {
+            log(`#${l.id} skipped: print file held or mockups stale`);
+            return;
+          }
+          let artwork = l.deliveryUrl || l.imageUrl;
+          if (l.designId && !l.deliveryUrl) {
+            const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));
+            artwork = printArtworkUrl(artwork, design?.imageUrl);
+          }
+          // Create the Printify product only. publish.json is a per-listing human action.
+          // etsyListingId stays null. Orders sync does not poll pod_created rows.
+          const result = await printify.createAndPublish({
             title: l.title,
             description: l.description,
-            priceChf: l.priceChf,
             tags: l.tags,
-            type: "download",
+            priceChf: l.priceChf,
+            imageUrl: absoluteUrl(artwork),
+            preset: podPreset(l.podProvider),
+            existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
+            publishToEtsy: false,
           });
-          createdEtsyDraft = true;
-          listingId = created.listingId;
-          const [saved] = await db.update(listings).set({ etsyListingId: listingId, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
-          if (!saved) throw new Error("Publish claim changed before recording the Etsy draft");
+          const mockup = await fetchPrintifyMockupUrl(result.productId);
+          if (mockup) {
+            const [saved] = await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
+            if (!saved) throw new Error("Publish claim changed before recording the mockup");
+          }
+          printifyProductId = result.productId;
+          podBlueprintId = result.blueprintId ?? null;
+          podPrintProviderId = result.printProviderId ?? null;
+          nextStatus = "pod_created";
+          log(`#${l.id} → Printify product ${result.productId} created, not published to Etsy (${printify.mode})`);
         }
-        // Gallery is the preview. The buyer file is deliveryUrl. Cron never activates.
-        const buyerFiles = new Set([l.deliveryUrl, ...(l.deliveryPack?.files.map((file) => file.url) ?? [])]);
-        const previews = [...new Set([l.imageUrl, ...(l.gallery ?? [])
-          .filter((view) => view.role === "artwork-preview").map((view) => view.url)])]
-          .filter((url) => !buyerFiles.has(url)).slice(0, 10);
-        for (const preview of previews) await etsy.uploadListingImage(listingId, absoluteUrl(preview));
-        await etsy.uploadListingFile(listingId, { name: manifest?.delivery.filename ?? `listing-${l.id}.png`, url: absoluteUrl(l.deliveryUrl!) });
-        for (const file of l.deliveryPack?.files ?? []) {
-          await etsy.uploadListingFile(listingId, { name: file.filename, url: absoluteUrl(file.url) });
+        const mode = l.productType === "digital" ? etsy.mode : printify.mode;
+        const [completed] = await db
+          .update(listings)
+          .set({
+            status: nextStatus,
+            ...(l.productType === "digital" ? { etsyListingId, etsyDeliveryFingerprint: deliveredFingerprint } : {}),
+            printifyProductId,
+            ...(podBlueprintId != null ? { podBlueprintId } : {}),
+            ...(podPrintProviderId != null ? { podPrintProviderId } : {}),
+            publishMode: mode,
+            publishError: null,
+            publishAttemptedAt: ctx.now,
+            publishedAt: nextStatus === "published" ? ctx.now : null,
+            updatedAt: ctx.now,
+          })
+          .where(claimWhere)
+          .returning({ id: listings.id });
+        if (!completed) {
+          skipped++;
+          log(`#${l.id} skipped: publish claim changed before completion`, "warn");
+          return;
         }
-        deliveredFingerprint = etsyDeliveryFingerprint({ deliveryUrl: l.deliveryUrl, fileManifest: manifest, deliveryPack: l.deliveryPack });
-        etsyListingId = listingId;
-        log(`#${l.id} → Etsy draft ${listingId} (${etsy.mode}, not activated)`);
-      } else {
-        // A POD listing with its own print file (e.g. the A3 crop for posters) uses it; otherwise the design master.
-        if ((l.validation ?? []).some((issue) => issue.code === "print_file_held" || issue.code === "mockups_stale")) {
-          log(`#${l.id} skipped: print file held or mockups stale`);
-          continue;
-        }
-        let artwork = l.deliveryUrl || l.imageUrl;
-        if (l.designId && !l.deliveryUrl) {
-          const [design] = await db.select({ imageUrl: designs.imageUrl }).from(designs).where(eq(designs.id, l.designId));
-          artwork = printArtworkUrl(artwork, design?.imageUrl);
-        }
-        // Create the Printify product only. publish.json is a per-listing human action.
-        // etsyListingId stays null. Orders sync does not poll pod_created rows.
-        const result = await printify.createAndPublish({
-          title: l.title,
-          description: l.description,
-          tags: l.tags,
-          priceChf: l.priceChf,
-          imageUrl: absoluteUrl(artwork),
-          preset: podPreset(l.podProvider),
-          existingProductId: reusableId(l.printifyProductId, printify.mode, "dry-"),
-          publishToEtsy: false,
+        await db.insert(costs).values({
+          shopId: ctx.shopId,
+          kind: "listing_fee",
+          amountChf: round2(FEES.listingFeeUsd * FEES.usdToChf * (1 + FEES.vatOnFeesRate)),
+          note: `Listing fee #${l.id}${mode === "dry-run" ? " (dry-run, not charged)" : ""}`,
+          isDemo: ctx.demo || mode === "dry-run",
         });
-        const mockup = await fetchPrintifyMockupUrl(result.productId);
-        if (mockup) {
-          const [saved] = await db.update(listings).set({ imageUrl: mockup, updatedAt: ctx.now }).where(claimWhere).returning({ id: listings.id });
-          if (!saved) throw new Error("Publish claim changed before recording the mockup");
+        ok++;
+      } catch (e) {
+        const message = maskSecrets(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof EtsyAmbiguousWriteError || createdEtsyDraft
+          ? `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} ${message} Check Etsy before retrying.`
+          : message;
+        const [completed] = await db
+          .update(listings)
+          .set({
+            status: "failed",
+            publishError: msg,
+            publishAttemptedAt: ctx.now,
+            ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
+            updatedAt: ctx.now,
+          })
+          .where(claimWhere)
+          .returning({ id: listings.id });
+        if (!completed) {
+          skipped++;
+          log(`#${l.id} skipped: publish claim changed before recording failure`, "warn");
+          return;
         }
-        printifyProductId = result.productId;
-        podBlueprintId = result.blueprintId ?? null;
-        podPrintProviderId = result.printProviderId ?? null;
-        nextStatus = "pod_created";
-        log(`#${l.id} → Printify product ${result.productId} created, not published to Etsy (${printify.mode})`);
+        log(`#${l.id} publish failed: ${msg}`, "error");
+        failed++;
       }
-      const mode = l.productType === "digital" ? etsy.mode : printify.mode;
-      const [completed] = await db
-        .update(listings)
-        .set({
-          status: nextStatus,
-          ...(l.productType === "digital" ? { etsyListingId, etsyDeliveryFingerprint: deliveredFingerprint } : {}),
-          printifyProductId,
-          ...(podBlueprintId != null ? { podBlueprintId } : {}),
-          ...(podPrintProviderId != null ? { podPrintProviderId } : {}),
-          publishMode: mode,
-          publishError: null,
-          publishAttemptedAt: ctx.now,
-          publishedAt: nextStatus === "published" ? ctx.now : null,
-          updatedAt: ctx.now,
-        })
-        .where(claimWhere)
-        .returning({ id: listings.id });
-      if (!completed) {
-        skipped++;
-        log(`#${l.id} skipped: publish claim changed before completion`, "warn");
-        continue;
-      }
-      await db.insert(costs).values({
-        shopId: ctx.shopId,
-        kind: "listing_fee",
-        amountChf: round2(FEES.listingFeeUsd * FEES.usdToChf * (1 + FEES.vatOnFeesRate)),
-        note: `Listing fee #${l.id}${mode === "dry-run" ? " (dry-run, not charged)" : ""}`,
-        isDemo: ctx.demo,
-      });
-      ok++;
-    } catch (e) {
-      const message = maskSecrets(e instanceof Error ? e.message : String(e));
-      const msg = e instanceof EtsyAmbiguousWriteError || createdEtsyDraft
-        ? `${AMBIGUOUS_PUBLISH_ERROR_PREFIX} ${message} Check Etsy before retrying.`
-        : message;
-      const [completed] = await db
-        .update(listings)
-        .set({
-          status: "failed",
-          publishError: msg,
-          publishAttemptedAt: ctx.now,
-          ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
-          updatedAt: ctx.now,
-        })
-        .where(claimWhere)
-        .returning({ id: listings.id });
-      if (!completed) {
-        skipped++;
-        log(`#${l.id} skipped: publish claim changed before recording failure`, "warn");
-        continue;
-      }
-      log(`#${l.id} publish failed: ${msg}`, "error");
-      failed++;
-    }
+    };
+    try {await withOperationLease(db,`listing:${l.id}`,handle);}
+    catch(error) { if(error instanceof OperationBusy) {skipped++;log(`#${l.id} skipped: listing is being reviewed`,"warn");} else throw error; }
   }
+
   if (ok) {
     await emit(db, {
       type: "listing.published",

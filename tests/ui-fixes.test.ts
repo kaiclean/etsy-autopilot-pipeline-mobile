@@ -61,7 +61,7 @@ const MAINTENANCE = JSON.stringify({
 
 describe("maintenance summary", () => {
   it("renders webhook and fake-order counts instead of JSON", () => {
-    expect(formatMaintenanceSummary(MAINTENANCE)).toBe("Webhooks 7 ok · 0 fake orders cleaned");
+    expect(formatMaintenanceSummary(MAINTENANCE)).toBe("Webhooks 7 skipped (demo mode) · 0 fake orders cleaned");
     expect(
       formatMaintenanceSummary(
         JSON.stringify({

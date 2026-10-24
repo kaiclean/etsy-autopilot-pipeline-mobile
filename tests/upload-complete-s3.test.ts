@@ -1,6 +1,7 @@
+import { upscaleFixture } from "./helpers-upscale";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const stored = vi.hoisted(() => ({ bytes: null as Buffer | null }));
 vi.mock("@/lib/object-storage", async (orig) => ({
@@ -9,7 +10,8 @@ vi.mock("@/lib/object-storage", async (orig) => ({
   storedUrlForKey: vi.fn(async (key: string) => `https://app/api/media/${key}`),
   uploadImageBytes: vi.fn(async () => { throw new Error("must not re-upload a presigned object"); }),
 }));
-vi.mock("@/db", () => ({ getDb: async () => ({ select: () => ({ from: () => ({ where: async () => [] }) }), update: () => ({ set: () => ({ where: () => Object.assign(Promise.resolve([]), { returning: async () => [{ key: "k" }] }) }) }) }) }));
+const fixture=vi.hoisted(()=>({db:null as unknown}));
+vi.mock("@/db",()=>({getDb:async()=>fixture.db}));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: vi.fn(async () => ({})) }));
 vi.mock("@/lib/upscale-jobs", () => ({
   authorizedUpscaleJob: () => true,
@@ -19,6 +21,9 @@ vi.mock("@/lib/upscale-jobs", () => ({
 }));
 
 describe("upload-complete with a presigned S3 key", () => {
+  let close:()=>Promise<void>;
+  beforeEach(async()=>{const f=await upscaleFixture(130,"designs/2026-10-20/00000000-0000-4000-8000-000000000000.png");fixture.db=f.db;close=()=>f.client.close();});
+  afterEach(async()=>{await close();});
   it("downloads the object and measures size + sha256 server-side, ignoring worker numbers", async () => {
     stored.bytes = await sharp({ create: { width: 128, height: 160, channels: 3, background: "#123" } }).png().toBuffer();
     const { POST } = await import("@/app/api/cron/upscale-jobs/complete/route");
@@ -35,7 +40,7 @@ describe("upload-complete with a presigned S3 key", () => {
     stored.bytes = null;
     const { POST } = await import("@/app/api/cron/upscale-jobs/complete/route");
     const res = await POST(new Request("https://app/api/cron/upscale-jobs/complete?designId=130&method=realesrgan&srcW=1&srcH=1&key=designs/2026-10-20/00000000-0000-4000-8000-000000000001.png", { method: "POST" }));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 });
 

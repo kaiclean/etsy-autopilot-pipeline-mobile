@@ -25,7 +25,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   return (
     <div className="space-y-6">
       <EtsyStatusToast status={typeof sp.etsy === "string" ? sp.etsy : undefined} />
-      <PageHeader title="Settings" subtitle={settingsModeSubtitle({ publishMode: d.publishMode, demo: d.demo })} />
+      <PageHeader title="Settings" subtitle={settingsModeSubtitle({ publishMode: d.publishMode, demo: d.demo, envMode:d.envPublishMode, paused:d.automation.killSwitch })} />
 
       <KillSwitchCard on={d.automation.killSwitch} />
 

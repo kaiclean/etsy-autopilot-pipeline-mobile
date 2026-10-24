@@ -19,7 +19,7 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
     <div className="space-y-6">
       <PageHeader
         title="Approval queue"
-        subtitle={queue.length ? `${queue.length} listing${queue.length > 1 ? "s" : ""} waiting · nothing publishes without you` : "All caught up"}
+        subtitle={queue.length ? `${queue.filter(l=>l.status==='pending_approval').length} ready for review · ${queue.filter(l=>l.status==='quality_failed').length} blocked · nothing publishes without you` : "No items ready or blocked in this queue"}
       />
       <CatalogDraftPanel reviewed={catalogDraft.reviewedByKai} />
       <QueueStack listings={queue} offsiteAds={automation.assumeOffsiteAds} initialTriage={parseQueueTriage(params.triage)} />

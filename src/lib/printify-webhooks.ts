@@ -1,3 +1,5 @@
+import type { DB } from "@/db";
+import { assertOperationAllowed } from "./operation-policy";
 import { PrintifyLiveClient, type PrintifyWebhookRef } from "@/adapters/printify/client";
 import { config, isDemoMode } from "@/lib/config";
 import { PRINTIFY_WEBHOOK_TOPICS } from "@/lib/ops-copy";
@@ -83,8 +85,8 @@ function safeReason(error: unknown) {
   return message.slice(0, 180);
 }
 
-function liveWebhookClient(): PrintifyWebhookClient {
-  const live = new PrintifyLiveClient();
+function liveWebhookClient(beforeWrite?:()=>Promise<void>): PrintifyWebhookClient {
+  const live = new PrintifyLiveClient(beforeWrite);
   return {
     listWebhooks: () => live.listWebhooks(),
     createWebhook: (input) => live.createWebhook(input),
@@ -96,13 +98,13 @@ function liveWebhookClient(): PrintifyWebhookClient {
  * A topic already pointing at that URL is left alone. The secret is sent to
  * Printify and is never included in the returned counts.
  */
-export async function ensurePrintifyWebhooks(opts: { client?: PrintifyWebhookClient } = {}): Promise<WebhookEnsureResult> {
+export async function ensurePrintifyWebhooks(opts: { client?: PrintifyWebhookClient;db?:DB;shopId?:string } = {}): Promise<WebhookEnsureResult> {
   const reason = webhookSkipReason();
   if (reason) return skippedAll(reason);
   const secret = config.printify.webhookSecret;
   if (!secret) return skippedAll("missing PRINTIFY_WEBHOOK_SECRET");
   const url = printifyWebhookCallbackUrl();
-  const client = opts.client ?? liveWebhookClient();
+  const client = opts.client ?? liveWebhookClient(opts.db&&opts.shopId ? ()=>assertOperationAllowed(opts.db!,opts.shopId!,true) : undefined);
   let listed: PrintifyWebhookRef[];
   try {
     listed = await client.listWebhooks();

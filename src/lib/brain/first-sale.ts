@@ -39,7 +39,7 @@ export async function getFirstSale(db: DB, shopId: string, demo: boolean): Promi
   const r: FirstSale = {
     demo, keywordsNew: k.new ?? 0, keywordsSelected: k.selected ?? 0, briefs: n(briefs),
     designsGenerated: (d.generated ?? 0) + (d.listed ?? 0), designsNeedReview: d.needs_review ?? 0,
-    pendingApproval: l("pending_approval"), qualityHeld: l("quality_failed"), approved: l("approved") + l("pod_created") + l("publishing"),
+    pendingApproval: l("pending_approval"), qualityHeld: l("quality_failed"), approved: l("approved"),
     live: n(live), dryRunPublished: ls.filter((x) => x.status === "published" && x.mode !== "live").reduce((a, x) => a + n(x.c), 0),
     orders: n(o?.c), revenueChf: n(o?.rev), profitChf: n(o?.profit), candidates: n(candidates), stage: 0,
   };

@@ -1,3 +1,4 @@
+import { advanceOrder } from "@/lib/fulfillment-state";
 import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import type { EtsyReceipt } from "@/adapters/etsy/types";
@@ -251,7 +252,7 @@ export async function saveReceipts(
 export const runOrders: StageFn = async (ctx) => {
   const { db, log } = ctx;
   const etsy = await getEtsyAdapter(db, ctx.random, "read", ctx.shopId);
-  const printify = await getPrintifyAdapter({ db, random: ctx.random, intent: "read" });
+  const printify = await getPrintifyAdapter({ db, random: ctx.random, intent: "read", shopId:ctx.shopId });
   const idSync = await syncAwaitingEtsyIds(db, {
     now: ctx.now,
     shopId: ctx.shopId,
@@ -336,16 +337,12 @@ export const runOrders: StageFn = async (ctx) => {
   let advanced = 0;
   if (open.length) {
     const known = Object.fromEntries(open.map((o) => [o.podOrderId!, o.status as PrintifyOrderStatus]));
-    const fulfillment = await getPrintifyAdapter({ db, random: ctx.random, known, intent: "read" });
+    const fulfillment = await getPrintifyAdapter({ db, random: ctx.random, known, intent: "read", shopId:ctx.shopId });
     const statuses = await fulfillment.getOrderStatuses(open.map((o) => o.podOrderId!));
     for (const o of open) {
       const next = statuses[o.podOrderId!];
       if (next && next !== o.status) {
-        await db
-          .update(orders)
-          .set({ fulfillmentStatus: next, fulfillmentChangedAt: ctx.now, fulfillmentStalledAt: null, updatedAt: ctx.now })
-          .where(eq(orders.id, o.id));
-        advanced++;
+        if(await advanceOrder(db,o.id,next)) advanced++;
       }
     }
     log(`POD fulfillment: ${advanced}/${open.length} open orders changed status`);

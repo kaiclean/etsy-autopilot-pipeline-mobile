@@ -1,4 +1,4 @@
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, inArray } from "drizzle-orm";
 import type { DB } from "@/db";
 import { jobRuns, type StageName } from "@/db/schema";
 import { utcDayStart } from "@/lib/utc-day";
@@ -11,4 +11,10 @@ export async function stageSucceededToday(db: DB, shopId: string, stage: StageNa
     .where(and(eq(jobRuns.shopId, shopId), eq(jobRuns.stage, stage), eq(jobRuns.status, "success"), gte(jobRuns.startedAt, utcDayStart(now))))
     .limit(1);
   return Boolean(row);
+}
+
+/** Warnings are completed attempts with explicit holds, not permission to generate twice. */
+export async function stageProcessedToday(db:DB,shopId:string,stage:StageName,now:Date) {
+  const [row]=await db.select({status:jobRuns.status}).from(jobRuns).where(and(eq(jobRuns.shopId,shopId),eq(jobRuns.stage,stage),inArray(jobRuns.status,["success","warning"]),gte(jobRuns.startedAt,utcDayStart(now)))).limit(1);
+  return row?.status??null;
 }

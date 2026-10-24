@@ -479,7 +479,7 @@ describe("daily chain force", () => {
     const skipped = await runStage("daily", "cron", { db, now, random: () => 0.2 });
     expect(skipped.summary).toMatch(/already completed/);
     const forced = await runStage("daily", "cron", { db, now, random: () => 0.2, force: true });
-    expect(forced.status).toBe("success");
+    expect(forced.status).toBe("warning");
     expect(forced.summary).not.toMatch(/already completed/);
     expect(forced.summary).toMatch(/Nothing was activated/);
     const drafts = await db.select().from(listings);

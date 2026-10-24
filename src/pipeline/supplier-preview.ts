@@ -1,3 +1,4 @@
+import { withOperationLease } from "@/lib/operation-lease";
 import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { getPrintifyAdapter } from "@/adapters/printify";
@@ -50,7 +51,7 @@ export async function refreshSupplierDescription(db: DB, listing: Listing): Prom
   const preset = podPresetFromProvider(listing.podProvider);
   if (!preset || (listing.supplier && listing.supplier !== "printify")) return unavailable;
   try {
-    const adapter = await getPrintifyAdapter({ db, intent: "read" });
+    const adapter = await getPrintifyAdapter({ db, shopId:listing.shopId, intent: "read" });
     if (!listing.isDemo && adapter.mode !== "live") return unavailable;
     if (adapter.mode === "dry-run" && listing.printifyProductId && !listing.printifyProductId.startsWith("dry-")) return unavailable;
     const providerDetails = await adapter.getProviderDetails?.(preset);
@@ -78,7 +79,7 @@ export async function refreshSupplierDescription(db: DB, listing: Listing): Prom
 }
 
 /** Approval prepares supplier proofs only. It never publishes a product to Etsy. */
-export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { timingsRefreshed?: boolean } = {}) {
+async function prepareSupplierPreviewInner(db: DB, listing: Listing, opts: { timingsRefreshed?: boolean } = {}) {
   if (listing.productType !== "pod") return { ready: true, listing, error: undefined };
   if (!opts.timingsRefreshed) listing = await refreshSupplierDescription(db, listing);
   let current = listing;
@@ -97,12 +98,12 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
     if (stale && !listing.deliveryUrl) throw new Error("Re-rendered artwork is still upscaling; no print file yet for new mockups");
     const preset = podPresetFromProvider(listing.podProvider);
     if (!preset || (listing.supplier && listing.supplier !== "printify")) throw new Error("A Printify product preset is required");
-    let adapter = await getPrintifyAdapter({ db, intent: "write" });
+    let adapter = await getPrintifyAdapter({ db, shopId:listing.shopId, intent: "write" });
     if (listing.isDemo && adapter.mode === "live") throw new Error("Demo artwork cannot create a live supplier product");
     let productId = listing.printifyProductId;
     // Never use a simulated read as proof for an existing real supplier product.
     if (productId && !productId.startsWith("dry-") && adapter.mode === "dry-run") {
-      adapter = await getPrintifyAdapter({ db, intent: "read" });
+      adapter = await getPrintifyAdapter({ db, shopId:listing.shopId, intent: "read" });
       if (adapter.mode !== "live") throw new Error(WAITING_FOR_PRINTIFY_MOCKUPS);
     } else {
       if (adapter.mode === "live" && productId?.startsWith("dry-")) productId = null;
@@ -161,4 +162,8 @@ export async function prepareSupplierPreview(db: DB, listing: Listing, opts: { t
     }).where(snapshotWhere(current)).returning();
     return { ready: false, listing: saved ?? current, error: failure.message };
   }
+}
+
+export async function prepareSupplierPreview(db:DB,listing:Listing,opts:{timingsRefreshed?:boolean}={}) {
+  return withOperationLease(db,`listing:${listing.id}`,()=>prepareSupplierPreviewInner(db,listing,opts));
 }

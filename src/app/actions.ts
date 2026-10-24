@@ -1,11 +1,14 @@
 "use server";
 
+import { withOperationLease } from "@/lib/operation-lease";
+import { takeLoginAttempt } from "@/lib/shared-login-limit";
+import { approvalBlocker as sharedApprovalBlocker } from "@/lib/design-review";
 import { eq, inArray } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh, revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { keywords, listings, type StageName } from "@/db/schema";
+import { designs, keywords, listings, type StageName } from "@/db/schema";
 import { clearLoginFailures, loginLocked, recordLoginFailure, safeNext } from "@/lib/login-limit";
 import { passwordMatches, createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth";
 import { config, hasGelatoCredentials, isDemoMode } from "@/lib/config";
@@ -13,7 +16,6 @@ import { emit } from "@/lib/events";
 import { calculateFees, DEFAULT_POD_PRESETS, isPodPreset, MARGIN_TARGETS } from "@/lib/fees";
 import { artRegenerationBlocker } from "@/lib/art-queue";
 import { isPlaceholderUrl } from "@/lib/art-quality";
-import { planBulkStatus } from "@/lib/catalog-filters";
 import { probeConnections } from "@/lib/provider-probe";
 import { getLastRuns } from "@/lib/queries";
 import { requireAuth } from "@/lib/session";
@@ -39,6 +41,7 @@ export async function login(_prev: { error?: string } | undefined, form: FormDat
   if (!secret || !config.dashboardPassword) {
     return { error: "Server is missing DASHBOARD_PASSWORD / AUTH_SECRET." };
   }
+  if(!await takeLoginAttempt(await getDb())) return {error:"Too many sign-in attempts. Try again in 15 minutes."};
   const h = await headers();
   const client = (h.get("x-forwarded-for")?.split(",")[0] ?? h.get("x-real-ip") ?? "local").trim();
   if (loginLocked(client)) return { error: "Too many wrong passwords. Try again in 15 minutes." };
@@ -79,11 +82,12 @@ function isDryRunOnlyPodProduct(listing: { supplier: string | null; podProvider:
     Boolean(preset && !DEFAULT_POD_PRESETS.some((enabled) => enabled === preset));
 }
 
-export async function updateListing(id: number, edit: ListingEdit, approve = false) {
+async function updateListingInner(id: number, edit: ListingEdit, approve = false) {
   await requireAuth();
   const db = await getDb();
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
   if (!l) return { ok: false as const, error: "Listing not found" };
+  if (approve) { const blocker = await sharedApprovalBlocker(db, l); if (blocker) return { ok: false as const, error: blocker }; }
   if (approve && isDryRunOnlyPodProduct(l)) return { ok: false as const, error: DRY_RUN_ONLY_APPROVAL_ERROR };
   const edited = { ...l, ...edit, description: edit.description ?? l.description };
   const next = approve ? await refreshSupplierDescription(db, edited) : edited;
@@ -118,7 +122,7 @@ function approvalBlocker(validation: { code: string; message: string }[] | null 
   return (validation ?? []).find((issue) => issue.code === "mockups_stale" || issue.code === "print_file_held")?.message ?? null;
 }
 
-export async function setListingStatus(id: number, status: "approved" | "rejected" | "pending_approval", reason?: string) {
+async function setListingStatusInner(id: number, status: "approved" | "rejected" | "pending_approval", reason?: string) {
   await requireAuth();
   const db = await getDb();
   const [l] = await db.select().from(listings).where(eq(listings.id, id));
@@ -165,79 +169,28 @@ export async function setListingStatus(id: number, status: "approved" | "rejecte
   return { ok: true as const };
 }
 
-export async function bulkSetListingStatus(ids: number[], status: "approved" | "rejected" | "pending_approval") {
+export async function updateListing(id:number,edit:ListingEdit,approve=false) {
   await requireAuth();
-  const unique = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 100);
-  if (unique.length === 0) return { ok: false as const, error: "Select at least one listing" };
-  const db = await getDb();
-  const rows = await db.select().from(listings).where(inArray(listings.id, unique));
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const known = unique.flatMap((id) => {
-    const row = byId.get(id);
-    return row ? [row] : [];
-  });
-  const missing = unique.filter((id) => !byId.has(id)).map((id) => ({ id, title: `#${id}`, error: "Listing not found" }));
-  const held = status === "approved" ? known.filter(isDryRunOnlyPodProduct) : [];
-  const heldIds = new Set(held.map((row) => row.id));
-  const waiting = [];
-  if (status === "approved") {
-    for (const row of known) {
-      if (heldIds.has(row.id)) continue;
-      const refreshed = await refreshSupplierDescription(db, row);
-      Object.assign(row, refreshed);
-      if (!validateSupplierApproval(refreshed).valid) continue;
-      const preview = await prepareSupplierPreview(db, refreshed, { timingsRefreshed: true });
-      if (!preview.ready) {
-        heldIds.add(row.id);
-        waiting.push({ id: row.id, title: row.title, error: preview.error ?? WAITING_FOR_PRINTIFY_MOCKUPS });
-      }
-    }
+  return withOperationLease(await getDb(),`listing:${id}`,()=>updateListingInner(id,edit,approve));
+}
+export async function setListingStatus(id:number,status:"approved"|"rejected"|"pending_approval",reason?:string) {
+  await requireAuth();
+  return withOperationLease(await getDb(),`listing:${id}`,()=>setListingStatusInner(id,status,reason));
+}
+export async function bulkSetListingStatus(ids:number[],status:"approved"|"rejected"|"pending_approval") {
+  await requireAuth();
+  const unique=[...new Set(ids.filter(id=>Number.isInteger(id)&&id>0))].slice(0,100);
+  if(!unique.length) return {ok:false as const,error:"Select at least one listing"};
+  const changed:number[]=[];const skipped:{id:number;title:string;error:string}[]=[];
+  const db=await getDb();
+  for(const id of unique) {
+    const [row]=await db.select().from(listings).where(eq(listings.id,id));
+    try {
+      const result=await setListingStatus(id,status);
+      if(result.ok) changed.push(id); else skipped.push({id,title:row?.title.slice(0,80)??`#${id}`,error:result.error});
+    } catch { skipped.push({id,title:row?.title.slice(0,80)??`#${id}`,error:"Operation busy or blocked; retry review"}); }
   }
-  const plan = planBulkStatus(
-    known.filter((row) => !heldIds.has(row.id)).map((row) => ({
-      id: row.id,
-      title: row.title,
-      hasErrors: status === "approved" && !validateSupplierApproval(row).valid,
-    })),
-    status,
-  );
-  for (const skip of plan.skipped) {
-    const row = byId.get(skip.id);
-    if (!row) continue;
-    const { issues } = validateSupplierApproval(row);
-    const fixed = issues.find((issue) => issue.code === "supplier_preview_error");
-    if (fixed) skip.error = fixed.message;
-    await db.update(listings).set({ validation: issues, updatedAt: new Date() }).where(eq(listings.id, row.id));
-  }
-  if (plan.changed.length > 0) {
-    await db
-      .update(listings)
-      .set({
-        status,
-        rejectedReason: status === "rejected" ? "Rejected in review" : null,
-        approvedAt: status === "approved" ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(inArray(listings.id, plan.changed));
-  }
-  if (status !== "pending_approval" && plan.changed.length > 0) {
-    const verb = status === "approved" ? "Approved" : "Rejected";
-    await emit(db, {
-      type: `listing.${status}`,
-      title: `${verb} ${plan.changed.length} listing${plan.changed.length === 1 ? "" : "s"}`,
-      body: plan.skipped.length > 0 ? `${plan.skipped.length} still need validation fixes` : undefined,
-      severity: status === "approved" ? "success" : "info",
-      href: status === "approved" ? "/products" : "/queue",
-    });
-  }
-  revalidateAll();
-  return {
-    ok: true as const,
-    changed: plan.changed,
-    skipped: [...plan.skipped, ...missing, ...waiting, ...held.map((row) => ({
-      id: row.id, title: row.title, error: DRY_RUN_ONLY_APPROVAL_ERROR,
-    }))].map((row) => ({ ...row, title: row.title.slice(0, 80) })),
-  };
+  return {ok:true as const,changed,skipped};
 }
 
 export async function savePushPrefs(patch: Partial<PushPrefs>) {
@@ -339,7 +292,7 @@ export async function setPublishMode(mode: PublishMode, confirmation = "", under
   await emit(db, {
     type: "publish.mode",
     title: decision.mode === "live" ? "Go live confirmed" : "Returned to dry-run",
-    body: decision.mode === "live" ? "Etsy and Printify writes are armed." : "Live writes are off.",
+    body: decision.mode === "live" && config.publishMode === "live" && !a.killSwitch ? "Live publishing selected. Quality and review gates still apply." : "Live writes are off or blocked by the host/pause gate.",
     severity: decision.mode === "live" ? "warning" : "success",
     href: "/connections",
   });
@@ -447,4 +400,21 @@ export async function setCatalogDraftReviewed(reviewed: boolean) {
   });
   revalidateAll();
   return { ok: true as const, reviewed };
+}
+
+/** Queue one budgeted repair per source/day; never publishes or approves the replacement. */
+export async function queueDesignRepair(designId:number) {
+  await requireAuth();
+  if(!Number.isInteger(designId)||designId<1) return {ok:false as const,error:"Invalid design"};
+  const db=await getDb();
+  const [design]=await db.select().from(designs).where(eq(designs.id,designId));
+  if(!design || design.isDemo) return {ok:false as const,error:"A real design is required"};
+  const {assertOperationAllowed}=await import("@/lib/operation-policy");
+  await assertOperationAllowed(db,design.shopId);
+  const at=new Date().toISOString();
+  await db.update(designs).set({needsRedesign:design.needsRedesign??{reason:"Repair failed upscale or insufficient print file",sourcePx:design.sourcePx??{width:design.imageWidth??1024,height:design.imageHeight??1280},target:{minW:4016,minH:5057,targetW:4016,targetH:5057},presets:[],scale:4,at}}).where(eq(designs.id,designId));
+  const {enqueueJob}=await import("@/lib/durable-jobs");
+  const job=await enqueueJob(db,design.shopId,"redesign",`repair:${designId}:${at.slice(0,10)}`,{designId});
+  revalidateAll();
+  return {ok:true as const,jobId:job.id};
 }

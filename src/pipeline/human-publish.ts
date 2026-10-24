@@ -1,3 +1,6 @@
+import { withOperationLease } from "@/lib/operation-lease";
+import { assertOperationAllowed } from "@/lib/operation-policy";
+import { approvalBlocker } from "@/lib/design-review";
 import { and, eq, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { getPrintifyAdapter } from "@/adapters/printify";
@@ -81,9 +84,12 @@ export async function markDeliveryVerified(db: DB, listingId: number, actor: str
 }
 
 /** Human activation. The publish cron never calls this. */
-export async function activateDigitalListing(db: DB, listingId: number, now = new Date(), read = loadArtworkBytes) {
+async function activateDigitalListingInner(db: DB, listingId: number, now = new Date(), read = loadArtworkBytes) {
   const [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "digital") return { ok: false as const, error: "Not a digital listing" };
+  await assertOperationAllowed(db, l.shopId);
+  const block = await approvalBlocker(db, l);
+  if (block) return { ok:false as const, error:block };
   const provider = await designProvider(db, l.designId);
   const deliveryPackVerified = await verifyListingDeliveryPack(l, read);
   if (!deliveryPackVerified && l.deliveryPack) {
@@ -144,9 +150,12 @@ export async function recordPodSample(
 }
 
 /** Human step: publish one Printify product to Etsy after a sample exists for its blueprint + provider. */
-export async function publishPodListingToEtsy(db: DB, listingId: number, now = new Date()) {
+async function publishPodListingToEtsyInner(db: DB, listingId: number, now = new Date()) {
   let [l] = await db.select().from(listings).where(eq(listings.id, listingId));
   if (!l || l.productType !== "pod") return { ok: false as const, error: "Not a print-on-demand listing" };
+  await assertOperationAllowed(db, l.shopId);
+  const block = await approvalBlocker(db, l);
+  if (block) return { ok:false as const, error:block };
   if (l.status !== "approved" && l.status !== "pod_created" && l.status !== "publishing") {
     return { ok: false as const, error: "Approve this listing before publishing to Etsy." };
   }
@@ -173,7 +182,7 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
     return { ok: false as const, error: check.issues.find((issue) => issue.code === "supplier_preview_error")?.message ??
       check.issues.find((issue) => issue.severity === "error")?.message ?? "Invalid listing" };
   }
-  const printify = await getPrintifyAdapter({ db });
+  const printify = await getPrintifyAdapter({ db,shopId:l.shopId });
   if (printify.mode === "live" && (l.isDemo || l.printifyProductId?.startsWith("dry-") ||
     supplierMockupCount({ ...l, publishMode: "live" }) < MIN_SUPPLIER_MOCKUPS)) {
     return { ok: false as const, error: "Synthetic demo previews cannot publish to live Etsy." };
@@ -214,4 +223,11 @@ export async function publishPodListingToEtsy(db: DB, listingId: number, now = n
     })
     .where(eq(listings.id, listingId));
   return { ok: true as const, etsyListingId: outcome.etsyListingId, status: outcome.status };
+}
+
+export async function activateDigitalListing(db: DB, listingId: number, now = new Date(), read = loadArtworkBytes) {
+  return withOperationLease(db, `listing:${listingId}`, () => activateDigitalListingInner(db,listingId,now,read));
+}
+export async function publishPodListingToEtsy(db: DB, listingId: number, now = new Date()) {
+  return withOperationLease(db, `listing:${listingId}`, () => publishPodListingToEtsyInner(db,listingId,now));
 }

@@ -1,17 +1,21 @@
+import { upscaleFixture } from "./helpers-upscale";
+import { drainJobs } from "@/lib/durable-jobs";
+import type { DB } from "@/db";
 import sharp from "sharp";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blankEdgeBands } from "@/lib/edge-check";
 
 const h = vi.hoisted(() => ({ src: null as Buffer | null, uploaded: [] as Buffer[], a3: [] as { bytes: Buffer; size: unknown }[], deleted: [] as string[], updates: [] as unknown[] }));
 vi.mock("@/lib/object-storage", async (orig) => ({
   ...(await orig<typeof import("@/lib/object-storage")>()),
-  readStoredObject: vi.fn(async () => ({ bytes: new Uint8Array(h.src!), contentType: "image/png" })),
+  readStoredObject: vi.fn(async (key:string) => ({ bytes: new Uint8Array(key.includes("trimmed") ? h.uploaded[0] : h.src!), contentType: "image/png" })),
   storedUrlForKey: vi.fn(async (key: string) => `https://app/api/media/${key}`),
   uploadImageBytes: vi.fn(async (bytes: Buffer) => { h.uploaded.push(bytes); return { url: "https://app/trimmed.png", key: "designs/2026-10-20/trimmed.png", backend: "s3" }; }),
   deleteStoredObject: vi.fn(async (key: string) => { h.deleted.push(key); return true; }),
 }));
 vi.mock("@/lib/upscale-failures", () => ({ consumeUploadKey: async () => true }));
-vi.mock("@/db", () => ({ getDb: async () => ({ update: () => ({ set: (v: unknown) => { h.updates.push(v); return { where: async () => [] }; } }) }) }));
+const fixture=vi.hoisted(()=>({db:null as unknown}));
+vi.mock("@/db",()=>({getDb:async()=>fixture.db}));
 vi.mock("@/db/upscale-designs", () => ({ upscaleDesigns: vi.fn(async () => ({})) }));
 vi.mock("@/lib/upscale-jobs", () => ({
   authorizedUpscaleJob: () => true,
@@ -39,6 +43,9 @@ const call = async () => {
 };
 
 describe("complete: edge check on every upload", () => {
+  let close:()=>Promise<void>;
+  beforeEach(async()=>{const f=await upscaleFixture(7,"designs/2026-10-20/00000000-0000-4000-8000-0000000000bb.png");fixture.db=f.db;close=()=>f.client.close();});
+  afterEach(async()=>{await close();});
   it("bright bands are trimmed; the stored file and the A3 source have no band", async () => {
     h.src = await art(200, 250, { top: 12, left: 9 }); h.uploaded = []; h.a3 = []; h.deleted = [];
     const res = await call();
@@ -48,6 +55,7 @@ describe("complete: edge check on every upload", () => {
     expect(h.uploaded).toHaveLength(1);
     expect((await blankEdgeBands(h.uploaded[0]!)).blank).toBe(false);
     expect(await sharp(h.uploaded[0]!).metadata()).toMatchObject({ width: 191, height: 238 });
+    await drainJobs(fixture.db as DB,1);
     expect(h.a3[0]!.bytes.equals(h.uploaded[0]!)).toBe(true);
     expect(h.deleted).toEqual(["designs/2026-10-20/00000000-0000-4000-8000-0000000000bb.png"]);
   });
@@ -65,7 +73,9 @@ describe("complete: edge check on every upload", () => {
     expect(body.outputPx).toEqual({ width: 200, height: 250 });
     expect(body.edge.flat.review).toBe(true);
     expect(h.uploaded).toHaveLength(0);
-    expect(JSON.stringify(h.updates)).toContain("\"status\":\"pending\"");
+    await drainJobs(fixture.db as DB,1);
+    const rows=await (fixture.db as DB).select().from((await import("@/db/schema")).designs);
+    expect(rows[0].designReview?.status).toBe("pending");
   });
   it("a clean upload passes untouched (unflagged designs are checked too)", async () => {
     h.src = await art(200, 250); h.uploaded = [];

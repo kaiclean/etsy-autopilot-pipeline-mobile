@@ -1,3 +1,4 @@
+import { resolveActiveShop } from "@/lib/shops";
 import { and, asc, count, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { cleanupFakeOrdersIfPresent, type ClearCounts } from "@/db/clear-fake-orders";
 import type { DB } from "@/db";
@@ -152,7 +153,7 @@ async function removeFakeRows(db: DB): Promise<MaintenanceSummary["fakeRows"]> {
 
 /** Idempotent housekeeping. Counts only; skip reasons name the gate, never a secret. */
 export async function runMaintenanceTasks(db: DB, log: (msg: string) => void = () => {}, deps: ManifestLoadDeps = {}): Promise<MaintenanceSummary> {
-  const webhooks = await ensurePrintifyWebhooks();
+  const webhooks = await ensurePrintifyWebhooks({db,shopId:(await resolveActiveShop(db)).id});
   log(
     webhooks.reason
       ? `Printify webhooks skipped: ${webhooks.reason}`

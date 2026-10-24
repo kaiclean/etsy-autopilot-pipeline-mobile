@@ -1,3 +1,4 @@
+import { budgetedAi, budgetEstimate } from "@/lib/ai-budget";
 import { config } from "@/lib/config";
 import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { NICHES } from "@/lib/niches";
@@ -23,7 +24,9 @@ export class OpenAILLMProvider implements LLMProvider {
     this.options = options;
   }
 
-  async assessImage(url: string): Promise<VisionAssessment> {
+  async assessImage(url:string): Promise<VisionAssessment> { return budgetedAi(budgetEstimate(process.env.AI_VISION_RESERVE_CHF,0.05),()=>this.assessImageInner(url)); }
+
+  private async assessImageInner(url: string): Promise<VisionAssessment> {
     const key = !this.options ? config.openaiKey : this.options.apiKey;
     const base = (!this.options ? config.openaiBaseUrl : this.options.baseUrl ?? "").replace(/\/$/, "");
     const model = config.visionModel ?? (!this.options ? config.openaiModel : this.options.model);
@@ -36,6 +39,7 @@ export class OpenAILLMProvider implements LLMProvider {
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
+        max_tokens: 3072,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: 'Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), defects (short strings listing only concrete problems; empty array when none), notes (informational strengths or commentary, never defects; "notes": ["..."] is an array of strings), text (true for any letters, fake signature, stamp or watermark), empty (true only for large blank/solid regions with no design intent; intentional negative space in minimalist art is NOT empty), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels, murky contrast, melted or warped objects, objects unintentionally on fire or smoking, distorted furniture, rugs, hands or faces, impossible geometry, duplicated or fused objects). Use JSON booleans for flags. Be strict; do not assume defects are absent.' },
@@ -73,7 +77,9 @@ export class OpenAILLMProvider implements LLMProvider {
     };
   }
 
-  async writeListing(brief: ListingBrief): Promise<ListingCopy> {
+  async writeListing(brief:ListingBrief):Promise<ListingCopy> { return budgetedAi(budgetEstimate(process.env.AI_TEXT_RESERVE_CHF,0.05),()=>this.writeListingInner(brief)); }
+
+  private async writeListingInner(brief: ListingBrief): Promise<ListingCopy> {
     const defaults = !this.options;
     const key = defaults ? config.openaiKey : this.options?.apiKey;
     if (!key) throw new Error(this.options?.missingKey ?? "OPENAI_API_KEY missing");
@@ -101,6 +107,7 @@ export class OpenAILLMProvider implements LLMProvider {
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
+        max_tokens: 3072,
         response_format: { type: "json_object" },
         temperature: 0.7,
         messages: [

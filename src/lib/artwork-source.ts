@@ -36,6 +36,14 @@ const primed = new Map<string, { bytes: Buffer; until: number }>();
 export function primeArtworkBytes(url: string, bytes: Buffer, ttlMs = 10 * 60_000) {
   const now = Date.now();
   for (const [key, row] of primed) if (row.until < now) primed.delete(key);
+  primed.delete(url);
+  const budget=64*1024*1024;
+  if(bytes.length>budget) return;
+  let size=[...primed.values()].reduce((n,r)=>n+r.bytes.length,0);
+  while(size+bytes.length>budget && primed.size) {
+    const oldest=primed.keys().next().value!;
+    size-=primed.get(oldest)!.bytes.length; primed.delete(oldest);
+  }
   primed.set(url, { bytes, until: now + ttlMs });
 }
 
@@ -60,7 +68,9 @@ export async function loadArtworkBytes(src: string, fetchImpl: typeof fetch = fe
   }
   if (!isSafeArtworkUrl(src)) return null;
   try {
-    const res = await fetchImpl(src, { redirect: "error", signal: AbortSignal.timeout(15000) });
+    const res = fetchImpl === fetch
+      ? await (await import("./public-artwork-fetch")).fetchPublicArtwork(src,MAX_BYTES)
+      : await fetchImpl(src, { redirect: "error", signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
     return await readCappedArtworkBody(res, MAX_BYTES);
   } catch {

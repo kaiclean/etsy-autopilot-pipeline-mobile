@@ -16,11 +16,12 @@ describe("background cron workflow", () => {
       .map((line) => line.slice(10)).join("\n");
     expect(script).toContain(`/api/cron/${stage}`);
     let status = 202;
+    let terminal="completed";
     const received: Array<{ url?: string; authorization?: string }> = [];
     const server = createServer((req, res) => {
       received.push({ url: req.url, authorization: req.headers.authorization });
-      res.writeHead(status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: status === 202 ? "accepted" : "finished" }));
+      res.writeHead(req.url?.startsWith("/api/cron/jobs") ? 200 : status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(req.url?.startsWith("/api/cron/jobs") ? {job:{status:terminal}} : {status:"accepted",jobId:"fixture-job"}));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -34,13 +35,15 @@ describe("background cron workflow", () => {
       };
       for (status of [202, 200]) {
         const result = await exec("bash", ["-c", script], { env });
-        expect(result.stdout).toContain("accepted or completed");
+        expect(result.stdout).toContain("fixture-job");
       }
       for (status of [401, 500, 502]) {
         await expect(exec("bash", ["-c", script], { env })).rejects.toMatchObject({ code: 22 });
       }
-      expect(received).toHaveLength(5);
-      expect(received.every((req) => req.url === `/api/cron/${stage}?force=1`)).toBe(true);
+      status=202; terminal="failed";
+      await expect(exec("bash",["-c",script],{env})).rejects.toMatchObject({code:1});
+      expect(received.some(req=>req.url===`/api/cron/${stage}?force=1`)).toBe(true);
+      expect(received.some(req=>req.url==="/api/cron/jobs?id=fixture-job")).toBe(true);
       expect(received.every((req) => req.authorization === ["Bearer", env.CRON_SECRET].join(" "))).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

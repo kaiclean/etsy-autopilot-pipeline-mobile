@@ -69,7 +69,7 @@ describe("listing-stage compliance holds", () => {
         expect(listing.description).not.toMatch(/\d+.*days/);
         expect(validateListing(listing).valid).toBe(false);
       }
-      if (expectedStatus === "pending_approval") expect(String(summary)).toContain("Drafted 1 listings for approval");
+      if (expectedStatus === "pending_approval") expect(typeof summary === "string" ? summary : summary.summary).toContain("Drafted 1 listings for approval");
     } finally {
       await client.close();
     }

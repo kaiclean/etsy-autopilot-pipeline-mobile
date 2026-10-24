@@ -36,6 +36,7 @@ export class EtsyLiveClient implements EtsyAdapter {
     private shopIdOverride?: string,
     private loadTokens?: () => Promise<EtsyTokens | null>,
     private refreshLease?: <T>(work: () => Promise<T>) => Promise<T>,
+    private beforeWrite?: () => Promise<void>,
   ) {}
 
   private get shopId() {
@@ -91,6 +92,7 @@ export class EtsyLiveClient implements EtsyAdapter {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!["GET", "HEAD"].includes((init.method ?? "GET").toUpperCase())) await this.beforeWrite?.();
     return etsyRequest<T>(`${API}${path}`, init, {
       apiKey: `${config.etsy.apiKey}:${config.etsy.sharedSecret}`,
       headers: () => this.authHeaders(),

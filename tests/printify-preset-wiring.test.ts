@@ -166,7 +166,7 @@ describe("native-resolution create-only Printify placement", () => {
     expect(printPlaceholder("mug", { id: 1, title: "Mug", placeholders: [{ position: "front", width: 2000, height: 1000 }] }).position).toBe("front");
   });
 
-  it("refreshes existing supplier copy without changing prices, uploading, creating, or publishing", async () => {
+  it("synchronizes existing supplier copy and prices without creating or publishing", async () => {
     setPins();
     const requests: { path: string; method: string; body?: unknown }[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -174,7 +174,7 @@ describe("native-resolution create-only Printify placement", () => {
       requests.push({ path, method: init.method ?? "GET", body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
       if (!init.method) return Response.json({
         blueprint_id: 21, print_provider_id: 31,
-        variants: [{ id: 41, is_enabled: true }, { id: 42, is_enabled: false }],
+        variants: [{ id: 41, is_enabled: true,price:2450 }, { id: 42, is_enabled: false,price:2450 }],
       });
       if (init.method === "PUT") return Response.json({ id: "existing-product" });
       throw new Error("Unexpected supplier write");
@@ -190,8 +190,10 @@ describe("native-resolution create-only Printify placement", () => {
         path: "/v1/shops/fixture-shop/products/existing-product.json", method: "PUT",
         body: {
           title: "Latest mug title", description: "Latest verified partner disclosure", tags: ["latest"],
+          variants: [{id:41,is_enabled:true,price:2450},{id:42,is_enabled:false,price:2450}],
         },
       },
+      {path:"/v1/shops/fixture-shop/products/existing-product.json",method:"GET",body:undefined},
     ]);
   });
 

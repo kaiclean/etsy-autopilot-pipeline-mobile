@@ -1,9 +1,12 @@
 import { after, NextResponse } from "next/server";
+import { getDb } from "@/db";
+import { resolveActiveShop } from "@/lib/shops";
+import { enqueueJob, drainJobs } from "@/lib/durable-jobs";
+import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { parseMaintenanceSummary } from "@/pipeline/maintenance";
 import { runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
-import { writeStageLog } from "@/pipeline/stage-log";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -27,14 +30,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ stage: string }
   if (!isStage(stage)) return NextResponse.json({ error: "unknown stage" }, { status: 404 });
   const force = new URL(req.url).searchParams.get("force") === "1";
   if (stage === "daily" || stage === "orders") {
-    after(async () => {
-      try {
-        await runStage(stage, "cron", { force });
-      } catch (error) {
-        writeStageLog(stage, "error", error instanceof Error ? error.message : "Background run failed");
-      }
-    });
-    return NextResponse.json({ stage, status: "accepted" }, { status: 202 });
+    const db=await getDb();
+    const shop=await resolveActiveShop(db);
+    const requestKey=req.headers.get("idempotency-key") ?? (force ? randomUUID() : new Date().toISOString().slice(0,10));
+    const job=await enqueueJob(db,shop.id,"stage",`stage:${shop.id}:${stage}:${requestKey}`,{stage,force});
+    after(async()=>{ await drainJobs(db,1); });
+    return NextResponse.json({stage,status:"accepted",jobId:job.id,jobStatus:job.status},{status:202});
   }
   const run = await runStage(stage, "cron", { force });
   const summary = stage === "maintenance" ? parseMaintenanceSummary(run.summary) : run.summary;
