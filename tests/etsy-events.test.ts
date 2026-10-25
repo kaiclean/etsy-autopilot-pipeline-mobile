@@ -81,14 +81,14 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 describe("fail-closed Etsy webhook", () => {
-  it("stays unavailable even with opt-in and plausible attacker-supplied signature headers", async () => {
+  it("rejects requests without valid signature when enabled", async () => {
     vi.stubEnv("ETSY_WEBHOOK_ENABLED", "true");
     const request = new Request("http://localhost/api/webhooks/etsy", {
       method: "POST", headers: { "content-type": "application/json", "x-etsy-signature": "forged" }, body: raw(),
     });
-    expect((await POST(request)).status).toBe(503);
+    expect((await POST(request)).status).toBe(401);
     expect(await db.select().from(etsyEvents)).toHaveLength(0);
-    await expect(verifyEtsyWebhook(raw(), request.headers)).rejects.toMatchObject({ status: 503 });
+    await expect(verifyEtsyWebhook(raw(), request.headers)).rejects.toMatchObject({ status: 401 });
   });
 
   it("defaults off and requires no database or queue to reject delivery", async () => {

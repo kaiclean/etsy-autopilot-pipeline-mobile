@@ -3,7 +3,7 @@ import { getEtsyAdapter } from "@/adapters/etsy";
 import { EtsyAmbiguousWriteError } from "@/adapters/etsy/transport";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import { PrintifyPublishError } from "@/adapters/printify/client";
-import { costs, designs, listings } from "@/db/schema";
+import { costs, designs, listings, publishDeadLetters } from "@/db/schema";
 import { config, publicAppUrl } from "@/lib/config";
 import { emit } from "@/lib/events";
 import { FEES, round2, type PodPreset } from "@/lib/fees";
@@ -22,6 +22,8 @@ export function podPreset(provider: string | null): PodPreset | undefined {
   if (name === "posterA3" || name === "mug" || name === "tshirt" || name === "sweatshirt") return name;
   return undefined;
 }
+
+export const MAX_PUBLISH_ATTEMPTS_BEFORE_DEAD_LETTER = 5;
 
 function reusableId(id: string | null, mode: "dry-run" | "live", prefix: string) {
   if (!id) return undefined;
@@ -323,17 +325,39 @@ export const runPublish: StageFn = async (ctx) => {
           status: "failed",
           publishError: msg,
           publishAttemptedAt: ctx.now,
+          publishAttemptCount: l.publishAttemptCount + 1,
           ...(e instanceof PrintifyPublishError ? { printifyProductId: e.productId } : {}),
           updatedAt: ctx.now,
         })
         .where(claimWhere)
-        .returning({ id: listings.id });
+        .returning({ id: listings.id, publishAttemptCount: listings.publishAttemptCount });
       if (!completed) {
         skipped++;
         log(`#${l.id} skipped: publish claim changed before recording failure`, "warn");
         continue;
       }
-      log(`#${l.id} publish failed: ${msg}`, "error");
+      const newAttemptCount = completed.publishAttemptCount;
+      log(`#${l.id} publish failed (attempt ${newAttemptCount}): ${msg}`, "error");
+      
+      // Escalate to dead-letter queue after max attempts
+      if (newAttemptCount >= MAX_PUBLISH_ATTEMPTS_BEFORE_DEAD_LETTER) {
+        await db.insert(publishDeadLetters).values({
+          shopId: ctx.shopId,
+          listingId: l.id,
+          stage: l.productType === "digital" ? "digital" : "pod",
+          error: msg,
+          attemptCount: newAttemptCount,
+          lastAttemptAt: ctx.now,
+        }).onConflictDoNothing();
+        await emit(db, {
+          type: "publish.dead_letter",
+          title: `Publish dead-letter: ${l.title.slice(0, 50)}…`,
+          body: `Failed ${newAttemptCount} times. Manual intervention required. Last error: ${msg.slice(0, 200)}`,
+          severity: "error",
+          href: "/products",
+        }, ctx.demo);
+      }
+      
       failed++;
     }
   }

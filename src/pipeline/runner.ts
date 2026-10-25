@@ -20,12 +20,9 @@ import { runPublish } from "./publish";
 import { runResearch } from "./research";
 import { writeStageLog } from "./stage-log";
 import { STAGES, asStageResult, stageResult, type StageContext, type StageFn, type StageStatus } from "./types";
+import { acquireStageLock, releaseStageLock } from "@/lib/stage-lock";
 
 const CHAIN_STAGES = ["research", "design", "listing"] as const;
-
-// Keep long-running stages exclusive for their entire lifetime, including across hot reloads.
-const server = globalThis as typeof globalThis & { __autopilotActiveStages?: Set<StageName> };
-const activeStages = (server.__autopilotActiveStages ??= new Set<StageName>());
 
 /** Research, then a design brief, then a listing draft. Never publishes or arms go-live. */
 async function runDailyChain(ctx: StageContext) {
@@ -105,17 +102,16 @@ async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigg
 
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
   if (stage !== "daily" && stage !== "orders") return executeStage(stage, trigger, opts);
-  if (activeStages.has(stage)) {
-    const db = opts.db ?? (await getDb());
-    const shop = await resolveActiveShop(db);
-    return recordSkip(db, stage, trigger, "Already running", shop.id, isDemoMode(shop.etsyShopId ?? undefined));
+  const db = opts.db ?? (await getDb());
+  const shop = await resolveActiveShop(db);
+  const acquired = await acquireStageLock(db, stage, shop.id);
+  if (!acquired) {
+    return recordSkip(db, stage, trigger, "Already running (distributed lock)", shop.id, isDemoMode(shop.etsyShopId ?? undefined));
   }
-  // Acquire before any await: concurrent cron/manual/force requests cannot race.
-  activeStages.add(stage);
   try {
     return await executeStage(stage, trigger, opts);
   } finally {
-    activeStages.delete(stage);
+    await releaseStageLock(db, stage, shop.id);
   }
 }
 

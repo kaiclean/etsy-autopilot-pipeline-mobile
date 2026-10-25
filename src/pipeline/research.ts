@@ -52,14 +52,30 @@ export const runResearch: StageFn = async (ctx) => {
     // Rotate through candidates so each run refreshes a different slice.
     const offset = Math.floor(ctx.now.getTime() / DAY_MS) % Math.max(1, candidates.length);
     const slice = [...candidates.slice(offset), ...candidates.slice(0, offset)].slice(0, TRENDS_LOOKUPS_PER_RUN);
+    let consecutiveFailures = 0;
     for (const c of slice) {
-      const t = await googleTrendScore(c.phrase);
-      if (t == null) {
-        log(`Google Trends unavailable for “${c.phrase}” (rate-limited or blocked); using seed demand`, "warn");
+      if (consecutiveFailures >= 3) {
+        log(`Google Trends: ${consecutiveFailures} consecutive failures, skipping remaining lookups`, "warn");
         break;
       }
+      let t: number | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        t = await googleTrendScore(c.phrase);
+        if (t != null) break;
+        if (attempt < 2) {
+          const delay = 1000 * 2 ** attempt; // 1s, 2s
+          log(`Google Trends rate-limited for "${c.phrase}", retrying in ${delay}ms (attempt ${attempt + 1}/3)`, "warn");
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+      if (t == null) {
+        consecutiveFailures++;
+        log(`Google Trends unavailable for "${c.phrase}" after retries; using seed demand`, "warn");
+        continue;
+      }
+      consecutiveFailures = 0;
       trends.set(c.phrase, t);
-      log(`Google Trends “${c.phrase}”: ${t}`);
+      log(`Google Trends "${c.phrase}": ${t}`);
     }
   } else {
     log("Google Trends disabled (RESEARCH_GOOGLE_TRENDS=false)");

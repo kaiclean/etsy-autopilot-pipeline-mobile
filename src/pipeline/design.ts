@@ -1,6 +1,7 @@
 import { reserveImage } from "@/lib/image-quota";
+import { reserveAiBudget, recordAiSpend } from "@/lib/ai-budget";
 import { themeStyles } from "@/lib/themes";
-import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
 import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
@@ -166,21 +167,6 @@ export const runDesign: StageFn = async (ctx) => {
   if (queue.length === 0) return "No keywords to design for. Run Research first.";
   const vision = (() => { try { return getLLMProvider({ demo: ctx.demo }); } catch { return null; } })();
 
-  const dayStart = new Date(ctx.now);
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const monthStart = new Date(Date.UTC(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), 1));
-  let spentToday = await aiSpend(db, dayStart);
-  let spentMonth = await aiSpend(db, monthStart);
-  let estimatedNeuronsToday = 0;
-  if (provider.estimatedNeuronsPerImage) {
-    const [usage] = await db.select({ count: count() }).from(costs).where(and(
-      gte(costs.createdAt, dayStart),
-      eq(costs.kind, "ai_image"),
-      sql`${costs.note} like 'Workers AI neurons:%'`,
-    ));
-    estimatedNeuronsToday = Number(usage?.count ?? 0) * provider.estimatedNeuronsPerImage;
-  }
-
   let made = 0;
   let briefed = 0;
   let failures = 0;
@@ -246,28 +232,30 @@ export const runDesign: StageFn = async (ctx) => {
       let accepted: Candidate | null = null;
       let rejected: Candidate | null = null;
       for (let attempt = 0; attempt < 3; attempt++) {
-        // Reserve for the vision call as well as image generation before each attempt.
-        if (spentToday + provider.estimatedCostChf + 0.02 > automation.dailyAiCapChf ||
-            spentMonth + provider.estimatedCostChf + 0.02 > automation.monthlyAiBudgetChf) {
-          log(`Daily AI cap reached or monthly AI budget reached before attempt ${attempt + 1} for “${kw.phrase}”`, "warn");
+        // Atomically reserve AI budget (CHF + neurons) before each attempt.
+        const budgetCheck = await reserveAiBudget(db, {
+          shopId: ctx.shopId,
+          estimatedCostChf: provider.estimatedCostChf + 0.02,
+          estimatedNeurons: provider.estimatedNeuronsPerImage,
+          dailyAiCapChf: automation.dailyAiCapChf,
+          monthlyAiBudgetChf: automation.monthlyAiBudgetChf,
+          now: ctx.now,
+        });
+        if (!budgetCheck.ok) {
+          log(`Budget check failed before attempt ${attempt + 1} for “${kw.phrase}”: ${budgetCheck.reason}`, "warn");
           budgetStopped = true;
           break;
         }
-        if (provider.estimatedNeuronsPerImage && estimatedNeuronsToday + provider.estimatedNeuronsPerImage > 10_000) {
-          log("Cloudflare Workers AI estimated daily neuron budget reached; stopping before another image request.", "warn");
-          budgetStopped = true;
-          break;
-        }
+        
         if (provider.estimatedNeuronsPerImage) {
-          estimatedNeuronsToday += provider.estimatedNeuronsPerImage;
-          await db.insert(costs).values({
+          await recordAiSpend(db, {
             shopId: ctx.shopId,
             kind: "ai_image",
             amountChf: 0,
             note: `Workers AI neurons: ${provider.estimatedNeuronsPerImage}; ${kw.phrase}`,
             isDemo: ctx.demo,
           });
-          log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons (${estimatedNeuronsToday}/10,000 today)`);
+          log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons`);
         }
         const slot = await reserveImage(db, { provider: provider.name });
         if (!slot.ok) {
@@ -285,12 +273,15 @@ export const runDesign: StageFn = async (ctx) => {
           label: kw.phrase,
           print: brief.brief?.productType === "pod",
         });
-        spentToday += img.costChf;
-        spentMonth += img.costChf;
-        if (img.costChf > 0) await db.insert(costs).values({
-          shopId: ctx.shopId, kind: "ai_image", amountChf: img.costChf,
-          note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`, isDemo: ctx.demo,
-        });
+        if (img.costChf > 0) {
+          await recordAiSpend(db, {
+            shopId: ctx.shopId,
+            kind: "ai_image",
+            amountChf: img.costChf,
+            note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`,
+            isDemo: ctx.demo,
+          });
+        }
         let upscaled: UpscaledArtwork | null = null;
         // Print (POD) files are Real-ESRGAN only. In pull mode the box worker does it; the item stays held meanwhile.
         const podPrint = targetKey !== "digitalLarge";
@@ -332,11 +323,12 @@ export const runDesign: StageFn = async (ctx) => {
         }
         const visionCost = assessment.costChf ?? 0;
         if (visionCost > 0) {
-          spentToday += visionCost;
-          spentMonth += visionCost;
-          await db.insert(costs).values({
-            shopId: ctx.shopId, kind: "ai_text", amountChf: visionCost,
-            note: `${vision?.name ?? "vision"}: design assessment`, isDemo: ctx.demo,
+          await recordAiSpend(db, {
+            shopId: ctx.shopId,
+            kind: "ai_text",
+            amountChf: visionCost,
+            note: `${vision?.name ?? "vision"}: design assessment`,
+            isDemo: ctx.demo,
           });
         }
         const check = ctx.demo && isPlaceholderUrl(prepared.url)
@@ -487,7 +479,16 @@ export const runDesign: StageFn = async (ctx) => {
   if (made) {
     await emit(db, { type: "design.generated", title: `${made} new design${made > 1 ? "s" : ""} generated`, severity: "info", href: "/pipeline" }, ctx.demo);
   }
-  const summary = `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${spentToday.toFixed(2)}`;
+  const [todaySpend] = await db
+    .select({ total: sql<number>`coalesce(sum(${costs.amountChf}), 0)::float` })
+    .from(costs)
+    .where(and(
+      eq(costs.shopId, ctx.shopId),
+      gte(costs.createdAt, new Date(new Date(ctx.now).setUTCHours(0, 0, 0, 0))),
+      sql`${costs.kind} in ('ai_image','ai_text')`,
+    ));
+  let summary = `Briefed ${briefed}, generated ${made}/${queue.length} designs · AI spend today CHF ${Number(todaySpend?.total ?? 0).toFixed(2)}`;
+  if (budgetStopped) summary += ` · stopped: daily/monthly AI cap reached`;
   const status = yieldStatus(made, failures);
   if (status === "success") return summary;
   return stageResult(creditsStopped ? `Image provider out of credits. ${summary}` : summary, status);

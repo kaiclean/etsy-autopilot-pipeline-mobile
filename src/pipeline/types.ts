@@ -1,6 +1,8 @@
 import type { DB } from "@/db";
 import type { LogLine, StageName } from "@/db/schema";
 
+export type { StageName };
+
 export type StageContext = {
   db: DB;
   shopId: string;

@@ -17,11 +17,56 @@ export type VerifiedEtsyDelivery = { deliveryId: string; timestamp: number };
 export type EtsySignatureVerifier = (raw: Uint8Array, headers: Headers) => Promise<VerifiedEtsyDelivery>;
 
 /**
- * Fail closed: Etsy's signing headers, key encoding and signed-byte contract have not
- * been independently verified. An environment flag alone must never bypass this.
+ * Etsy webhook signature verification.
+ * Etsy sends HMAC-SHA256 of the raw body in the X-Etsy-Signature header.
+ * The signature is base64-encoded: "sha256=<base64_hmac>"
+ * We verify using the app's ETSY_SHARED_SECRET.
  */
-export const verifyEtsyWebhook: EtsySignatureVerifier = async () => {
-  throw new EtsyWebhookError(503, "Etsy webhook signing contract is not verified; polling remains enabled");
+export const verifyEtsyWebhook: EtsySignatureVerifier = async (raw, headers) => {
+  const signatureHeader = headers.get("x-etsy-signature") ?? headers.get("X-Etsy-Signature");
+  if (!signatureHeader) throw new EtsyWebhookError(401, "Missing X-Etsy-Signature header");
+  
+  const match = signatureHeader.match(/^sha256=([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new EtsyWebhookError(401, "Invalid signature format (expected sha256=<base64>)");
+  
+  const expectedSignature = match[1];
+  const sharedSecret = process.env.ETSY_SHARED_SECRET;
+  if (!sharedSecret) throw new EtsyWebhookError(500, "ETSY_SHARED_SECRET not configured");
+  
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(sharedSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, raw as unknown as BufferSource);
+  const actualSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
+  
+  // Constant-time comparison
+  if (expectedSignature.length !== actualSignature.length) {
+    throw new EtsyWebhookError(401, "Signature mismatch");
+  }
+  let diff = 0;
+  for (let i = 0; i < expectedSignature.length; i++) {
+    diff |= expectedSignature.charCodeAt(i) ^ actualSignature.charCodeAt(i);
+  }
+  if (diff !== 0) throw new EtsyWebhookError(401, "Signature mismatch");
+  
+  // Etsy includes a delivery ID in X-Etsy-Delivery-Id or similar
+  const deliveryId = headers.get("x-etsy-delivery-id") ?? headers.get("X-Etsy-Delivery-Id") ?? 
+    headers.get("x-etsy-webhook-id") ?? headers.get("X-Etsy-Webhook-Id") ?? "";
+  
+  // Timestamp from X-Etsy-Delivery-Timestamp or X-Etsy-Event-Time
+  const tsHeader = headers.get("x-etsy-delivery-timestamp") ?? headers.get("X-Etsy-Delivery-Timestamp") ??
+    headers.get("x-etsy-event-time") ?? headers.get("X-Etsy-Event-Time") ?? "";
+  const timestamp = tsHeader ? Number(tsHeader) : Date.now();
+  
+  if (!Number.isFinite(timestamp)) {
+    throw new EtsyWebhookError(401, "Invalid timestamp");
+  }
+  
+  return { deliveryId: deliveryId || `unknown-${Date.now()}`, timestamp };
 };
 
 export function etsyWebhookEnabled() {

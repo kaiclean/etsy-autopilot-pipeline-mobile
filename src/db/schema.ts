@@ -533,7 +533,35 @@ export type AppEvent = typeof events.$inferSelect;
 export type Cost = typeof costs.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type PrintifyEvent = typeof printifyEvents.$inferSelect;
+export const publishDeadLetters = pgTable(
+  "publish_dead_letters",
+  {
+    id: serial("id").primaryKey(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .default(omnishopId)
+      .references(() => shops.id),
+    listingId: integer("listing_id").references(() => listings.id),
+    stage: text("stage").$type<"digital" | "pod">().notNull(),
+    error: text("error").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    resolved: boolean("resolved").notNull().default(false),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by"),
+    resolution: text("resolution"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("publish_dead_letters_listing_idx").on(t.listingId),
+    index("publish_dead_letters_shop_idx").on(t.shopId),
+  ],
+);
+
 export type PodSample = typeof podSamples.$inferSelect;
+export type PublishDeadLetter = typeof publishDeadLetters.$inferSelect;
+
 export type DesignBrief = typeof designBriefs.$inferSelect;
 export type HealthReport = typeof healthReports.$inferSelect;
 export type SaleAlert = typeof saleAlerts.$inferSelect;

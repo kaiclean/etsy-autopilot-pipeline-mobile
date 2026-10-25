@@ -17,7 +17,18 @@ function pgliteDir() {
   return path.join(process.cwd(), ".data", "pglite");
 }
 
+/** Fails fast in production if DATABASE_URL is missing. */
+function assertProductionDbConfig() {
+  if (!config.databaseUrl && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "DATABASE_URL is required in production. PGlite is for local development only. " +
+        "Set DATABASE_URL to a Neon Postgres connection string.",
+    );
+  }
+}
+
 async function connect(): Promise<DB> {
+  assertProductionDbConfig();
   const url = config.databaseUrl;
   if (url) {
     const { neon } = await import("@neondatabase/serverless");
@@ -27,7 +38,6 @@ async function connect(): Promise<DB> {
     await migrate(db, { migrationsFolder });
     const { syncShopRegistry } = await import("@/lib/shops");
     await syncShopRegistry(db as unknown as DB);
-    // Query-builder API is identical across drivers; unify the type.
     return db as unknown as DB;
   }
   const { PGlite } = await import("@electric-sql/pglite");

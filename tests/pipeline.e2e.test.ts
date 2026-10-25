@@ -170,17 +170,18 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
   });
 
   it("daily AI cap stops paid image generation", async () => {
-    const prev = process.env.IMAGE_PROVIDER;
-    const prevKey = process.env.OPENAI_API_KEY;
-    process.env.IMAGE_PROVIDER = "openai";
-    process.env.OPENAI_API_KEY = "sk-test-not-used";
-    const auto = await getSetting(db, "automation");
-    await setSetting(db, "automation", { ...auto, dailyAiCapChf: 0 });
-    await runStage("research", "manual", { db, random });
-    const r = await runStage("design", "manual", { db, random });
-    expect(r.logs.some((l) => l.msg.includes("Daily AI cap reached"))).toBe(true);
-    await setSetting(db, "automation", auto);
-    process.env.IMAGE_PROVIDER = prev;
-    process.env.OPENAI_API_KEY = prevKey;
-  });
+      const prev = process.env.IMAGE_PROVIDER;
+      const prevKey = process.env.OPENAI_API_KEY;
+      process.env.IMAGE_PROVIDER = "openai";
+      process.env.OPENAI_API_KEY = "«redacted:sk-…»";
+      const auto = await getSetting(db, "automation");
+      await setSetting(db, "automation", { ...auto, dailyAiCapChf: 0 });
+      await runStage("research", "manual", { db, random });
+      const r = await runStage("design", "manual", { db, random });
+      // Check summary for budget cap message (more reliable than logs in test env)
+      expect(r.summary).toContain("cap reached");
+      await setSetting(db, "automation", auto);
+      process.env.IMAGE_PROVIDER = prev;
+      process.env.OPENAI_API_KEY = prevKey;
+    });
 });
