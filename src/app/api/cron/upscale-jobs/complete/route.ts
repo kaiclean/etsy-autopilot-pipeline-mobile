@@ -68,9 +68,10 @@ export async function POST(req: Request) {
   }
   // Full edge check on every upload. Bright blank bands are trimmed (then the size floor is re-checked);
   // dark/flat bands are never cut — they only mark the design for Design review.
+  // For POD: pad instead of trim so blank borders don't cause rejection.
   const { analysisRaw, flatEdgeBands, trimBlankEdges } = await import("@/lib/edge-check");
   const raw = await analysisRaw(bytes);
-  const trim = await trimBlankEdges(bytes, { width: target.minW, height: target.minH }, raw);
+  const trim = await trimBlankEdges(bytes, { width: target.minW, height: target.minH }, raw, true); // padInsteadOfTrim = true for POD
   const b = trim.bands;
   if (!trim.ok) {
     console.log(`[upscale-jobs] design #${designId} edge check: REJECT ${trim.reason}`);

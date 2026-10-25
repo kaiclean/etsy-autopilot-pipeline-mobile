@@ -27,7 +27,7 @@ import { ensureDesignBrief } from "./design-brief";
 import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
 
-export const PRINT_RENDER = { width: 1024, height: 1280 } as const;
+export const PRINT_RENDER = { width: 1152, height: 1440 } as const;
 
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   const [row] = await db
@@ -110,7 +110,7 @@ export function buildPrompt(phrase: string, style: string, niche?: string, conce
     .replace(/\bno (?:text|lettering|frames?|interface chrome)\b/gi, "clean pictorial detail");
   const subject = productKeyword(phrase) || "original art";
   const [renderStyle, motif] = concept?.includes(": ") ? concept.split(": ", 2) : [null, concept];
-  return `Main subject: ${subject}. The artwork must clearly depict ${subject}; do not substitute a generic mountain landscape unless the subject asks for one. ${renderStyle ? `Style: ${renderStyle}. ` : ""}${look}. ${motif ? `Secondary motif and palette: ${motif}. ` : ""}Original unframed full-bleed artwork with clean edges, a detailed central subject, high contrast, crisp detail and rich color variation. All marks are pictorial rather than typography; the corners contain clean artwork continuous with the composition. Opaque background with meaningful visual detail throughout. Avoid rendering defects: no melted or warped objects, no unintended fire or smoke, no distorted geometry.`;
+  return `Main subject: ${subject}. The artwork must clearly depict ${subject}; do not substitute a generic mountain landscape unless the subject asks for one. ${renderStyle ? `Style: ${renderStyle}. ` : ""}${look}. ${motif ? `Secondary motif and palette: ${motif}. ` : ""}Original unframed full-bleed artwork with clean edges, a detailed central subject, high contrast, crisp detail and rich color variation. All marks are pictorial rather than typography; the corners contain clean artwork continuous with the composition. Opaque background with meaningful visual detail throughout. Avoid rendering defects: no melted or warped objects, no unintended fire or smoke, no distorted geometry. CRITICAL: The image must fill the entire canvas edge-to-edge with no blank, white, transparent, or solid-color borders. Every pixel to the edge must contain meaningful artwork — no empty margins, no framing, no vignette fade to blank.`;
 }
 
 /** Selected keywords from today's research first, then interleaved across niches so one niche cannot fill the run. */

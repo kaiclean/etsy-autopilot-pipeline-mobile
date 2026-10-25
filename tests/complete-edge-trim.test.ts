@@ -51,11 +51,14 @@ describe("complete: edge check on every upload", () => {
     expect(h.a3[0]!.bytes.equals(h.uploaded[0]!)).toBe(true);
     expect(h.deleted).toEqual(["designs/2026-10-20/00000000-0000-4000-8000-0000000000bb.png"]);
   });
-  it("rejects when the trimmed file falls below the size floor", async () => {
+  it("pads when the trimmed file would fall below the size floor", async () => {
     h.src = await art(200, 250, { top: 60 }); h.deleted = [];
     const res = await call();
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
     expect(h.deleted).toHaveLength(1);
+    const body = await res.json();
+    expect(body.outputPx.width).toBeGreaterThanOrEqual(150);
+    expect(body.outputPx.height).toBeGreaterThanOrEqual(200);
   });
   it("dark/flat bands are not cut: full size kept, design marked for review", async () => {
     h.src = await art(200, 250, { flatDark: 20 }); h.uploaded = []; h.updates = [];

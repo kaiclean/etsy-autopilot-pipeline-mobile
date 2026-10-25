@@ -42,12 +42,26 @@ export async function blankEdgeBands(bytes: Buffer, opts: { maxStd?: number; min
     trimmed: { left: L, top: T, width: Math.max(0, full.width - L - R), height: Math.max(0, full.height - T - B) } };
 }
 
-/** Trim blank bands, then re-check the size floor. Returns the trimmed PNG, or a rejection reason. */
-export async function trimBlankEdges(bytes: Buffer, floor: { width: number; height: number }, pre?: Raw) {
+/** Trim blank edges, then re-check the size floor. Returns the trimmed/padded PNG, or a rejection reason. */
+export async function trimBlankEdges(bytes: Buffer, floor: { width: number; height: number }, pre?: Raw, padInsteadOfTrim = false) {
   const bands = await blankEdgeBands(bytes, {}, pre);
   if (!bands.blank) return { ok: true as const, bytes, bands };
   const t = bands.trimmed;
   if (t.width < floor.width || t.height < floor.height) {
+    if (padInsteadOfTrim) {
+      // Pad the image to meet the floor instead of rejecting
+      const padded = await sharp(bytes, { limitInputPixels: 128_000_000 })
+        .extend({
+          top: Math.max(0, Math.ceil((floor.height - t.height) / 2)),
+          bottom: Math.max(0, Math.floor((floor.height - t.height) / 2)),
+          left: Math.max(0, Math.ceil((floor.width - t.width) / 2)),
+          right: Math.max(0, Math.floor((floor.width - t.width) / 2)),
+          background: { r: 255, g: 255, b: 255, alpha: 1 },
+        })
+        .png({ palette: false })
+        .toBuffer();
+      return { ok: true as const, bytes: padded, bands: { ...bands, trimmed: { left: 0, top: 0, width: floor.width, height: floor.height } } };
+    }
     return { ok: false as const, bands, reason: `blank edge bands (top ${bands.top}, bottom ${bands.bottom}, left ${bands.left}, right ${bands.right}px); trimmed ${t.width}×${t.height} is below ${floor.width}×${floor.height}` };
   }
   return { ok: true as const, bands, bytes: await sharp(bytes).extract(t).png({ palette: false }).toBuffer() };
