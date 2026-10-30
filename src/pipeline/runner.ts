@@ -20,7 +20,7 @@ import { runPublish } from "./publish";
 import { runResearch } from "./research";
 import { writeStageLog } from "./stage-log";
 import { STAGES, asStageResult, stageResult, type StageContext, type StageFn, type StageStatus } from "./types";
-import { acquireStageLock, releaseStageLock } from "@/lib/stage-lock";
+import { acquireStageLock, renewStageLock, releaseStageLock } from "@/lib/stage-lock";
 
 const CHAIN_STAGES = ["research", "design", "listing"] as const;
 
@@ -48,7 +48,7 @@ async function runDailyChain(ctx: StageContext) {
     await emit(ctx.db, {
       type: "job.progress", title: `Daily chain: starting ${stage}`, href: "/pipeline/live", shopId: ctx.shopId,
     }, ctx.demo, { push: false });
-    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force });
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force, shopId: ctx.shopId, signal: ctx.signal });
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
@@ -86,7 +86,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal; shopId?: string };
 
 export class StageCancelled extends Error {
   constructor() { super("Cancelled by the dashboard"); this.name = "StageCancelled"; }
@@ -103,21 +103,34 @@ async function recordSkip(db: DB, stage: StageName, trigger: StageContext["trigg
 export async function runStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions = {}): Promise<JobRun> {
   if (stage !== "daily" && stage !== "orders") return executeStage(stage, trigger, opts);
   const db = opts.db ?? (await getDb());
-  const shop = await resolveActiveShop(db);
+  const shop = await resolveActiveShop(db, opts.shopId);
+  if (opts.shopId && shop.id !== opts.shopId) throw new Error("Requested shop is not registered");
   const acquired = await acquireStageLock(db, stage, shop.id);
   if (!acquired) {
     return recordSkip(db, stage, trigger, "Already running (distributed lock)", shop.id, isDemoMode(shop.etsyShopId ?? undefined));
   }
+  const controller = new AbortController();
+  const signal = opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal;
+  let renewing = false;
+  const heartbeat = setInterval(async () => {
+    if (renewing) return;
+    renewing = true;
+    try { if (!(await renewStageLock(db, acquired))) controller.abort(); }
+    catch { controller.abort(); }
+    finally { renewing = false; }
+  }, 30_000);
   try {
-    return await executeStage(stage, trigger, opts);
+    return await executeStage(stage, trigger, { ...opts, db, signal });
   } finally {
-    await releaseStageLock(db, stage, shop.id);
+    clearInterval(heartbeat);
+    await releaseStageLock(db, acquired);
   }
 }
 
 async function executeStage(stage: StageName, trigger: StageContext["trigger"], opts: RunOptions): Promise<JobRun> {
   const db = opts.db ?? (await getDb());
-  const shop = await resolveActiveShop(db);
+  const shop = await resolveActiveShop(db, opts.shopId);
+  if (opts.shopId && shop.id !== opts.shopId) throw new Error("Requested shop is not registered");
   const demo = isDemoMode(shop.etsyShopId ?? undefined);
   const automation = await getSetting(db, "automation");
   // Global settings.killSwitch pauses every shop. shops.kill_switch pauses this shop only.
@@ -132,7 +145,7 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
   const [running] = await db
     .select({ id: jobRuns.id })
     .from(jobRuns)
-    .where(and(eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
+    .where(and(eq(jobRuns.shopId, shop.id), eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
   if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
 
   const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();

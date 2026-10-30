@@ -19,6 +19,9 @@ export const maxDuration = 300;
  * Stores it in S3, updates the design, and re-runs listing copy + quality gates (upscaleDesigns --apply).
  */
 export async function POST(req: Request) {
+  if (process.env.AUTOPILOT_EXECUTION === "box" && process.env.AUTOPILOT_BOX_WORKER !== "1") {
+    return NextResponse.json({ error: "Complete this upload on the local box" }, { status: 409 });
+  }
   if (!authorizedUpscaleJob(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const params = new URL(req.url).searchParams;
   const designId = Number(params.get("designId"));

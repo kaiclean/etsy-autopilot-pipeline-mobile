@@ -556,6 +556,7 @@ export const publishDeadLetters = pgTable(
   (t) => [
     index("publish_dead_letters_listing_idx").on(t.listingId),
     index("publish_dead_letters_shop_idx").on(t.shopId),
+    uniqueIndex("publish_dead_letters_unresolved_idx").on(t.listingId).where(sql`${t.resolved} = false`),
   ],
 );
 

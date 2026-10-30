@@ -2,6 +2,7 @@ import { config, hasEtsyCredentials, hasGelatoCredentials, hasPrintifyCredential
 import { imageProviderStatusLabel, lastImageProviderError, type ImageRunFact, type ProviderCreditSignal } from "./provider-errors";
 import { effectivePublishMode, type PublishMode } from "./publish-mode";
 import { POD_PRESETS, type PodPreset } from "./fees";
+import { assertImageProviderAllowed, assertPaidInferenceAllowed, freeOnlyMode, localOllamaConfig } from "./free-mode";
 
 export type HealthLevel = "green" | "yellow" | "red";
 
@@ -261,6 +262,23 @@ function llmProviderCheck(): HealthCheck {
     "OMNIROUTE_MODEL",
   ];
   const requested = explicit("LLM_PROVIDER");
+  const localEnv = ["LLM_PROVIDER", "FREE_ONLY_MODE", "OLLAMA_LOCAL_BASE_URL", "OLLAMA_LOCAL_MODEL", "OLLAMA_LOCAL_VISION_MODEL"];
+  if (requested === "ollama-local") {
+    try {
+      const local = localOllamaConfig();
+      return { id: "llm", name: "LLM provider", level: "green", label: "Local configured",
+        detail: `Local Ollama · ${local.model} · vision ${local.visionModel}. Verify model availability from the box. No API usage charge.`, envVars: localEnv };
+    } catch (error) {
+      return { id: "llm", name: "LLM provider", level: "red", label: "Incomplete",
+        detail: error instanceof Error ? error.message : "Local Ollama configuration invalid", envVars: localEnv };
+    }
+  }
+  try {
+    if (freeOnlyMode() && requested && requested !== "mock") assertPaidInferenceAllowed(requested);
+  } catch (error) {
+    return { id: "llm", name: "LLM provider", level: "red", label: "Policy blocked",
+      detail: error instanceof Error ? error.message : "Free-only policy invalid", envVars: [...envVars, "FREE_ONLY_MODE"] };
+  }
   if (requested === "openai" && !config.openaiKey) {
     return {
       id: "llm",
@@ -357,6 +375,13 @@ function imageProviderCheck(): HealthCheck {
     "RUNPOD_COMFY_WORKFLOW",
   ];
   const provider = config.imageProvider;
+  try {
+    assertImageProviderAllowed(provider, provider === "mock");
+    if (config.imageFallbackProvider) assertImageProviderAllowed(config.imageFallbackProvider);
+  } catch (error) {
+    return { id: "images", name: "Image provider", level: "red", label: "Policy blocked",
+      detail: error instanceof Error ? error.message : "Free-only policy invalid", envVars: [...envVars, "FREE_ONLY_MODE", "CLOUDFLARE_WORKERS_PLAN"] };
+  }
   if (provider === "cloudflare") {
     const ready = Boolean(config.cloudflare.accountId && config.cloudflare.apiToken);
     return {

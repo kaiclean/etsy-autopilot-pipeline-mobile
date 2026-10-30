@@ -27,7 +27,7 @@ async function notify(e: AppEvent) {
 }
 
 /** SSE with automatic fallback to 10s polling; refreshes server components when activity arrives. */
-export function LiveProvider({ children }: { children: React.ReactNode }) {
+export function LiveProvider({ children, pollOnly = false }: { children: React.ReactNode; pollOnly?: boolean }) {
   const router = useRouter();
   const [state, setState] = useState<LiveState>({ status: "connecting", latest: [] });
   const cursor = useRef(0);
@@ -58,11 +58,21 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
     let failures = 0;
     let openedAt = 0;
     let stopped = false;
+    let polling = false;
+    let lastInteraction = Date.now();
+    const interacted = () => { lastInteraction = Date.now(); };
+    if (pollOnly) {
+      window.addEventListener("pointerdown", interacted);
+      window.addEventListener("keydown", interacted);
+      window.addEventListener("touchstart", interacted, { passive: true });
+    }
 
     const startPolling = () => {
       if (pollTimer) return;
       setState((s) => ({ ...s, status: "polling" }));
       const tick = async () => {
+        if (stopped || polling || document.visibilityState !== "visible" || (pollOnly && Date.now() - lastInteraction > 5 * 60_000)) return;
+        polling = true;
         try {
           const res = await fetch(`/api/events/poll?after=${cursor.current}`, { cache: "no-store" });
           if (!res.ok) throw new Error(String(res.status));
@@ -72,15 +82,15 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
           setState((s) => ({ ...s, status: "polling" }));
         } catch {
           setState((s) => ({ ...s, status: "offline" }));
-        }
+        } finally { polling = false; }
       };
       void tick();
-      pollTimer = setInterval(tick, 10_000);
+      pollTimer = setInterval(tick, pollOnly ? 60_000 : 10_000);
     };
 
     const connect = () => {
       if (stopped) return;
-      if (typeof EventSource === "undefined") return startPolling();
+      if (pollOnly || typeof EventSource === "undefined") return startPolling();
       es = new EventSource(`/api/events${cursor.current ? `?after=${cursor.current}` : ""}`);
       es.onopen = () => {
         openedAt = Date.now();
@@ -108,8 +118,12 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       stopped = true;
       es?.close();
       if (pollTimer) clearInterval(pollTimer);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      window.removeEventListener("pointerdown", interacted);
+      window.removeEventListener("keydown", interacted);
+      window.removeEventListener("touchstart", interacted);
     };
-  }, [handle]);
+  }, [handle, pollOnly]);
 
   return <LiveContext.Provider value={state}>{children}</LiveContext.Provider>;
 }

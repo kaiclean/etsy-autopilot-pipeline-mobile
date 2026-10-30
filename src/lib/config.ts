@@ -215,8 +215,9 @@ export const config = {
     if (p === "higgsfield" || p === "openai" || p === "replicate" || p === "omniroute" || p === "runpod" || p === "cloudflare") return p;
     return "mock";
   },
-  get llmProvider(): "mock" | "openai" | "ollama" | "omniroute" {
+  get llmProvider(): "mock" | "openai" | "ollama" | "ollama-local" | "omniroute" {
     const p = env("LLM_PROVIDER");
+    if (p === "ollama-local") return "ollama-local";
     if (p === "openai" && env("OPENAI_API_KEY")) return "openai";
     if (p === "ollama" && env("OLLAMA_API_KEY")) return "ollama";
     if (p === "omniroute" && env("OMNIROUTE_API_KEY")) return "omniroute";
@@ -482,6 +483,8 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
         detail:
           config.llmProvider === "openai"
             ? `OpenAI-compatible · ${config.openaiModel} · ${config.openaiBaseUrl}`
+            : config.llmProvider === "ollama-local"
+              ? `Local Ollama · ${env("OLLAMA_LOCAL_MODEL") ?? "model required"} · runs on your box`
             : config.llmProvider === "ollama"
               ? `Ollama Cloud · ${config.ollama.model} · ${config.ollama.baseUrl}`
               : config.llmProvider === "omniroute"

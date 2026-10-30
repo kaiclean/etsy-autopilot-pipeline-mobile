@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { DB } from "@/db";
 import { config, hasPrintifyCredentials, storageBackend } from "./config";
 import { resolveActiveShop, readEtsyTokens } from "./shops";
+import { localOllamaConfig } from "./free-mode";
 
 export type ProbeStatus = "ok" | "warn" | "fail" | "skipped";
 export type Probe = { id: string; name: string; status: ProbeStatus; detail: string; latencyMs: number | null; env: Record<string, boolean> };
@@ -94,6 +95,15 @@ async function storageProbe(): Promise<Probe> {
 
 async function llmProbe(f: Fetch): Promise<Probe> {
   const p = config.llmProvider;
+  if (p === "ollama-local") {
+    const env = has("LLM_PROVIDER", "OLLAMA_LOCAL_MODEL", "OLLAMA_LOCAL_BASE_URL", "OLLAMA_LOCAL_VISION_MODEL");
+    try {
+      localOllamaConfig();
+      return { id: "llm", name: "LLM (local Ollama)", env, status: "skipped", detail: "Local model must be tested from the box; the cloud dashboard does not probe its own loopback address", latencyMs: null };
+    } catch {
+      return { id: "llm", name: "LLM (local Ollama)", env, status: "fail", detail: "Local Ollama configuration incomplete or invalid", latencyMs: null };
+    }
+  }
   if (p === "openai") {
     const env = has("LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL");
     const r = await probeGet(f, `${config.openaiBaseUrl}/models`, { Authorization: `Bearer ${config.openaiKey}` });

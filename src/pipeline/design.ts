@@ -1,5 +1,5 @@
 import { reserveImage } from "@/lib/image-quota";
-import { reserveAiBudget, recordAiSpend } from "@/lib/ai-budget";
+import { reserveAiBudget, recordAiSpend, finishAiBudgetReservation } from "@/lib/ai-budget";
 import { themeStyles } from "@/lib/themes";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { getImageProvider } from "@/adapters/image";
@@ -7,6 +7,7 @@ import { getLLMProvider } from "@/adapters/llm";
 import type { GeneratedImage } from "@/adapters/image/types";
 import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import { isPlaceholderUrl } from "@/lib/art-quality";
+import { freeOnlyMode } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { assessArtwork } from "@/lib/design-quality";
 import { PRINT_TARGETS, getPrintTarget, type PrintTargetKey } from "@/lib/print-targets";
@@ -235,7 +236,7 @@ export const runDesign: StageFn = async (ctx) => {
         // Atomically reserve AI budget (CHF + neurons) before each attempt.
         const budgetCheck = await reserveAiBudget(db, {
           shopId: ctx.shopId,
-          estimatedCostChf: provider.estimatedCostChf + 0.02,
+          estimatedCostChf: provider.estimatedCostChf + (freeOnlyMode() ? 0 : 0.02),
           estimatedNeurons: provider.estimatedNeuronsPerImage,
           dailyAiCapChf: automation.dailyAiCapChf,
           monthlyAiBudgetChf: automation.monthlyAiBudgetChf,
@@ -247,108 +248,115 @@ export const runDesign: StageFn = async (ctx) => {
           break;
         }
         
-        if (provider.estimatedNeuronsPerImage) {
-          await recordAiSpend(db, {
-            shopId: ctx.shopId,
-            kind: "ai_image",
-            amountChf: 0,
-            note: `Workers AI neurons: ${provider.estimatedNeuronsPerImage}; ${kw.phrase}`,
-            isDemo: ctx.demo,
-          });
-          log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons`);
-        }
-        const slot = await reserveImage(db, { provider: provider.name });
-        if (!slot.ok) {
-          log(`${slot.reason}; stopping before another image request.`, "warn");
-          budgetStopped = true;
-          break;
-        }
-        const img = await provider.generate({
-          prompt,
-          niche: kw.niche,
-          seed: Math.floor(ctx.random() * 1e9) + attempt,
-          aspectRatio: targetKey === "mug" || kw.niche === "stream" ? "16:9" : "2:3",
-          width: generationWidth,
-          height: generationHeight,
-          label: kw.phrase,
-          print: brief.brief?.productType === "pod",
-        });
-        if (img.costChf > 0) {
-          await recordAiSpend(db, {
-            shopId: ctx.shopId,
-            kind: "ai_image",
-            amountChf: img.costChf,
-            note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`,
-            isDemo: ctx.demo,
-          });
-        }
-        let upscaled: UpscaledArtwork | null = null;
-        // Print (POD) files are Real-ESRGAN only. In pull mode the box worker does it; the item stays held meanwhile.
-        const podPrint = targetKey !== "digitalLarge";
-        // Pull mode: every upscale (POD and large digital) is a box job; the app never loads Real-ESRGAN or uses Lanczos.
-        if (!isPlaceholderUrl(img.url) && !config.upscale.pull) {
-          upscaled = await upscaleArtwork(
-            img.url,
-            target,
-            {
-              ...(targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
-              posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas"),
-            },
-          );
-          // No Lanczos fallback for print: keep the clean source and stay held until Real-ESRGAN runs.
-          if (podPrint && upscaled.upscaleMethod === "lanczos") upscaled = null;
-        }
-        const outputUrl = upscaled?.url ?? img.url;
-        const prepared = await preparePrintFile(outputUrl);
-        let reviewReason: string | null = null;
-        const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
-          ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
-          : !ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")
-            ? { score: 0, reasons: ["Placeholder art."], text: false, empty: false, frameOnly: false, artifacts: false }
-            : await (async () => {
-              try {
-                if (!vision?.assessImage) throw new Error("Vision model is unavailable");
-                const preview = prepared.visionPreview ?? (prepared.url.startsWith("https://") ? prepared.url : null);
-                if (!preview) throw new Error("Vision preview is unavailable");
-                return await vision.assessImage(preview);
-              } catch {
-                reviewReason = "Vision assessment unavailable; human image review required.";
-                return null;
-              }
-            })();
-        if (!assessment) {
-          rejected = { img, prepared, upscale: upscaled, score: null, reasons: [reviewReason!], review: true };
-          log(`Design “${kw.phrase}” needs review: ${reviewReason}`, "warn");
-          break;
-        }
-        const visionCost = assessment.costChf ?? 0;
-        if (visionCost > 0) {
-          await recordAiSpend(db, {
-            shopId: ctx.shopId,
-            kind: "ai_text",
-            amountChf: visionCost,
-            note: `${vision?.name ?? "vision"}: design assessment`,
-            isDemo: ctx.demo,
-          });
-        }
-        const check = ctx.demo && isPlaceholderUrl(prepared.url)
-          ? { pass: true, reasons: [] }
-          : assessArtwork(assessment, prepared.width, prepared.height, false, ctx.demo ? null : prepared.variance);
-        rejected = { img, prepared, upscale: upscaled, score: assessment.score, reasons: check.reasons };
-        if (check.pass && !isPlaceholderUrl(prepared.url)) {
-          const hash = await loadArtworkBytes(prepared.url).then((bytes) => bytes ? differenceHash(bytes) : null).catch(() => null);
-          if (hash != null && isNearDuplicate(hash, runHashes)) {
-            rejected = { ...rejected, reasons: ["Near-duplicate of another design in this run."] };
-            log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: near-duplicate of another design in this run`, "warn");
-            continue;
+        let requestSent = false;
+        let uncertainCharge = false;
+        try {
+          if (provider.estimatedNeuronsPerImage) {
+            log(`Cloudflare Workers AI estimate: ${provider.estimatedNeuronsPerImage} neurons`);
           }
-          if (hash != null) runHashes.push(hash);
+          const slot = await reserveImage(db, { provider: provider.name });
+          if (!slot.ok) {
+            log(`${slot.reason}; stopping before another image request.`, "warn");
+            budgetStopped = true;
+            break;
+          }
+          requestSent = true;
+          uncertainCharge = true;
+          const img = await provider.generate({
+            prompt,
+            niche: kw.niche,
+            seed: Math.floor(ctx.random() * 1e9) + attempt,
+            aspectRatio: targetKey === "mug" || kw.niche === "stream" ? "16:9" : "2:3",
+            width: generationWidth,
+            height: generationHeight,
+            label: kw.phrase,
+            print: brief.brief?.productType === "pod",
+          });
+          if (img.costChf > 0) {
+            await recordAiSpend(db, {
+              shopId: ctx.shopId,
+              kind: "ai_image",
+              amountChf: img.costChf,
+              reservationId: budgetCheck.reservationId, now: ctx.now,
+              note: `${img.provider}: ${kw.phrase} (attempt ${attempt + 1})`,
+              isDemo: ctx.demo,
+            });
+          }
+          uncertainCharge = false;
+          let upscaled: UpscaledArtwork | null = null;
+          // Print (POD) files are Real-ESRGAN only. In pull mode the box worker does it; the item stays held meanwhile.
+          const podPrint = targetKey !== "digitalLarge";
+          // Pull mode: every upscale (POD and large digital) is a box job; the app never loads Real-ESRGAN or uses Lanczos.
+          if (!isPlaceholderUrl(img.url) && !config.upscale.pull) {
+            upscaled = await upscaleArtwork(
+              img.url,
+              target,
+              {
+                ...(targetKey === "digitalLarge" ? { fallbackTarget: PRINT_TARGETS.digital } : {}),
+                posterFinish: config.upscale.posterFinish && (targetKey === "posterA3" || targetKey === "canvas"),
+              },
+            );
+            // No Lanczos fallback for print: keep the clean source and stay held until Real-ESRGAN runs.
+            if (podPrint && upscaled.upscaleMethod === "lanczos") upscaled = null;
+          }
+          const outputUrl = upscaled?.url ?? img.url;
+          const prepared = await preparePrintFile(outputUrl);
+          let reviewReason: string | null = null;
+          const assessment = ctx.demo && isPlaceholderUrl(prepared.url)
+            ? { score: 0, reasons: [], text: false, empty: false, frameOnly: false, artifacts: false }
+            : !ctx.demo && (isPlaceholderUrl(prepared.url) || img.provider === "mock")
+              ? { score: 0, reasons: ["Placeholder art."], text: false, empty: false, frameOnly: false, artifacts: false }
+              : await (async () => {
+                try {
+                  if (!vision?.assessImage) throw new Error("Vision model is unavailable");
+                  const preview = prepared.visionPreview ?? (prepared.url.startsWith("https://") ? prepared.url : null);
+                  if (!preview) throw new Error("Vision preview is unavailable");
+                  uncertainCharge = true;
+                  return await vision.assessImage(preview);
+                } catch {
+                  reviewReason = "Vision assessment unavailable; human image review required.";
+                  return null;
+                }
+              })();
+          if (!assessment) {
+            rejected = { img, prepared, upscale: upscaled, score: null, reasons: [reviewReason!], review: true };
+            log(`Design “${kw.phrase}” needs review: ${reviewReason}`, "warn");
+            break;
+          }
+          const visionCost = assessment.costChf ?? 0;
+          if (visionCost > 0) {
+            await recordAiSpend(db, {
+              shopId: ctx.shopId,
+              kind: "ai_text",
+              amountChf: visionCost,
+              reservationId: budgetCheck.reservationId, now: ctx.now,
+              note: `${vision?.name ?? "vision"}: design assessment`,
+              isDemo: ctx.demo,
+            });
+          }
+          uncertainCharge = false;
+          const check = ctx.demo && isPlaceholderUrl(prepared.url)
+            ? { pass: true, reasons: [] }
+            : assessArtwork(assessment, prepared.width, prepared.height, false, ctx.demo ? null : prepared.variance);
+          rejected = { img, prepared, upscale: upscaled, score: assessment.score, reasons: check.reasons };
+          if (check.pass && !isPlaceholderUrl(prepared.url)) {
+            const hash = await loadArtworkBytes(prepared.url).then((bytes) => bytes ? differenceHash(bytes) : null).catch(() => null);
+            if (hash != null && isNearDuplicate(hash, runHashes)) {
+              rejected = { ...rejected, reasons: ["Near-duplicate of another design in this run."] };
+              log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: near-duplicate of another design in this run`, "warn");
+              continue;
+            }
+            if (hash != null) runHashes.push(hash);
+          }
+          if (check.pass) {
+            accepted = rejected;
+            break;
+          }
+          log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: ${check.reasons.join("; ")}`, "warn");
+        } finally {
+          await finishAiBudgetReservation(db, budgetCheck.reservationId,
+            !requestSent ? "released" : uncertainCharge ? "uncertain" : "settled");
         }
-        if (check.pass) {
-          accepted = rejected;
-          break;
-        }
-        log(`Design “${kw.phrase}” attempt ${attempt + 1}/3 rejected: ${check.reasons.join("; ")}`, "warn");
       }
       if (!accepted && !rejected) break;
       if (!accepted && budgetStopped) {

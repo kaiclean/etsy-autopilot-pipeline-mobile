@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { assertImageProviderAllowed } from "@/lib/free-mode";
 import { CloudflareImageProvider } from "./cloudflare";
 import { imageErrorDetail } from "./errors";
 import { HiggsfieldImageProvider } from "./higgsfield";
@@ -20,6 +21,9 @@ export function setImageProviderForTests(provider: ImageProvider | null) {
  * instead of queueing a flat placeholder.
  */
 export function getImageProvider(opts?: { demo?: boolean; log?: (message: string, level: "warn") => void }): ImageProvider {
+  assertImageProviderAllowed(config.imageProvider, opts?.demo);
+  // Validate the fallback before making even the primary request.
+  if (config.imageFallbackProvider) assertImageProviderAllowed(config.imageFallbackProvider);
   if (providerOverride) return providerOverride;
   const primary = createProvider(config.imageProvider, opts?.demo);
   const fallbackName = config.imageFallbackProvider;

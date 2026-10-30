@@ -1,3 +1,4 @@
+import { assertCloudflareImageModelAllowed } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
 import { ImageProviderHttpError, imageErrorDetail } from "./errors";
@@ -27,6 +28,7 @@ export class CloudflareImageProvider implements ImageProvider {
     const { accountId, apiToken } = config.cloudflare;
     // Print renders need the size-honouring model; flux-1-schnell ignores width/height and returns 1024×1024.
     const model = req.print ? CLOUDFLARE_PRINT_IMAGE_MODEL : config.cloudflare.imageModel;
+    assertCloudflareImageModelAllowed(model);
     if (!/^@?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(model) || model.split("/").some((segment) => segment === "." || segment === "..")) {
       throw new Error("CLOUDFLARE_IMAGE_MODEL is invalid");
     }
@@ -38,6 +40,7 @@ export class CloudflareImageProvider implements ImageProvider {
         `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
         {
           method: "POST",
+          redirect: "error",
           headers: {
             Authorization: "Bearer " + apiToken,
             ...(model === CLOUDFLARE_PRINT_IMAGE_MODEL ? {} : { "Content-Type": "application/json" }),

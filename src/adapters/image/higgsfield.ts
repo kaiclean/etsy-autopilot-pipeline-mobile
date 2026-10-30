@@ -1,3 +1,4 @@
+import { assertPaidInferenceAllowed } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
@@ -23,6 +24,7 @@ export class HiggsfieldImageProvider implements ImageProvider {
   }
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
+    assertPaidInferenceAllowed("higgsfield");
     const base = config.higgsfield.baseUrl.replace(/\/$/, "");
     const path = process.env.HIGGSFIELD_TEXT2IMAGE_PATH ?? "/v1/text2image/soul";
     const submit = await fetch(`${base}${path}`, {

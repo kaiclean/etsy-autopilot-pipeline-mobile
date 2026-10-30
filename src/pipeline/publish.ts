@@ -1,4 +1,4 @@
-import { and, count, eq, isNotNull, isNull, like, lt, notLike, or } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, like, lt, notLike, or, sql } from "drizzle-orm";
 import { getEtsyAdapter } from "@/adapters/etsy";
 import { EtsyAmbiguousWriteError } from "@/adapters/etsy/transport";
 import { getPrintifyAdapter } from "@/adapters/printify";
@@ -91,6 +91,8 @@ export const runPublish: StageFn = async (ctx) => {
     .where(
       and(
         eq(listings.shopId, ctx.shopId),
+        // Repeated failures are held until the operator records a resolution.
+        sql`NOT EXISTS (SELECT 1 FROM publish_dead_letters dead WHERE dead.listing_id = ${listings.id} AND dead.resolved = false)`,
         or(
           eq(listings.status, "approved"),
           and(

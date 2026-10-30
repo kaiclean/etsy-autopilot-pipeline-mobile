@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { assertImageProviderAllowed, assertPaidInferenceAllowed, localOllamaConfig } from "@/lib/free-mode";
 import { RunPodImageProvider } from "@/adapters/image/runpod";
 import { CloudflareImageProvider } from "@/adapters/image/cloudflare";
 import { ImageProviderHttpError, imageErrorDetail } from "@/adapters/image/errors";
@@ -42,6 +43,7 @@ function result(target: ProbeResult["target"], status: ProbeStatus, httpStatus?:
 async function postJson(url: string, key: string, body: unknown): Promise<{ status: number; body: string }> {
   const res = await fetch(url, {
     method: "POST",
+    redirect: "error",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
@@ -51,6 +53,10 @@ async function postJson(url: string, key: string, body: unknown): Promise<{ stat
 }
 
 function textTarget(): { key: string; base: string; model: string } | { skip: ProbeResult } {
+  if (config.llmProvider === "ollama-local") {
+    const local = localOllamaConfig();
+    return { key: "ollama-local", base: local.baseUrl, model: local.model };
+  }
   if (config.llmProvider === "ollama") {
     const ollama = config.ollama;
     if (!ollama.apiKey) return { skip: result("text", "error", undefined, "OLLAMA_API_KEY missing") };
@@ -98,9 +104,10 @@ function imageTarget(): { key: string; base: string; model: string; openRouter: 
 }
 
 async function probeText(): Promise<ProbeResult> {
-  const target = textTarget();
-  if ("skip" in target) return target.skip;
   try {
+    if (config.llmProvider !== "ollama-local" && config.llmProvider !== "mock") assertPaidInferenceAllowed(config.llmProvider);
+    const target = textTarget();
+    if ("skip" in target) return target.skip;
     const response = await postJson(`${target.base}/chat/completions`, target.key, {
       model: target.model,
       messages: [{ role: "user", content: "ping" }],
@@ -116,6 +123,12 @@ async function probeText(): Promise<ProbeResult> {
 }
 
 async function probeImage(): Promise<ProbeResult> {
+  try {
+    assertImageProviderAllowed(config.imageProvider, config.imageProvider === "mock");
+    if (config.imageFallbackProvider) assertImageProviderAllowed(config.imageFallbackProvider);
+  } catch (error) {
+    return result("image", "error", undefined, error instanceof Error ? error.message : "Provider policy failed");
+  }
   if (config.imageProvider === "runpod" || config.imageProvider === "cloudflare") {
     try {
       const provider = config.imageProvider === "cloudflare" ? new CloudflareImageProvider() : new RunPodImageProvider();

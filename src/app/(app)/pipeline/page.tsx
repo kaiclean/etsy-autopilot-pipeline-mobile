@@ -1,3 +1,4 @@
+import { boxExecutionEnabled } from "@/lib/box-jobs";
 import { Power } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -27,6 +28,7 @@ export default async function PipelinePage() {
         }
       />
 
+      {boxExecutionEnabled() && <Link href="/pipeline/box"><Panel className="p-4"><strong>Local Mac worker</strong><p className="text-sm text-muted-foreground">Runs are queued for your Mac. Open worker jobs to see progress or review an interrupted run.</p></Panel></Link>}
       {automation.killSwitch && (
         <Link href="/settings">
           <Panel className="flex items-center gap-3 border-destructive/40 bg-destructive/10 p-4">

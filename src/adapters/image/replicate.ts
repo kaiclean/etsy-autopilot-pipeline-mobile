@@ -1,3 +1,4 @@
+import { assertPaidInferenceAllowed } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
 import type { GeneratedImage, ImageProvider, ImageRequest } from "./types";
@@ -24,6 +25,7 @@ export class ReplicateImageProvider implements ImageProvider {
   constructor(private readonly opts: { pollMs?: number; deadlineMs?: number } = {}) {}
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
+    assertPaidInferenceAllowed("replicate");
     const token = config.replicateToken;
     if (!token) throw new Error("REPLICATE_API_TOKEN missing");
     const model = process.env.REPLICATE_MODEL ?? "black-forest-labs/flux-schnell";

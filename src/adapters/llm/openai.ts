@@ -3,6 +3,7 @@ import { ETSY_LIMITS } from "@/lib/listing-validator";
 import { NICHES } from "@/lib/niches";
 import { PROMISE_RULES } from "@/lib/delivery";
 import { isSafeArtworkUrl } from "@/lib/art-quality";
+import { assertChatInferenceAllowed, assertLocalOllamaModel } from "@/lib/free-mode";
 import type { VisionAssessment } from "@/lib/design-quality";
 import type { ListingBrief, ListingCopy, LLMProvider } from "./types";
 
@@ -11,6 +12,7 @@ export type CompatibleChatOptions = {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  visionModel?: string;
   missingKey?: string;
 };
 
@@ -26,23 +28,37 @@ export class OpenAILLMProvider implements LLMProvider {
   async assessImage(url: string): Promise<VisionAssessment> {
     const key = !this.options ? config.openaiKey : this.options.apiKey;
     const base = (!this.options ? config.openaiBaseUrl : this.options.baseUrl ?? "").replace(/\/$/, "");
-    const model = config.visionModel ?? (!this.options ? config.openaiModel : this.options.model);
+    const model = this.name === "ollama-local" ? this.options?.visionModel ?? this.options?.model
+      : config.visionModel ?? (!this.options ? config.openaiModel : this.options.model);
+    assertChatInferenceAllowed(this.name, base);
     if (!key || !base || !model) throw new Error("Vision LLM configuration missing");
+    if (this.name === "ollama-local") assertLocalOllamaModel(model);
     if (!isSafeArtworkUrl(url) && !/^data:image\/(?:png|jpeg|webp);base64,/i.test(url)) {
       throw new Error("Vision assessment requires an HTTPS artwork URL or image data");
     }
+    let imageUrl = url;
+    if (this.name === "ollama-local" && !url.startsWith("data:")) {
+      // Ollama receives the actual pixels; it need not fetch a public/private storage URL itself.
+      const { loadArtworkBytes } = await import("@/lib/artwork-source");
+      const { inspectArtwork } = await import("@/lib/artwork-codec");
+      const bytes = await loadArtworkBytes(url);
+      const info = bytes ? await inspectArtwork(bytes) : null;
+      if (!bytes || !info) throw new Error("Local vision could not read the artwork preview");
+      imageUrl = `data:image/${info.format};base64,${bytes.toString("base64")}`;
+    }
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: 'Inspect the actual artwork, not the prompt. Return strict JSON with score (integer 1-10 for print-worthiness), defects (short strings listing only concrete problems; empty array when none), notes (informational strengths or commentary, never defects; "notes": ["..."] is an array of strings), text (true for any letters, fake signature, stamp or watermark), empty (true only for large blank/solid regions with no design intent; intentional negative space in minimalist art is NOT empty), frameOnly (true if only a frame/border with no central art), artifacts (true for visible digital defects, cheap bevels, murky contrast, melted or warped objects, objects unintentionally on fire or smoking, distorted furniture, rugs, hands or faces, impossible geometry, duplicated or fused objects). Use JSON booleans for flags. Be strict; do not assume defects are absent.' },
-          { role: "user", content: [{ type: "text", text: "Assess this image for sale as printed art." }, { type: "image_url", image_url: { url } }] },
+          { role: "user", content: [{ type: "text", text: "Assess this image for sale as printed art." }, { type: "image_url", image_url: { url: imageUrl } }] },
         ],
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(this.name === "ollama-local" ? 120_000 : 30_000),
     });
     if (!res.ok) throw new Error(`Vision LLM ${res.status}`);
     const json = await res.json();
@@ -63,7 +79,7 @@ export class OpenAILLMProvider implements LLMProvider {
       throw new Error("Vision LLM returned an invalid assessment");
     }
     const usage = json.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
-    const costChf = (((Number(usage.prompt_tokens) || 0) * 0.4 + (Number(usage.completion_tokens) || 0) * 1.6) / 1_000_000) * 0.83;
+    const costChf = this.name === "ollama-local" ? 0 : (((Number(usage.prompt_tokens) || 0) * 0.4 + (Number(usage.completion_tokens) || 0) * 1.6) / 1_000_000) * 0.83;
     const bounded = (values: string[]) => values.slice(0, 5).map((value) => value.slice(0, 200));
     return {
       score: score as number, ...flags as Pick<VisionAssessment, "text" | "empty" | "frameOnly" | "artifacts">,
@@ -75,6 +91,8 @@ export class OpenAILLMProvider implements LLMProvider {
 
   async writeListing(brief: ListingBrief): Promise<ListingCopy> {
     const defaults = !this.options;
+    const base = (defaults ? config.openaiBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
+    assertChatInferenceAllowed(this.name, base);
     const key = defaults ? config.openaiKey : this.options?.apiKey;
     if (!key) throw new Error(this.options?.missingKey ?? "OPENAI_API_KEY missing");
     const niche = NICHES[brief.niche];
@@ -92,12 +110,13 @@ export class OpenAILLMProvider implements LLMProvider {
     ].join("\n");
     const user = `Keyword: "${brief.keyword}"\nNiche: ${niche.label}\nProduct: ${product}\nArt direction: ${brief.artDirection ?? niche.style}\nUse style tags only if supported by the art direction.\nDeliverable: ${brief.productType === "digital" ? "one opaque PNG, instant download, no physical item" : "one made-to-order physical item, printed and shipped"}`;
 
-    const base = (defaults ? config.openaiBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
     if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "LLM base URL missing");
     const model = defaults ? config.openaiModel : this.options?.model;
     if (!model) throw new Error(this.name === "omniroute" ? "OMNIROUTE_MODEL missing" : "OLLAMA_MODEL missing");
+    if (this.name === "ollama-local") assertLocalOllamaModel(model);
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
@@ -108,13 +127,14 @@ export class OpenAILLMProvider implements LLMProvider {
           { role: "user", content: user },
         ],
       }),
+      signal: AbortSignal.timeout(this.name === "ollama-local" ? 120_000 : 30_000),
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const json = await res.json();
     const parsed = parseListingJson(json?.choices?.[0]?.message?.content);
     const usage = json.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
     // Rough gpt-4.1-mini pricing (USD 0.40 / 1.60 per 1M tokens) converted to CHF.
-    const costChf = ((usage.prompt_tokens * 0.4 + usage.completion_tokens * 1.6) / 1_000_000) * 0.83;
+    const costChf = this.name === "ollama-local" ? 0 : ((usage.prompt_tokens * 0.4 + usage.completion_tokens * 1.6) / 1_000_000) * 0.83;
     return {
       title: String(parsed.title ?? ""),
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],

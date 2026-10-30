@@ -11,6 +11,9 @@ export const maxDuration = 60;
  * after ~50s so it fits serverless limits; EventSource reconnects automatically with Last-Event-ID.
  */
 export async function GET(req: Request) {
+  if (process.env.AUTOPILOT_EXECUTION === "box" || process.env.FREE_ONLY_MODE === "true") {
+    return Response.json({ error: "Use /api/events/poll for this deployment" }, { status: 409 });
+  }
   const db = await getDb();
   const url = new URL(req.url);
   const lastHeader = req.headers.get("last-event-id") ?? url.searchParams.get("after");

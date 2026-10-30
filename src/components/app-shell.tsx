@@ -128,10 +128,10 @@ function CountBadge({ n, className }: { n: number; className?: string }) {
   );
 }
 
-export function AppShell({ children, shell }: { children: React.ReactNode; shell: Shell }) {
+export function AppShell({ children, shell, pollOnly = false }: { children: React.ReactNode; shell: Shell; pollOnly?: boolean }) {
   const pathname = usePathname();
   return (
-    <LiveProvider>
+    <LiveProvider pollOnly={pollOnly}>
       <div className="flex min-h-dvh">
         <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 py-5 md:flex">
           <Link href="/" className="mb-6 flex items-center gap-2.5 px-2">

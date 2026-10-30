@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { assertPaidInferenceAllowed, freeOnlyMode, localOllamaConfig } from "@/lib/free-mode";
 import { MockLLMProvider } from "./mock";
 import { OpenAILLMProvider } from "./openai";
 import type { LLMProvider } from "./types";
@@ -15,7 +16,18 @@ export function setLLMProviderForTests(provider: LLMProvider | null) {
  * (openai, ollama, or omniroute with its key) throws instead of drafting templated copy.
  */
 export function getLLMProvider(opts?: { demo?: boolean }): LLMProvider {
+  const requested = process.env.LLM_PROVIDER?.trim();
+  if (freeOnlyMode() && requested && requested !== "ollama-local" && requested !== "mock") {
+    assertPaidInferenceAllowed(requested);
+  }
   if (providerOverride) return providerOverride;
+  if (requested === "ollama-local") {
+    const local = localOllamaConfig();
+    return new OpenAILLMProvider({
+      name: "ollama-local", apiKey: "ollama-local", baseUrl: local.baseUrl,
+      model: local.model, visionModel: local.visionModel,
+    });
+  }
   if (config.llmProvider === "openai") return new OpenAILLMProvider();
   if (config.llmProvider === "ollama") {
     const ollama = config.ollama;
@@ -39,7 +51,7 @@ export function getLLMProvider(opts?: { demo?: boolean }): LLMProvider {
   }
   if (opts?.demo) return new MockLLMProvider();
   throw new Error(
-    "LLM_PROVIDER=openai and OPENAI_API_KEY (or ollama with OLLAMA_API_KEY, or omniroute with OMNIROUTE_API_KEY) are required. Template listing copy is only used in demo mode.",
+    "Configure LLM_PROVIDER=ollama-local and OLLAMA_LOCAL_MODEL, or openai with OPENAI_API_KEY, ollama with OLLAMA_API_KEY, or omniroute with OMNIROUTE_API_KEY. Template listing copy is only used in demo mode.",
   );
 }
 

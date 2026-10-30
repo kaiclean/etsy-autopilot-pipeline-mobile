@@ -8,6 +8,9 @@ export const maxDuration = 120;
 
 /** POST ?id=130 — re-render one flagged design (own prompt, 1024×1280 print model). Respects the daily AI cap. */
 export async function POST(req: Request) {
+  if (process.env.AUTOPILOT_EXECUTION === "box" && process.env.AUTOPILOT_BOX_WORKER !== "1") {
+    return NextResponse.json({ error: "Run redesign on the local box" }, { status: 409 });
+  }
   if (!authorizedUpscaleJob(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const id = Number(new URL(req.url).searchParams.get("id"));
   if (!Number.isInteger(id) || id < 1) return NextResponse.json({ error: "id required" }, { status: 400 });

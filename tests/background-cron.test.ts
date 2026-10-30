@@ -52,12 +52,8 @@ describe("long-running cron stages", () => {
         runStage(stage, "cron", { db, force: true }),
         runStage(stage, "manual", { db, force: true }),
       ]);
-      // With PostgreSQL advisory locks (session-level), concurrent calls in the same session
-      // do not block each other. They would block across different sessions/processes.
-      // This test verifies the lock is acquired and released; cross-session blocking
-      // is tested in integration environments.
-      expect(duplicates.map((run) => run.status)).toEqual(["success", "success"]);
-      expect(work).toHaveBeenCalledTimes(3); // first + 2 concurrent
+      expect(duplicates.map((run) => run.status)).toEqual(["skipped", "skipped"]);
+      expect(work).toHaveBeenCalledOnce();
     } finally {
       finish("Finished");
       await first;
@@ -70,9 +66,8 @@ describe("long-running cron stages", () => {
       runStage("daily", "cron", { db, force: true }),
       runStage("daily", "cron", { db, force: true }),
     ]);
-    // Same session: both succeed. Cross-session would block.
-    expect(runs.map((run) => run.status).sort()).toEqual(["success", "success"]);
-    expect(stages.research).toHaveBeenCalledTimes(2);
+    expect(runs.map((run) => run.status).sort()).toEqual(["skipped", "success"]);
+    expect(stages.research).toHaveBeenCalledOnce();
   });
 
   it.each(["daily", "orders"] as const)("releases the %s guard after a failure", async (stage) => {

@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
-import { costs, listings } from "@/db/schema";
+import { costs, listings, publishDeadLetters } from "@/db/schema";
 import { appendProviderDetails } from "@/lib/disclosures";
 import { publishPodListingToEtsy, recordPodSample } from "@/pipeline/human-publish";
 import { runStage } from "@/pipeline/runner";
@@ -123,6 +123,33 @@ describe("publish stage POD status", () => {
     expect(after.publishedAt).toBeNull();
     expect(after.podPublishedAt).toBeNull();
     expect(after.printifyProductId).toBe("pfy-created-only");
+  });
+
+  it("holds the fifth failed publish in the migrated dead-letter table until operator resolution", async () => {
+    const row = await approvePod();
+    await db.update(listings).set({
+      publishAttemptCount: 4, publishMode: "live", printifyProductId: "pfy-held-after-five",
+      podBlueprintId: 42, podPrintProviderId: 7,
+      gallery: [1, 2, 3].map((n) => ({ url: `https://images.printify.example/held-${n}.png`, role: "product-mockup" as const, source: "supplier" as const, label: "Supplier proof" })),
+    }).where(eq(listings.id, row.id));
+    const createAndPublish = vi.fn().mockRejectedValue(new Error("Supplier unavailable"));
+    adapters.getPrintifyAdapter.mockResolvedValue({
+      mode: "live", createAndPublish,
+      getProviderDetails: vi.fn(async () => providerDetails),
+      getProductImages: vi.fn(async () => [1, 2, 3].map((n) => ({ src: `https://images.printify.example/held-${n}.png` }))),
+    });
+    const now = new Date();
+    expect((await runStage("publish", "manual", { db, now })).status).toBe("failed");
+    const holds = await db.select().from(publishDeadLetters).where(eq(publishDeadLetters.listingId, row.id));
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toMatchObject({ attemptCount: 5, resolved: false });
+    await runStage("publish", "manual", { db, now: new Date(now.getTime() + 25 * 60 * 60_000) });
+    expect(createAndPublish).toHaveBeenCalledOnce();
+    await db.update(publishDeadLetters).set({ resolved: true, resolvedAt: now, resolution: "Supplier inspected; retry approved" })
+      .where(eq(publishDeadLetters.listingId, row.id));
+    createAndPublish.mockResolvedValue({ productId: "pfy-held-after-five", blueprintId: 42, printProviderId: 7 });
+    expect((await runStage("publish", "manual", { db, now: new Date(now.getTime() + 26 * 60 * 60_000) })).status).toBe("success");
+    expect(createAndPublish).toHaveBeenCalledTimes(2);
   });
 
   it("does not overwrite real supplier metadata with dry-run fixtures when writes are disabled", async () => {

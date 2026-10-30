@@ -30,6 +30,7 @@ import {
 } from "@/pipeline/human-publish";
 import { runFullPipeline, runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
+import { boxExecutionEnabled, enqueueBoxJob } from "@/lib/box-jobs";
 import { prepareSupplierPreview, refreshSupplierDescription, validateSupplierApproval, WAITING_FOR_PRINTIFY_MOCKUPS } from "@/pipeline/supplier-preview";
 
 export async function login(_prev: { error?: string } | undefined, form: FormData) {
@@ -257,6 +258,13 @@ export async function triggerStage(stage: string, opts?: { force?: boolean }) {
   await requireAuth();
   if (!isStage(stage)) return { ok: false as const, error: "Unknown stage" };
   const force = stage === "daily" && opts?.force === true;
+  if (boxExecutionEnabled()) {
+    const db = await getDb();
+    const shop = await resolveActiveShop(db);
+    const job = await enqueueBoxJob(db, { shopId: shop.id, stage, trigger: "manual", force });
+    revalidateAll();
+    return { ok: true, status: "queued" as const, summary: "Queued for your Mac. Follow progress in Pipeline.", jobId: job.id };
+  }
   const run = await runStage(stage as StageName, "manual", { force });
   revalidateAll();
   refresh();
@@ -298,6 +306,13 @@ export async function queueArtRegeneration(ids: number[]) {
 
 export async function triggerFullPipeline() {
   await requireAuth();
+  if (boxExecutionEnabled()) {
+    const db = await getDb();
+    const shop = await resolveActiveShop(db);
+    await enqueueBoxJob(db, { shopId: shop.id, stage: "all", trigger: "manual" });
+    revalidateAll();
+    return [{ stage: "all", status: "queued", summary: "Queued for your Mac. Follow progress in Pipeline." }];
+  }
   const runs = await runFullPipeline("manual");
   revalidateAll();
   refresh();
