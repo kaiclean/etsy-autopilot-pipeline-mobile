@@ -1,3 +1,4 @@
+import { assertPaidInferenceAllowed } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { modelReferences, workflowSha256, type ArtworkProvenance } from "@/lib/artwork-provenance";
 import { materializeImageUrl, type MaterializeDeps } from "@/lib/object-storage";
@@ -95,6 +96,7 @@ export class RunPodImageProvider implements ImageProvider {
   constructor(private readonly opts: { pollMs?: number; deadlineMs?: number; upload?: MaterializeDeps["upload"] } = {}) {}
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
+    assertPaidInferenceAllowed("runpod");
     try {
       return await this.generateImage(req);
     } catch (error) {

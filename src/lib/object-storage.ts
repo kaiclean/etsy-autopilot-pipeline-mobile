@@ -43,7 +43,24 @@ export function isOwnStorageUrl(url: string) {
   return Boolean(base && (url === base || url.startsWith(`${base}/`)));
 }
 
+/** Strict mode only allows the explicitly confirmed Supabase Free S3 service.
+ * A declaration cannot verify account billing; operators must check the provider console too.
+ */
+export function assertFreeStorage() {
+  if (process.env.FREE_ONLY_MODE !== "true") return;
+  let endpoint: URL;
+  try { endpoint = new URL(config.storage.endpoint ?? ""); }
+  catch { throw new Error("Free-only storage requires a Supabase Free S3 endpoint"); }
+  if (process.env.SUPABASE_STORAGE_PLAN !== "free" || storageBackend() !== "s3" ||
+      endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.port || endpoint.search || endpoint.hash ||
+      !/^[a-z0-9-]+(?:\.storage)?\.supabase\.co$/.test(endpoint.hostname) ||
+      endpoint.pathname.replace(/\/$/, "") !== "/storage/v1/s3") {
+    throw new Error("Free-only storage requires SUPABASE_STORAGE_PLAN=free and the official Supabase S3 endpoint. Paid S3 and Blob are disabled.");
+  }
+}
+
 async function s3Client() {
+  assertFreeStorage();
   const { S3Client } = await import("@aws-sdk/client-s3");
   const s = config.storage;
   return new S3Client({
@@ -72,6 +89,7 @@ async function urlForStoredKey(key: string, permanent = false): Promise<string> 
 export async function uploadImageBytes(bytes: Buffer, contentType: string, permanent = false): Promise<StoredObject | null> {
   const backend = storageBackend();
   if (backend === "none") return null;
+  assertFreeStorage();
   if (bytes.length > MAX_ARTWORK_BYTES) throw new Error("Generated image is larger than 50MB");
   const key = newObjectKey(contentType);
   if (backend === "s3") {
@@ -173,6 +191,21 @@ export async function deleteStoredObject(key: string) {
 
 export async function storedUrlForKey(key: string) {
   return urlForStoredKey(key);
+}
+
+export const MEDIA_DOWNLOAD_TTL_SECONDS = 300;
+
+/** Sign on demand for browsers; database URLs remain stable /api/media links.
+ * No object body is downloaded through the web function, even for 50 MiB artwork.
+ */
+export async function signStoredDownload(key: string): Promise<string | null> {
+  if (!MEDIA_KEY.test(key) || storageBackend() !== "s3") return null;
+  assertFreeStorage();
+  const { GetObjectCommand } = await import("@aws-sdk/client-s3");
+  const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+  return getSignedUrl(await s3Client(), new GetObjectCommand({ Bucket: config.storage.bucket, Key: key }), {
+    expiresIn: MEDIA_DOWNLOAD_TTL_SECONDS,
+  });
 }
 
 export async function readStoredObject(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {

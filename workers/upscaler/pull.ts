@@ -32,7 +32,13 @@ export async function report(designId: number, sourcePx: { width: number; height
   const put = await fetchImpl(putUrl, { method: "PUT", headers: { "content-type": "image/png" }, body: new Uint8Array(png), signal: AbortSignal.timeout(300_000) });
   if (!put.ok) throw new Error(`S3 PUT failed HTTP ${put.status}`);
   query.set("key", key);
-  const done = await fetchImpl(`${APP}/api/cron/upscale-jobs/complete?${query}`, { method: "POST", headers: auth, signal: AbortSignal.timeout(300_000) });
+  // In hybrid hosting, validation and post-store image processing stay on the Mac.
+  // Reuse the same signed upload-key binding, byte measurements, and quality gates as the HTTP handler.
+  const completionUrl = `${APP}/api/cron/upscale-jobs/complete?${query}`;
+  const completionInit = { method: "POST", headers: auth, signal: AbortSignal.timeout(300_000) };
+  const done = process.env.AUTOPILOT_EXECUTION === "box" && process.env.AUTOPILOT_BOX_WORKER === "1"
+    ? await (await import("../../src/app/api/cron/upscale-jobs/complete/route")).POST(new Request(completionUrl, completionInit))
+    : await fetchImpl(completionUrl, completionInit);
   return { status: done.status, body: await done.json().catch(() => ({})) };
 }
 
@@ -105,6 +111,7 @@ export async function runOnce(limit = 3, saveTo?: string) {
 }
 
 async function main() {
+  process.env.AUTOPILOT_BOX_WORKER = "1";
   if (SECRET.length < 16) throw new Error("UPSCALER_SECRET missing");
   const args = process.argv.slice(2);
   const save = args.includes("--save") ? args[args.indexOf("--save") + 1] : undefined;

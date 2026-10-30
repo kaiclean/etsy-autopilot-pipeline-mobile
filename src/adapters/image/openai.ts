@@ -1,3 +1,4 @@
+import { assertPaidInferenceAllowed } from "@/lib/free-mode";
 import { config } from "@/lib/config";
 import { withStoredUrl } from "@/lib/object-storage";
 import { isProviderCreditsError } from "@/lib/provider-errors";
@@ -26,6 +27,7 @@ export class OpenAIImageProvider implements ImageProvider {
   }
 
   async generate(req: ImageRequest): Promise<GeneratedImage> {
+    assertPaidInferenceAllowed("openai-compatible image");
     const defaults = !this.options;
     const key = defaults ? config.imageApiKey : this.options?.apiKey;
     if (!key) throw new Error(this.options?.missingKey ?? "IMAGE_API_KEY or OPENAI_API_KEY missing");

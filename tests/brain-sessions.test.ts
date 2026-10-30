@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { setSetting, getSetting } from "@/lib/settings";
@@ -101,7 +101,7 @@ describe("brain sessions", () => {
     expect((await cancelSession(db, r.session.id)).ok).toBe(false);
   });
 
-  it("cancel stops a running stage instead of waiting for it", async () => {
+  it("cancel aborts a cooperative running stage and waits for settlement", async () => {
     const db = await freshDb();
     const r = await createSession(db, "analytics");
     if (!r.ok) throw new Error(r.error);
@@ -109,8 +109,11 @@ describe("brain sessions", () => {
     // A stage that would run for a minute unless it is aborted.
     const started = Date.now();
     const p = executeSession(db, r.session.id, (_stage, signal) => new Promise((resolve) => {
-      signal.addEventListener("abort", () => { aborted = true; });
-      setTimeout(() => resolve({ id: 0, status: "success", summary: "too late" }), 60_000);
+      signal.addEventListener("abort", () => {
+        aborted = true;
+        // The stage owns the in-flight provider operation and acknowledges stop.
+        resolve({ id: 0, status: "skipped", summary: "Cancelled at a safe boundary" });
+      });
     }));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect((await cancelSession(db, r.session.id)).ok).toBe(true);
@@ -119,6 +122,26 @@ describe("brain sessions", () => {
     expect(aborted).toBe(true);
     expect(Date.now() - started).toBeLessThan(10_000);
   }, 15_000);
+
+  it("keeps a cancelled session running until an in-flight provider operation settles", async () => {
+    const db = await freshDb();
+    const created = await createSession(db, "analytics");
+    if (!created.ok) throw new Error(created.error);
+    let finish!: () => void;
+    let aborted = false;
+    let settled = false;
+    const pending = executeSession(db, created.session.id, (_stage, signal) => new Promise(resolve => {
+      signal.addEventListener("abort", () => { aborted = true; });
+      finish = () => resolve({ id: 0, status: "success", summary: "Provider settled" });
+    })).then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    await cancelSession(db, created.session.id);
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 4000 });
+    expect(settled).toBe(false);
+    expect((await listSessions(db))[0].status).toBe("running");
+    finish();
+    expect((await pending)?.status).toBe("cancelled");
+  });
 
   it("retries a finished session as a new linked one", async () => {
     const db = await freshDb();

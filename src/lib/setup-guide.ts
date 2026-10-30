@@ -91,6 +91,11 @@ export const SETUP_STEPS: SetupStep[] = [
     envVars: [],
     optionalEnvVars: [
       "LLM_PROVIDER",
+      "FREE_ONLY_MODE",
+      "OLLAMA_LOCAL_BASE_URL",
+      "OLLAMA_LOCAL_MODEL",
+      "OLLAMA_LOCAL_VISION_MODEL",
+      "CLOUDFLARE_WORKERS_PLAN",
       "IMAGE_PROVIDER",
       "OPENAI_API_KEY",
       "OPENAI_BASE_URL",
@@ -118,6 +123,8 @@ export const SETUP_STEPS: SetupStep[] = [
       "REALESRGAN_MODEL_SHA256",
     ],
     bullets: [
+      "Free-only box setup: FREE_ONLY_MODE=true, LLM_PROVIDER=ollama-local, OLLAMA_LOCAL_MODEL set to an installed model, and optionally OLLAMA_LOCAL_VISION_MODEL for an installed vision model. OLLAMA_LOCAL_BASE_URL defaults to http://127.0.0.1:11434/v1 and must use localhost or a private IP. Verify text and image assessment on the box; invalid or unavailable vision still holds artwork for human review.",
+      "For free-only image generation select Cloudflare and explicitly confirm CLOUDFLARE_WORKERS_PLAN=free after checking your account. This environment value is an operator declaration, not verification of Cloudflare billing. Paid providers and paid fallbacks are refused; quota errors stop work.",
       "Ollama Cloud: LLM_PROVIDER=ollama, OLLAMA_API_KEY, and a vision-capable OLLAMA_MODEL. The base is fixed at https://ollama.com/v1. Design sends images for visual assessment through /chat/completions; this is distinct from image generation.",
       "For image generation, set IMAGE_BASE_URL, IMAGE_API_KEY, and IMAGE_MODEL. Each one falls back to OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_IMAGE_MODEL when it is empty.",
       "OmniRoute for both: LLM_PROVIDER=omniroute and IMAGE_PROVIDER=omniroute, plus OMNIROUTE_BASE_URL, OMNIROUTE_API_KEY, OMNIROUTE_MODEL, and OMNIROUTE_IMAGE_MODEL. Text POSTs /chat/completions. Images POST /images/generations and accept url or b64_json.",

@@ -1,0 +1,17 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  AUTOPILOT_EXECUTION = "box"
+  FREE_ONLY_MODE = "true"
+  UPSCALER_PULL = "on"
+  # CPU upscaling belongs to the local box; avoid the installer's CUDA download.
+  ONNXRUNTIME_NODE_INSTALL = "skip"
+
+# Set database, storage and authentication values in Netlify's environment UI.
+# Also set the execution/free/upscaler flags there with Functions runtime scope;
+# [build.environment] alone does not configure a deployed function's secrets.
+# No scheduled Netlify function: the box owns the schedule and durable queue.
+# Do not pin the OpenNext adapter: Netlify supplies its maintained Next.js runtime.

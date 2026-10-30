@@ -2,6 +2,8 @@
 
 Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a six-stage pipeline (research → design → listing → **your approval** → publish → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
 
+**Free hybrid deployment:** run the dashboard on Netlify and the scheduled pipeline on an existing Mac with `AUTOPILOT_EXECUTION=box` and `FREE_ONLY_MODE=true`. See [the complete setup and migration guide](docs/FREE_HOSTING.md). Jobs are persisted before the web request returns; the Mac executes them without an inbound home port. Free-tier quotas and provider subscriptions must be checked separately.
+
 Everything runs out of the box in **demo mode**: seeded demo data (flagged `is_demo`), mock image and text generation, and dry-run Etsy/Printify adapters. As you add credentials, each piece switches to the real service on its own.
 
 - **Stack:** Next.js 16 (App Router, Turbopack), TypeScript, Tailwind v4, shadcn/ui (Base UI), Drizzle ORM, Postgres (Neon in production, embedded PGlite locally), Recharts, Vitest.
@@ -203,16 +205,17 @@ The physical-sample gate remains required for the separate human Publish to Etsy
 
 ---
 
-## Deploy to Vercel + Neon
+## Deploy to Netlify + Neon with a local Mac worker
 
-1. **Create the database.** In Vercel, go to Storage → Create → **Neon Postgres** and connect it to the project. This sets `DATABASE_URL`. You can also create a project at [neon.tech](https://neon.tech) and paste the pooled connection string.
-2. **Import the repository** in Vercel. The Next.js framework preset is detected and no build settings need to change.
-3. **Add environment variables:** `DASHBOARD_PASSWORD`, `AUTH_SECRET`, `CRON_SECRET`, and `APP_URL=https://<your-domain>`. Add the provider keys when you have them.
-4. **Deploy.** On the first request the app runs the migrations in `./drizzle` against Neon. If Etsy keys are missing or `DEMO_MODE=true`, it also seeds demo data.
-5. **Cron.** `vercel.json` schedules each stage once a day (UTC), which works on the Hobby plan. On Pro you can tighten it, for example `orders` every 30 minutes (`*/30 * * * *`) and `publish` every 2 hours. Keep `DEFAULT_STAGES` in `src/lib/settings.ts` in sync so the dashboard shows the right schedule. Railway has no built-in cron. `.github/workflows/autopilot-cron.yml` hits the same UTC times from the default branch. After merge, set GitHub repository secrets once: `CRON_SECRET` (the same value as Railway) and optional `AUTOPILOT_URL` (defaults to `https://etsy-autopilot-production-8b9f.up.railway.app`). Do not commit either value. You can also call `GET /api/cron/<stage>` yourself with `Authorization: Bearer $CRON_SECRET`. `maintenance` runs daily at 04:17 UTC and also at the end of the orders cron. It registers missing Printify webhooks, rewrites up to 10 inline images when S3 is set, and deletes fake orders while demo mode is off. Schedules do not change the dry-run publish choice.
-6. **Install on your phone.** Open the URL in Safari (iOS), tap Share → **Add to Home Screen**, then enable notifications in Settings. On Android, Chrome shows "Install app".
+Follow [Free hosting with a macOS worker](docs/FREE_HOSTING.md). The proposed shop deployment is Netlify Free for the dashboard, Neon Free for the shared database, Supabase Free for S3-compatible artwork, and an existing Mac for scheduled jobs and Real-ESRGAN. Start from `.env.free.example`, keep the private copy at `.env.box`, and run `npm run free:check` before installing the Mac LaunchAgent.
 
-> Without `DATABASE_URL`, Vercel falls back to PGlite in `/tmp`. That is fine for a preview but gets wiped on every cold start. Use Neon for anything real.
+`AUTOPILOT_EXECUTION=box` changes stage controls and cron calls to durable queue submissions. The response means **queued**, not finished; inspect the saved job/stage outcome. The worker creates scheduled jobs itself and drains the queue. Disable the old external/GitHub/Vercel schedules once this mode is selected so the same stage is not submitted by multiple schedulers. Existing automation schedules, approval and human activation/sample gates remain in force.
+
+`FREE_ONLY_MODE=true` refuses paid inference providers and paid fallback; it cannot verify a provider's actual subscription. Local Ollama uses `LLM_PROVIDER=ollama-local`. Artwork storage in this mode requires a Supabase S3 endpoint and `SUPABASE_STORAGE_PLAN=free`. Keep actual accounts on Free and monitor their shared quotas. Exceeding a hard limit may stop the application. Electricity, marketplace fees and POD production are separate costs.
+
+An existing Railway/Node deployment remains supported with the default inline execution mode while the migration is tested. GitHub's standard public runners can provide free CI, but the existing account billing lock must be resolved separately. Production jobs in the new mode do not depend on GitHub Actions or Netlify scheduled functions.
+
+Vercel Hobby is restricted to personal, non-commercial projects and is not the proposed host for an Etsy business. Production requires a real `DATABASE_URL`; embedded PGlite is a local demo/test database and is rejected in production. Use the migration guide's backup, callback verification and rollback procedure before retiring the previous host.
 
 ---
 

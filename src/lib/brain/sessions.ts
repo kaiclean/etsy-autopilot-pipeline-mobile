@@ -68,11 +68,10 @@ export async function executeSession(db: DB, id: number, run: Runner): Promise<S
       if (row?.cancel) controller.abort();
     } catch { /* keep polling */ }
   }, CANCEL_POLL_MS);
-  const cancelled = new Promise<"cancelled">((resolve) => controller.signal.addEventListener("abort", () => resolve("cancelled"), { once: true }));
   try {
-    const raced = await Promise.race([run(s.stage, controller.signal), cancelled]);
-    if (raced === "cancelled") return finish(db, id, "cancelled", "Cancelled while running; the stage stopped at its next step");
-    const result = raced;
+    // Cancellation is cooperative. Keep the session/box lease until the provider
+    // call settles; returning on abort would allow overlapping work and writes.
+    const result = await run(s.stage, controller.signal);
     const [now] = await db.select().from(brainSessions).where(eq(brainSessions.id, id));
     const status = now?.cancelRequested ? "cancelled" : (["success", "warning", "failed", "skipped"].includes(result.status) ? result.status : "failed");
     const summary = now?.cancelRequested ? `Cancelled. Stage result: ${result.summary ?? result.status}` : result.summary;

@@ -65,7 +65,8 @@ export function RunPipelineButton({ disabled, className, compact }: { disabled?:
           const warned = runs.filter((r) => r.status === "warning");
           const skipped = runs.find((r) => r.status === "skipped");
           toast.dismiss(id);
-          if (skipped?.summary?.startsWith("Kill switch")) toast.error("Kill switch is on. Nothing ran.");
+          if (runs.some((r) => r.status === "queued")) toast.success("Queued for your Mac", { description: "Follow progress in Pipeline." });
+          else if (skipped?.summary?.startsWith("Kill switch")) toast.error("Kill switch is on. Nothing ran.");
           else if (failed.length) toast.error(`${failed.length} stage(s) failed`, { description: failed.map((f) => `${f.stage}: ${f.summary}`).join("\n") });
           else if (warned.length) toast.warning(`${warned.length} stage(s) finished with warnings`, { description: warned.map((f) => `${f.stage}: ${f.summary}`).join("\n") });
           else toast.success("Pipeline finished", { description: runs.map((r) => `${r.stage}: ${r.summary}`).join("\n") });

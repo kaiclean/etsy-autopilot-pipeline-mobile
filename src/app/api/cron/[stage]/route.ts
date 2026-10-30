@@ -1,5 +1,9 @@
 import { after, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { boxExecutionEnabled, enqueueBoxJob, dueBoxScheduleSlot } from "@/lib/box-jobs";
+import { getDb } from "@/db";
+import { getSetting } from "@/lib/settings";
+import { resolveActiveShop } from "@/lib/shops";
 import { parseMaintenanceSummary } from "@/pipeline/maintenance";
 import { runStage } from "@/pipeline/runner";
 import { isStage } from "@/pipeline/types";
@@ -26,6 +30,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ stage: string }
   const { stage } = await ctx.params;
   if (!isStage(stage)) return NextResponse.json({ error: "unknown stage" }, { status: 404 });
   const force = new URL(req.url).searchParams.get("force") === "1";
+  if (boxExecutionEnabled()) {
+    const db = await getDb();
+    const shop = await resolveActiveShop(db);
+    const stages = await getSetting(db, "stages");
+    const now = new Date();
+    const slot = dueBoxScheduleSlot(stages[stage]?.cron ?? "", now);
+    const idempotencyKey = !force && slot ? `schedule:${stage}:${slot.toISOString()}` : undefined;
+    const job = await enqueueBoxJob(db, { shopId: shop.id, stage, trigger: "cron", force, idempotencyKey });
+    return NextResponse.json({ stage, status: job.status, jobId: job.id }, { status: 202 });
+  }
   if (stage === "daily" || stage === "orders") {
     after(async () => {
       try {

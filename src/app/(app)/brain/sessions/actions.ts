@@ -6,6 +6,9 @@ import { revalidatePath } from "next/cache";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { getDb } from "@/db";
+import { boxExecutionEnabled, enqueueBoxJob } from "@/lib/box-jobs";
+import { resolveActiveShop } from "@/lib/shops";
+import { isStage } from "@/pipeline/types";
 import { runStage } from "@/pipeline/runner";
 import { writeStageLog } from "@/pipeline/stage-log";
 import { cancelSession, createSession, createTask, deleteTask, executeSession, retrySession, updateTask } from "@/lib/brain/sessions";
@@ -20,7 +23,14 @@ const done = (msg: string, ok = true): never => {
 };
 const num = (v: FormDataEntryValue | null) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : 0; };
 
-function launch(id: number, stage: string) {
+async function launch(id: number, stage: string) {
+  if (boxExecutionEnabled()) {
+    if (!isStage(stage)) throw new Error("Unknown stage");
+    const db = await getDb();
+    const shop = await resolveActiveShop(db);
+    await enqueueBoxJob(db, { shopId: shop.id, stage, trigger: "manual", sessionId: id, idempotencyKey: `session:${id}` });
+    return;
+  }
   after(async () => {
     try {
       const db = await getDb();
@@ -36,7 +46,7 @@ export async function startSessionAction(form: FormData) {
   const db = await getDb();
   const res = await createSession(db, String(form.get("stage") ?? ""), { taskId: num(form.get("taskId")) || undefined });
   if (!res.ok) done(res.error, false);
-  else { launch(res.session.id, res.session.stage); done(`Started ${res.session.stage} session #${res.session.id}`); }
+  else { await launch(res.session.id, res.session.stage); done(`Started ${res.session.stage} session #${res.session.id}`); }
 }
 
 export async function cancelSessionAction(form: FormData) {
@@ -49,7 +59,7 @@ export async function retrySessionAction(form: FormData) {
   await guard();
   const res = await retrySession(await getDb(), num(form.get("id")));
   if (!res.ok) done(res.error, false);
-  else { launch(res.session.id, res.session.stage); done(`Retrying as session #${res.session.id}`); }
+  else { await launch(res.session.id, res.session.stage); done(`Retrying as session #${res.session.id}`); }
 }
 
 export async function createTaskAction(form: FormData) {

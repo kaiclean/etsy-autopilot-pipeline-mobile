@@ -5,6 +5,15 @@ import { uploadImageBytes } from "@/lib/object-storage";
 import type { PixelSize, PrintTarget } from "@/lib/print-targets";
 import { setUpscalerState, type UpscalerSource } from "@/lib/upscaler-status";
 
+/** Box-hosted dashboards never perform model downloads, remote upscales, or local image inference. */
+export function boxDashboardUpscaleBlocked() {
+  return process.env.AUTOPILOT_EXECUTION === "box" && process.env.AUTOPILOT_BOX_WORKER !== "1";
+}
+
+function requireUpscaleWorker() {
+  if (boxDashboardUpscaleBlocked()) throw new Error("Upscaling runs on the local box. Queue this job for the worker.");
+}
+
 type TensorLike = { data: Float32Array; dims: readonly number[] };
 export type UpscaleSession = {
   inputNames: string[];
@@ -45,6 +54,7 @@ async function sha256File(file: string) {
 
 /** Downloads the ONNX model over HTTPS into tmp, verifying size and SHA-256. Returns the cached path or null. */
 export async function downloadModel(url: string, sha256?: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  if (boxDashboardUpscaleBlocked()) return fail("model downloads run on the local box");
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -113,6 +123,7 @@ export async function downloadModel(url: string, sha256?: string, fetchImpl: typ
 }
 
 async function modelSource(fetchImpl: typeof fetch = fetch): Promise<ModelSource | null> {
+  if (boxDashboardUpscaleBlocked()) return fail("model loading runs on the local box");
   const { modelPath, modelKey, modelUrl, modelSha256 } = config.upscale;
   if (modelPath) {
     const fs = await import("node:fs/promises");
@@ -166,6 +177,7 @@ export async function resolveModelSourceForTests(fetchImpl: typeof fetch) {
 }
 
 export async function loadRealEsrganSession(): Promise<UpscaleSession | null> {
+  if (boxDashboardUpscaleBlocked()) return null;
   if (!sessionPromise) {
     sessionPromise = (async () => {
       const started = Date.now();
@@ -209,6 +221,7 @@ export async function upscaleTiledRgb(
   overlap = 16,
   createTensor?: TensorFactory,
 ) {
+  requireUpscaleWorker();
   if (source.channels !== 3 || tileSize < 1 || overlap < 0 || overlap >= tileSize) throw new Error("Invalid Real-ESRGAN tile input");
   const width = source.width * 4;
   const height = source.height * 4;
@@ -286,6 +299,7 @@ type WorkerOptions = { fallbackTarget?: PrintTarget; posterFinish?: boolean };
 
 /** POSTs a job to the upscaler worker (Bearer UPSCALER_SECRET). Returns null-safe result or throws. */
 export async function upscaleViaWorker(url: string, target: PrintTarget, options: WorkerOptions, fetchImpl: typeof fetch = fetch): Promise<UpscaledArtwork> {
+  requireUpscaleWorker();
   const { workerUrl, workerSecret } = config.upscale;
   if (!workerUrl || !workerSecret) throw new Error("UPSCALER_URL or UPSCALER_SECRET is not set");
   const response = await fetchImpl(`${workerUrl.replace(/\/$/, "")}/upscale`, {
@@ -308,6 +322,7 @@ export async function upscaleArtwork(
   target: PrintTarget,
   options: { fallbackTarget?: PrintTarget; session?: UpscaleSession | null; createTensor?: TensorFactory; store?: boolean; posterFinish?: boolean; tileSize?: number; skipWorker?: boolean } = {},
 ): Promise<UpscaledArtwork> {
+  requireUpscaleWorker();
   // Heavy upscales go to the dedicated worker when configured; any worker failure falls back to the local path.
   if (!options.skipWorker && options.session === undefined && options.store !== false && config.upscale.workerUrl && !config.upscale.isWorker) {
     const remote = await upscaleViaWorker(url, target, options).catch((error) => {

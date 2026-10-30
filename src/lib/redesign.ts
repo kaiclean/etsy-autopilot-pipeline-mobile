@@ -1,11 +1,13 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { DB } from "@/db";
-import { costs, designs, listings } from "@/db/schema";
+import { designs, listings } from "@/db/schema";
 import { getImageProvider } from "@/adapters/image";
 import { getSetting } from "@/lib/settings";
 import { reserveImage } from "@/lib/image-quota";
+import { reserveAiBudget, finishAiBudgetReservation, recordAiSpend } from "@/lib/ai-budget";
+import type { GeneratedImage } from "@/adapters/image/types";
 import { preparePrintFile } from "@/pipeline/artwork";
-import { PRINT_RENDER, aiSpend } from "@/pipeline/design";
+import { PRINT_RENDER } from "@/pipeline/design";
 
 /**
  * Re-render a flagged design from its OWN original prompt at 4:5 1024×1280 with the print model.
@@ -20,14 +22,27 @@ export async function regenerateFlaggedDesign(db: DB, id: number, log: (msg: str
   if (!design.needsRedesign) throw new Error(`design #${id} is not flagged for redesign`);
   const automation = await getSetting(db, "automation");
   const now = new Date();
-  const spent = await aiSpend(db, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
   const provider = getImageProvider();
-  if (spent + provider.estimatedCostChf > automation.dailyAiCapChf) throw new Error(`daily AI cap CHF ${automation.dailyAiCapChf} reached (spent ${spent.toFixed(2)})`);
-  // Count generations, not CHF (Cloudflare costs 0). Atomic, shared with daily runs.
-  const slot = await reserveImage(db, { provider: provider.name, redesign: true });
-  if (!slot.ok) throw new Error(slot.reason);
-  const img = await provider.generate({ prompt: opts.hint ? `${design.prompt}, ${opts.hint}` : design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
-  await db.insert(costs).values({ shopId: design.shopId, kind: "ai_image", amountChf: img.costChf, note: `redesign #${id} (${img.provider})`, isDemo: false });
+  const budget = await reserveAiBudget(db, {
+    shopId: design.shopId, estimatedCostChf: provider.estimatedCostChf,
+    estimatedNeurons: provider.estimatedNeuronsPerImage,
+    dailyAiCapChf: automation.dailyAiCapChf, monthlyAiBudgetChf: automation.monthlyAiBudgetChf, now,
+  });
+  if (!budget.ok) throw new Error(budget.reason);
+  let requestSent = false;
+  let knownCharge = false;
+  let img: GeneratedImage;
+  try {
+    // Count generations, not CHF (Cloudflare costs 0). Atomic, shared with daily runs.
+    const slot = await reserveImage(db, { provider: provider.name, redesign: true });
+    if (!slot.ok) throw new Error(slot.reason);
+    requestSent = true;
+    img = await provider.generate({ prompt: opts.hint ? `${design.prompt}, ${opts.hint}` : design.prompt, niche: design.niche, seed: Math.floor(Math.random() * 1e9), aspectRatio: "4:5", ...PRINT_RENDER, label: `redesign #${id}`, print: true });
+    await recordAiSpend(db, { reservationId: budget.reservationId, shopId: design.shopId, kind: "ai_image", amountChf: img.costChf, note: `redesign #${id} (${img.provider})`, isDemo: false, now });
+    knownCharge = true;
+  } finally {
+    await finishAiBudgetReservation(db, budget.reservationId, !requestSent ? "released" : knownCharge ? "settled" : "uncertain");
+  }
   const measured = await preparePrintFile(img.url);
   if (!measured.width || !measured.height) throw new Error("re-rendered image could not be measured");
   if (measured.width < PRINT_RENDER.width || measured.height < PRINT_RENDER.height) {
