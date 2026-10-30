@@ -51,7 +51,7 @@ export function getLLMProvider(opts?: { demo?: boolean }): LLMProvider {
   }
   if (opts?.demo) return new MockLLMProvider();
   throw new Error(
-    "Configure LLM_PROVIDER=ollama-local and OLLAMA_LOCAL_MODEL, or openai with OPENAI_API_KEY, ollama with OLLAMA_API_KEY, or omniroute with OMNIROUTE_API_KEY. Template listing copy is only used in demo mode.",
+    "Configure LLM_PROVIDER=ollama-local and OLLAMA_LOCAL_MODEL, or LLM_PROVIDER=openai with OPENAI_API_KEY, LLM_PROVIDER=ollama with OLLAMA_API_KEY, or LLM_PROVIDER=omniroute with OMNIROUTE_API_KEY. Template listing copy is only used in demo mode.",
   );
 }
 
