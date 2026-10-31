@@ -21,3 +21,15 @@ The OmniGram second-brain dashboard, merged into Autopilot. It used to be the st
 - **Road to the first sale**: the card on `/brain` shows the funnel.
 - **Status API**: `GET /api/brain/status` with bearer `OMNIGRAM_API_TOKEN` returns the publish mode, the image provider name, AI caps/spend and the funnel counts. It returns no secrets.
 - **Skill rules** in `listing-validator.ts`: titles must be 6–14 words with the primary phrase in the first 40 characters; empty praise in a title or tag is an error; using one phrase in more than 2 tags gets a warning.
+
+## Reel-backed original products
+
+Open a reel note to define an original visual direction, active theme, supported product and buyer phrase. Confirming creates a scoped design brief with immutable source note/reel hashes. In box mode it queues one idempotent keyword-scoped `daily` job (Design → Listing only); Research and Publish are excluded. Scoped runs do not mark the shop-wide daily schedule complete. The explicit approved product overrides the niche's random product mix, and Listing only makes that product type.
+
+Research also imports runnable **product ideas linked to resolved saved reels** into the candidate queue before seasonal suggestions. Operational/software reels are not blindly turned into merchandise. Missing reel links and unsupported planners/templates remain blocked. Use **Refresh reel ideas** on Ideas; approve the product and edit its original direction. Existing phrases with different approved briefs cannot be silently reused or overwrite old products.
+
+`/brain/products` shows source evidence, artwork provider and measured pixels, actual listing state, and buyer-file links. These are generation/provenance records, not certificates of originality. Review source rights, visual originality and downloaded bytes before the existing approval/publish actions. Demo artwork is labeled and existing pixel/quality/manifest gates remain enforced.
+
+Migration `0034_brain_product_origins` adds provenance on briefs/candidates and keyword scope on jobs/runs. The Mac worker refreshes its vault cache after local syncs. New cloud catalogue notes still require a release deploy; persisted candidate source snapshots can be approved even before those note files reach the web deployment. No additional AI calls run during candidate extraction. Keep the existing free-only provider policy and Mac setup from `FREE_HOSTING.md`.
+
+Validation uses a synthetic provider fixture returning real PNG bytes through the real Design/Listing stages, including read-back SHA-256 and isolation from unrelated keywords. This is not evidence of live provider generation. A live smoke test requires the configured real image/text/vision providers, permanent storage and Mac worker; missing credentials must fail visibly and cannot fall back to demo products.

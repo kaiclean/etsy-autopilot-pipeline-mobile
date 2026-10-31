@@ -1,3 +1,4 @@
+import type { BrainProductOrigin } from "@/lib/brain/product-origin";
 import { sql } from "drizzle-orm";
 import type { ArtworkProvenance } from "@/lib/artwork-provenance";
 import type { ArtworkPackManifest } from "@/lib/artwork-pack";
@@ -357,6 +358,7 @@ export const designBriefs = pgTable(
     niche: text("niche").$type<Niche>().notNull(),
     prompt: text("prompt").notNull(),
     concept: text("concept"),
+    brainOrigin: jsonb("brain_origin").$type<BrainProductOrigin>(),
     productType: text("product_type").$type<ProductType>().notNull(),
     podPreset: text("pod_preset"),
     dayKey: text("day_key").notNull(),
@@ -421,6 +423,7 @@ export const jobRuns = pgTable("job_runs", {
     .notNull()
     .default(omnishopId)
     .references(() => shops.id),
+  keywordId: integer("keyword_id").references(() => keywords.id),
   stage: text("stage").$type<StageName>().notNull(),
   status: text("status").$type<"running" | "success" | "warning" | "failed" | "skipped">().notNull(),
   trigger: text("trigger").$type<"manual" | "cron" | "chain">().notNull(),
@@ -621,6 +624,7 @@ export type Theme = typeof themes.$inferSelect;
 export const ideaCandidates = pgTable("idea_candidates", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
+  brainOrigin: jsonb("brain_origin").$type<BrainProductOrigin>(),
   title: text("title").notNull(),
   phrase: text("phrase").notNull(),
   themeId: text("theme_id"),

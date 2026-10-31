@@ -1,3 +1,7 @@
+import { PipelineFields } from "@/components/brain/product-fields";
+import { decideIdea } from "../../ideas/actions";
+import { listThemes } from "@/lib/themes";
+import { getDb } from "@/db";
 import { clip } from "@/lib/brain/quicksearch";
 import Link from "next/link";
 import { Fragment } from "react";
@@ -12,6 +16,7 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
   const v = getVault();
   const n = v.byId.get(slug.map(decodeURIComponent).join("/"));
   if (!n) notFound();
+  const themes = n.kind === "reel" ? await listThemes(await getDb()) : [];
   const backlinks = v.notes.filter((o) => o.links.includes(n.id));
   const url = typeof n.data.url === "string" && n.data.url.startsWith("https://") ? n.data.url : null;
   const meta = Object.entries(n.data).filter(([k, val]) => !["tags", "url", "source_reels"].includes(k) && val !== "" && val != null);
@@ -23,6 +28,12 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
       <div className="note-wrap">
         <article className="card note" dangerouslySetInnerHTML={{ __html: renderMarkdown(n.body) }} />
         <aside className="side">
+          {n.kind === "reel" && <div className="card"><h3>Create an original product</h3><p className="small">Use this reel as inspiration. Define your own deliverable and visual direction; operational tips are not automatically sellable products.</p><form action={decideIdea}>
+            <input type="hidden" name="idea" value={n.id}/><input type="hidden" name="verdict" value="approved"/>
+            <PipelineFields themes={themes} phrase="" legend="Confirm the product brief" />
+            <button type="submit">Approve brief for the pipeline</button>
+          </form></div>}
+
           {(url || meta.length > 0) && <div className="card">
             {url && <a href={url} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ display: "block", textAlign: "center", padding: "9px 12px", borderRadius: 10, marginBottom: 14, color: "#fff" }}>Open on Instagram ↗</a>}
             <dl className="meta">{meta.map(([k, val]) => <Fragment key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{String(val)}</dd></Fragment>)}</dl>
