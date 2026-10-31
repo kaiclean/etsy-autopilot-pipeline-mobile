@@ -1,3 +1,5 @@
+import type { BrainProductOrigin } from "@/lib/brain/product-origin";
+import type { PodPreset } from "@/lib/fees";
 import { eq } from "drizzle-orm";
 import { designBriefs, type Niche } from "@/db/schema";
 import { utcDayKey } from "@/lib/utc-day";
@@ -13,11 +15,12 @@ export async function ensureDesignBrief(
   keyword: { id: number; phrase: string; niche: Niche },
   prompt: string,
   concept?: string,
+  approved?: { product: { type: "digital" | "pod"; pod?: PodPreset }; origin?: BrainProductOrigin },
 ) {
   const [existing] = await ctx.db.select().from(designBriefs).where(eq(designBriefs.keywordId, keyword.id)).limit(1);
   if (existing) return { brief: existing, created: false };
 
-  const product = productForPhrase(keyword.niche, keyword.phrase, ctx.random());
+  const product = approved?.product ?? productForPhrase(keyword.niche, keyword.phrase, ctx.random());
   const [created] = await ctx.db
     .insert(designBriefs)
     .values({
@@ -26,6 +29,7 @@ export async function ensureDesignBrief(
       niche: keyword.niche,
       prompt,
       concept,
+      brainOrigin: approved?.origin ?? null,
       productType: product.type,
       podPreset: product.pod ?? null,
       dayKey: utcDayKey(ctx.now),

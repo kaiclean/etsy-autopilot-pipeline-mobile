@@ -4,10 +4,12 @@ import { getVault, noteHref, sectionOf, type Note } from "@/lib/brain/vault";
 import { latestByIdea, keywordStatuses, type Decision } from "@/lib/brain/decisions";
 import { mapIdea, type Mapping } from "@/lib/brain/mapper";
 import { pendingCandidates } from "@/lib/brain/idea-feed";
-import { listThemes, themeRunnable, PRODUCT_LABEL } from "@/lib/themes";
+import { listThemes, PRODUCT_LABEL } from "@/lib/themes";
 import { getDb } from "@/db";
 import type { IdeaCandidate, Theme } from "@/db/schema";
-import { decideIdea, decideCandidateAction } from "./actions";
+import { PipelineFields } from "@/components/brain/product-fields";
+import { defaultDirection } from "@/lib/brain/product-origin";
+import { decideIdea, decideCandidateAction, refreshReelIdeas } from "./actions";
 import { renderMarkdown } from "@/lib/brain/markdown";
 export const dynamic = "force-dynamic";
 const COLS = ["idea", "validating", "building", "shipped"];
@@ -16,21 +18,6 @@ const VERDICT: Record<string, string> = { approved: "ok", rejected: "bad", needs
 const KIND: Record<Mapping["kind"], string> = { product: "Etsy product", software: "Software", content: "Content" };
 
 /** Theme picker + phrase + the explicit confirm. Nothing reaches the pipeline without the tick. */
-function PipelineFields({ themes, themeId, phrase, legend }: { themes: Theme[]; themeId?: string | null; phrase: string; legend: string }) {
-  const runnable = themes.filter(themeRunnable);
-  return (
-    <fieldset className="pipe">
-      <legend>{legend}</legend>
-      <div className="pipe-row">
-        <select name="theme" defaultValue={themeId && runnable.some((t) => t.id === themeId) ? themeId : runnable[0]?.id} aria-label="Theme">
-          {runnable.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        <input name="phrase" defaultValue={phrase} maxLength={80} aria-label="Primary buyer phrase" placeholder="Primary buyer phrase" />
-      </div>
-      <label className="pipe-ok"><input type="checkbox" name="confirm" /><span>I confirm this buyer phrase. Approving creates a keyword and design brief. The design uses the existing daily AI budget, then must pass the quality gate and wait in the approval queue. Nothing publishes on its own.</span></label>
-    </fieldset>
-  );
-}
 
 function MapLine({ m }: { m: Mapping }) {
   return (
@@ -64,7 +51,7 @@ function IdeaCard({ i, d, actions, compact, m, themes, kwStatus }: { i: Note; d?
       {actions && (
         <form action={decideIdea} className="decide">
           <input type="hidden" name="idea" value={i.id} />
-          {artwork && <PipelineFields themes={themes} themeId={m.theme?.id} phrase={m.phrase ?? ""} legend={m.pipelineReady ? "Send to the design pipeline on approve" : "Optional: pick a theme to send it to the pipeline"} />}
+          {artwork && <PipelineFields themes={themes} themeId={m.theme?.id} phrase={m.phrase ?? ""} product={m.product ?? "wall-art"} direction={defaultDirection(i)} legend={m.pipelineReady ? "Send to the design pipeline on approve" : "Optional: pick a theme to send it to the pipeline"} />}
           <input name="comment" placeholder="Comment (optional)" maxLength={2000} aria-label="Comment" />
           <select name="priority" defaultValue="" aria-label="Priority"><option value="">Priority</option>{[1, 2, 3, 4, 5].map((p) => <option key={p} value={p}>P{p}</option>)}</select>
           <div className="acts">
@@ -91,7 +78,7 @@ function CandidateCard({ c, themes }: { c: IdeaCandidate; themes: Theme[] }) {
       <p className="small muted">{c.rationale}</p>
       <form action={decideCandidateAction} className="decide">
         <input type="hidden" name="candidate" value={c.id} />
-        <PipelineFields themes={themes} themeId={c.themeId} phrase={c.phrase} legend="Send to the design pipeline" />
+        <PipelineFields themes={themes} themeId={c.themeId} phrase={c.phrase} product={c.product ?? "wall-art"} direction={c.brainOrigin?.direction ?? ""} legend="Send to the design pipeline" />
         <div className="acts" style={{ gridTemplateColumns: "1fr 1fr" }}>
           <button className="b-ok" name="verdict" value="approved">✓ Approve</button>
           <button className="b-bad" name="verdict" value="rejected">✕ Dismiss</button>
@@ -111,6 +98,7 @@ const MSG: Record<string, [string, string]> = {
   phrase: ["", "That buyer phrase needs 2+ words, 4–80 characters. Nothing was saved."],
   theme: ["", "That theme is not active. Activate it under Themes first. Nothing was saved."],
   niche: ["", "That theme is paused or unknown. Nothing was saved."],
+  brief: ["", "Provide an original direction of 30–1600 characters and resolve missing source reel links. Nothing was queued."],
   bad: ["", "Unknown idea or verdict."],
   error: ["", "Saving failed. Nothing was sent to the pipeline; try again."],
 };
@@ -134,7 +122,8 @@ export default async function Ideas({ searchParams }: { searchParams: Promise<{ 
       <div className="page-head"><div><h2>Approval queue</h2><p>{queue.length ? `${queue.length} idea${queue.length === 1 ? "" : "s"} waiting · ${ready} ready for the design pipeline. Software ideas show an honest Etsy derivative where one exists.` : "You're all caught up."}</p></div><Link href="/brain/themes" className="btn-ghost small">Themes →</Link></div>
       {queue.length ? <div className="grid">{queue.map((i) => <IdeaCard key={i.id} i={i} d={dec.get(i.id)} actions m={maps.get(i.id)!} themes={themes} />)}</div>
         : <Empty icon="✓" title="Inbox zero">Every idea has a decision. New ones appear here after the next vault sync.</Empty>}
-      <div className="page-head" id="candidates" style={{ marginTop: 40 }}><div><h2>New candidates</h2><p>From the daily idea step: seasonal theme phrases and trending signals. Rule-based, no AI spend.</p></div></div>
+      <div className="row"><Link href="/brain/products" className="btn-ghost">Reel → product progress</Link><form action={refreshReelIdeas}><button type="submit">Refresh reel ideas</button></form></div>
+      <div className="page-head" id="candidates" style={{ marginTop: 40 }}><div><h2>New candidates</h2><p>From the daily idea step: reel-backed product ideas, seasonal theme phrases and trending signals. Rule-based, no AI spend.</p></div></div>
       {candidates.length ? <div className="grid">{candidates.map((c) => <CandidateCard key={c.id} c={c} themes={themes} />)}</div>
         : <Empty icon="✦" title="No candidates waiting">The idea step runs with research each day.</Empty>}
       <div className="page-head" style={{ marginTop: 40 }}><div><h2>Approved</h2><p>{approved.filter((i) => dec.get(i.id)?.keywordId).length} in the pipeline · {approved.filter((i) => !dec.get(i.id)?.keywordId).length} in the backlog</p></div></div>
