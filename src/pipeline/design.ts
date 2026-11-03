@@ -221,7 +221,7 @@ export const runDesign: StageFn = async (ctx) => {
     // Generate at the product's *actual* print-area aspect before the shared Real-ESRGAN
     // pass. This avoids cropping square stickers, long mug wraps, phone cases and A3 posters
     // from the same generic 2:3 source. Legacy image hosts receive standard size fallbacks.
-    const area = 1_600_000;
+    const area = targetKey === "digitalLarge" ? 2_200_000 : 1_600_000;
     const targetAspect = target.targetW / target.targetH;
     const generationWidth = Math.max(256, Math.round(Math.sqrt(area * targetAspect) / 16) * 16);
     const generationHeight = Math.max(256, Math.round(Math.sqrt(area / targetAspect) / 16) * 16);
