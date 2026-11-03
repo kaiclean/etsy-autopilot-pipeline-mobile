@@ -14,7 +14,7 @@ export type CompatibleImageOptions = {
   openRouter?: boolean;
 };
 
-const GPT_IMAGE_2 = /^gpt-image-(?:2(?:\\.5-(?:flare|sunburst))?)(?:-|$)/;
+const GPT_IMAGE_2 = /^gpt-image-(?:2(?:\.5-(?:flare|sunburst))?)(?:-|$)/;
 
 /**
  * GPT Image 2/2.5 accepts exact product-shaped canvases in 16px steps.
@@ -56,7 +56,7 @@ export class OpenAIImageProvider implements ImageProvider {
 
   /** Reserve conservatively before calls; configurable for changing model output costs. */
   get estimatedCostChf(): number {
-    const base = (this.options?.baseUrl ?? config.imageBaseUrl).replace(/\\/$/, "");
+    const base = (this.options?.baseUrl ?? config.imageBaseUrl).replace(/\/$/, "");
     const model = this.options?.model ?? config.imageModel;
     if (base === "https://api.openai.com/v1" && model.startsWith("gpt-image-2")) {
       const configured = Number(process.env.OPENAI_IMAGE_ESTIMATED_COST_CHF ?? "0.50");
@@ -75,11 +75,11 @@ export class OpenAIImageProvider implements ImageProvider {
     const defaults = !this.options;
     const key = defaults ? config.imageApiKey : this.options?.apiKey;
     if (!key) throw new Error(this.options?.missingKey ?? "IMAGE_API_KEY or OPENAI_API_KEY missing");
-    const base = (defaults ? config.imageBaseUrl : (this.options?.baseUrl ?? "")).replace(/\\/$/, "");
+    const base = (defaults ? config.imageBaseUrl : (this.options?.baseUrl ?? "")).replace(/\/$/, "");
     if (!base) throw new Error(this.name === "omniroute" ? "OMNIROUTE_BASE_URL missing" : "IMAGE_BASE_URL missing");
     const model = defaults ? config.imageModel : this.options?.model;
     if (!model) throw new Error(this.name === "omniroute" ? "OMNIROUTE_IMAGE_MODEL missing" : "IMAGE_MODEL missing");
-    const isOpenRouter = this.options?.openRouter ?? /openrouter\\.ai/i.test(base);
+    const isOpenRouter = this.options?.openRouter ?? /openrouter\.ai/i.test(base);
     const nativeOpenAi = base === "https://api.openai.com/v1" && /^gpt-image-/.test(model);
     const body: Record<string, unknown> = {
       model,
