@@ -29,6 +29,9 @@ import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
 
 
+/** Legacy 4:5 redesign size; new designs use the target-shaped canvas below. */
+export const PRINT_RENDER = { width: 1152, height: 1440 } as const;
+
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   const [row] = await db
     .select({ total: sql<number>`coalesce(sum(${costs.amountChf}), 0)::float` })
