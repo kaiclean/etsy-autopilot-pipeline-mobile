@@ -28,7 +28,6 @@ import { ensureDesignBrief } from "./design-brief";
 import { upscaleArtwork, type UpscaledArtwork } from "./upscale";
 import { stageResult, type StageFn } from "./types";
 
-export const PRINT_RENDER = { width: 1152, height: 1440 } as const;
 
 export async function aiSpend(db: Parameters<StageFn>[0]["db"], since: Date) {
   const [row] = await db
@@ -219,10 +218,15 @@ export const runDesign: StageFn = async (ctx) => {
       ? (isPodPreset(brief.brief.podPreset ?? "") ? brief.brief.podPreset! as PrintTargetKey : "posterA3")
       : "digitalLarge";
     const target = targetKey === "digitalLarge" ? PRINT_TARGETS.digitalLarge : await getPrintTarget(targetKey);
-    const generationSize = Math.min(1920 / target.targetW, 1920 / target.targetH);
-    // Print (POD) renders natively at 4:5 1024×1280 so one 4× Real-ESRGAN pass reaches 4096×5120 (≥ tee 4016×5057, A3).
-    const generationWidth = targetKey !== "digitalLarge" ? PRINT_RENDER.width : Math.max(256, Math.floor(target.targetW * generationSize));
-    const generationHeight = targetKey !== "digitalLarge" ? PRINT_RENDER.height : Math.max(256, Math.floor(target.targetH * generationSize));
+    // Generate at the product's *actual* print-area aspect before the shared Real-ESRGAN
+    // pass. This avoids cropping square stickers, long mug wraps, phone cases and A3 posters
+    // from the same generic 2:3 source. Legacy image hosts receive standard size fallbacks.
+    const area = 1_600_000;
+    const targetAspect = target.targetW / target.targetH;
+    const generationWidth = Math.max(256, Math.round(Math.sqrt(area * targetAspect) / 16) * 16);
+    const generationHeight = Math.max(256, Math.round(Math.sqrt(area / targetAspect) / 16) * 16);
+    const canvasAspect: "1:1" | "16:9" | "4:5" | "2:3" =
+      targetAspect > 1.2 ? "16:9" : targetAspect >= 0.93 ? "1:1" : targetAspect >= 0.75 ? "4:5" : "2:3";
     if (brief.created) {
       runConcepts.push(concept!);
       briefed++;
@@ -266,7 +270,7 @@ export const runDesign: StageFn = async (ctx) => {
             prompt,
             niche: kw.niche,
             seed: Math.floor(ctx.random() * 1e9) + attempt,
-            aspectRatio: targetKey === "mug" || kw.niche === "stream" ? "16:9" : "2:3",
+            aspectRatio: canvasAspect,
             width: generationWidth,
             height: generationHeight,
             label: kw.phrase,
