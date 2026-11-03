@@ -349,11 +349,15 @@ export async function upscaleArtwork(
     upscaleMethod = "native";
   } else if (session) {
     try {
-      // Only feed Real-ESRGAN what a 4× pass needs: the output is resized to the target anyway, and this
-      // keeps CPU time and memory bounded on small Railway instances.
+      // Keep detail from the high-quality OpenAI source. Downsampling to target/4
+      // before super-resolution would discard genuine line work, textures and fine
+      // typography in a 2K master. A 40 MP projected 4× cap still protects worker
+      // memory on unexpectedly large input files.
       const needW = Math.ceil(target.targetW / 4);
       const needH = Math.ceil(target.targetH / 4);
-      const shrink = metadata.width > needW * 1.05 && metadata.height > needH * 1.05;
+      const projectedPixels = metadata.width * metadata.height * 16;
+      const shrink = projectedPixels > 40_000_000 &&
+        metadata.width > needW * 1.05 && metadata.height > needH * 1.05;
       const input = await sharp(sourceBytes, { limitInputPixels: 64_000_000 })
         .resize(shrink ? { width: needW, height: needH, fit: "cover", kernel: "lanczos3" } : undefined)
         .flatten({ background: "#ffffff" })
