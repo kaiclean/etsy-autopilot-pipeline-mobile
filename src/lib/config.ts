@@ -134,7 +134,7 @@ export const config = {
     return env("OPENAI_MODEL") ?? "gpt-4.1-mini";
   },
   get openaiImageModel() {
-    return env("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
+    return env("OPENAI_IMAGE_MODEL") ?? "gpt-image-2.5-flare";
   },
   /** Image calls. Each value falls back to the matching OPENAI_* setting. */
   get imageApiKey() {
@@ -144,8 +144,14 @@ export const config = {
     return (env("IMAGE_BASE_URL") ?? env("OPENAI_BASE_URL") ?? "https://api.openai.com/v1").replace(/\/$/, "");
   },
   get imageModel() {
-    return env("IMAGE_MODEL") ?? env("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
+    return env("IMAGE_MODEL") ?? env("OPENAI_IMAGE_MODEL") ?? "gpt-image-2.5-flare";
   },
+  /** Native OpenAI Images API quality; not sent to OpenRouter/compatible hosts. */
+  get openaiImageQuality(): "low" | "medium" | "high" | "xhigh" | "max" {
+    const value = env("OPENAI_IMAGE_QUALITY");
+    if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") return value;
+    return "high";
+  }
   /** Ollama Cloud chat. There is no image endpoint on this host. */
   get ollama() {
     return {
@@ -462,6 +468,7 @@ export function integrationStatus(etsyConnected: boolean, opts?: { providerCredi
           "OPENAI_API_KEY",
           "OPENAI_BASE_URL",
           "OPENAI_IMAGE_MODEL",
+          "OPENAI_IMAGE_QUALITY",
           "OMNIROUTE_API_KEY",
           "OMNIROUTE_BASE_URL",
           "OMNIROUTE_IMAGE_MODEL",

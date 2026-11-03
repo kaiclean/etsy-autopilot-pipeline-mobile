@@ -149,6 +149,23 @@ describe("upscale stage", () => {
     expect(await sharp(bytes).metadata()).toMatchObject({ width: 20, height: 30, density: 300, format: "png" });
   });
 
+  it("preserves generated master pixels before a bounded 4× model pass", async () => {
+    const source = `data:image/png;base64,${rgbPng(24, 36, [100, 120, 140]).toString("base64")}`;
+    const seen: number[][] = [];
+    const upscaleSession = session();
+    const originalRun = upscaleSession.run;
+    upscaleSession.run = (input) => {
+      seen.push([...(input.input as { dims: number[] }).dims]);
+      return originalRun(input);
+    };
+    const result = await upscaleArtwork(source, {
+      minW: 30, minH: 40, targetW: 32, targetH: 48,
+    }, { session: upscaleSession, createTensor: (data, dims) => ({ data, dims }) });
+    expect(seen).toEqual([[1, 3, 36, 24]]);
+    expect(result.upscaleMethod).toBe("realesrgan");
+    expect(result.outputPx).toEqual({ width: 32, height: 48 });
+  });
+
   it("uses a mocked ONNX session before resizing to the exact target", async () => {
     const source = `data:image/png;base64,${rgbPng(8, 12, [100, 120, 140]).toString("base64")}`;
     const result = await upscaleArtwork(source, {

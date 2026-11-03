@@ -110,13 +110,13 @@ describe("OpenAI image adapter", () => {
     expect(headers.Authorization).toBe("Bearer sk-test");
     expect(headers["HTTP-Referer"]).toBeUndefined();
     expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
-      model: "gpt-image-1",
+      model: "gpt-image-2.5-flare",
       size: "1024x1536",
       n: 1,
     });
     expect(JSON.parse(String(calls[0].init?.body))).not.toHaveProperty("aspect_ratio");
     expect(image.url).toBe("data:image/png;base64,abc");
-    expect(image.costChf).toBe(0.05);
+    expect(image.costChf).toBe(0.5);
   });
 
   it("tries OpenRouter /images first, then /images/generations, and uses reported cost", async () => {
