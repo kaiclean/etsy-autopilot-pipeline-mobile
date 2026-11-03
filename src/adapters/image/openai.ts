@@ -85,7 +85,7 @@ export class OpenAIImageProvider implements ImageProvider {
       model,
       prompt: req.prompt,
       n: 1,
-      size: generationCanvasSize(req, model),
+      size: generationCanvasSize(req, nativeOpenAi ? model : ""),
     };
     if (isOpenRouter) body.aspect_ratio = req.aspectRatio ?? "2:3";
     if (nativeOpenAi) {
