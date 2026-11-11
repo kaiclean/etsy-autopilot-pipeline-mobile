@@ -44,3 +44,7 @@ next-env.d.ts
 
 !.env.free.example
 .netlify/
+
+!.env.brain.example
+.venv-brain/
+scripts/brain/__pycache__/

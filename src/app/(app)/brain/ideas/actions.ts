@@ -1,4 +1,5 @@
 "use server";
+import { getLiveVault } from "@/lib/brain/live-vault";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -11,7 +12,7 @@ import type { Note } from "@/lib/brain/vault";
 import { ideaCandidates } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
-import { getVault } from "@/lib/brain/vault";
+
 import { cleanPhrase } from "@/lib/brain/fit";
 import { mapIdea } from "@/lib/brain/mapper";
 import { decide, decideCandidate, VERDICTS, type PipelineRequest, type Verdict } from "@/lib/brain/decisions";
@@ -30,7 +31,7 @@ async function confirmedPipeline(form: FormData, note?: Note): Promise<PipelineR
   const product = form.get("product") ?? "wall-art";
   if (!isArtProduct(product) || !theme.products.includes(product)) return "theme";
   let origin;
-  try { origin = note ? makeProductOrigin(note, getVault(), product, String(form.get("direction") ?? defaultDirection(note))) : undefined; }
+  try { origin = note ? makeProductOrigin(note, await getLiveVault(), product, String(form.get("direction") ?? defaultDirection(note))) : undefined; }
   catch { return "brief"; }
   return { phrase, niche: theme.baseNiche, themeId: theme.id, product, origin };
 }
@@ -39,7 +40,7 @@ export async function decideIdea(form: FormData) {
   await requireSession("/brain/ideas");
   const ideaId = String(form.get("idea") ?? "");
   const verdict = String(form.get("verdict") ?? "") as Verdict;
-  const note = getVault().byId.get(ideaId);
+  const note = (await getLiveVault()).byId.get(ideaId);
   if (!note || !["idea", "reel"].includes(note.kind) || !VERDICTS.includes(verdict)) redirect("/brain/ideas?msg=bad");
   const comment = String(form.get("comment") ?? "").trim().slice(0, 2000) || null;
   const p = Number.parseInt(String(form.get("priority") ?? ""), 10);

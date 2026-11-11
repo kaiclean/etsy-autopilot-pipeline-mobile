@@ -232,6 +232,13 @@
       "when": 1792503600003,
       "tag": "0034_brain_product_origins",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792503600004,
+      "tag": "0035_brain_live_vault",
+      "breakpoints": true
     }
   ]
 }

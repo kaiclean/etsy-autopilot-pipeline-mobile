@@ -681,3 +681,10 @@ export const upscaleUploads = pgTable("upscale_uploads", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
 });
+
+/** Live worker imports supplement the bundled historical vault without redeploying. */
+export const brainVaultNotes = pgTable("brain_vault_notes", {
+  id: text("id").primaryKey(),
+  markdown: text("markdown").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

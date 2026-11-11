@@ -1,7 +1,8 @@
+import { getLiveVault } from "@/lib/brain/live-vault";
 import { BrainPage as Shell, Empty } from "@/components/brain/shell";
 import { AreaChart, BarList, Donut, Matrix } from "@/components/brain/Charts";
 import CountUp from "@/components/brain/CountUp";
-import { getVault, noteHref } from "@/lib/brain/vault";
+import { noteHref } from "@/lib/brain/vault";
 import { latestByIdea } from "@/lib/brain/decisions";
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ const top = (m: Map<string, number>, n: number) => [...m].sort((a, b) => b[1] - 
 const inc = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) || 0) + by);
 
 export default async function Insights() {
-  const v = getVault();
+  const v = (await getLiveVault());
   const reels = v.notes.filter((n) => n.kind === "reel");
   const ideas = v.notes.filter((n) => n.kind === "idea");
   if (!reels.length) return <Shell><Empty icon="📈" title="No data yet">Insights appear once the vault has reels.</Empty></Shell>;

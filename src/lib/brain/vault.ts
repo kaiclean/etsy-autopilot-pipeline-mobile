@@ -18,6 +18,7 @@ const WIKILINK = /\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
 
 function parseScalar(value: string): string | number {
   const v = value.trim();
+  if (v.startsWith('"')) { try { return JSON.parse(v) as string; } catch { /* legacy scalar */ } }
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
   if (v !== "" && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
   return v;
