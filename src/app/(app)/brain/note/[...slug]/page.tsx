@@ -1,17 +1,23 @@
+import { getLiveVault } from "@/lib/brain/live-vault";
+import { PipelineFields } from "@/components/brain/product-fields";
+import { decideIdea } from "../../ideas/actions";
+import { listThemes } from "@/lib/themes";
+import { getDb } from "@/db";
 import { clip } from "@/lib/brain/quicksearch";
 import Link from "next/link";
 import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { BrainPage as Shell } from "@/components/brain/shell";
-import { getVault, noteHref } from "@/lib/brain/vault";
+import { noteHref } from "@/lib/brain/vault";
 import { renderMarkdown } from "@/lib/brain/markdown";
 export const dynamic = "force-dynamic";
 const KC: Record<string, string> = { reel: "var(--reel)", idea: "var(--idea)", summary: "var(--summary)", home: "var(--home)", template: "var(--faint)" };
 export default async function NotePage({ params }: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await params;
-  const v = getVault();
+  const v = (await getLiveVault());
   const n = v.byId.get(slug.map(decodeURIComponent).join("/"));
   if (!n) notFound();
+  const themes = n.kind === "reel" ? await listThemes(await getDb()) : [];
   const backlinks = v.notes.filter((o) => o.links.includes(n.id));
   const url = typeof n.data.url === "string" && n.data.url.startsWith("https://") ? n.data.url : null;
   const meta = Object.entries(n.data).filter(([k, val]) => !["tags", "url", "source_reels"].includes(k) && val !== "" && val != null);
@@ -21,8 +27,14 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
     <Shell>
       <div className="crumb"><Link href="/brain">Brain</Link> / {folder ? <Link href={n.kind === "reel" ? "/brain/reels" : n.kind === "idea" ? "/brain/ideas" : "/brain/search"}>{folder}</Link> : "Home"}</div>
       <div className="note-wrap">
-        <article className="card note" dangerouslySetInnerHTML={{ __html: renderMarkdown(n.body) }} />
+        <article className="card note" dangerouslySetInnerHTML={{ __html: renderMarkdown(n.body, v) }} />
         <aside className="side">
+          {n.kind === "reel" && <div className="card"><h3>Create an original product</h3><p className="small">Use this reel as inspiration. Define your own deliverable and visual direction; operational tips are not automatically sellable products.</p><form action={decideIdea}>
+            <input type="hidden" name="idea" value={n.id}/><input type="hidden" name="verdict" value="approved"/>
+            <PipelineFields themes={themes} phrase="" legend="Confirm the product brief" />
+            <button type="submit">Approve brief for the pipeline</button>
+          </form></div>}
+
           {(url || meta.length > 0) && <div className="card">
             {url && <a href={url} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ display: "block", textAlign: "center", padding: "9px 12px", borderRadius: 10, marginBottom: 14, color: "#fff" }}>Open on Instagram ↗</a>}
             <dl className="meta">{meta.map(([k, val]) => <Fragment key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{String(val)}</dd></Fragment>)}</dl>

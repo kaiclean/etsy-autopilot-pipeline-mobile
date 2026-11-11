@@ -1,7 +1,8 @@
+import { getLiveVault } from "@/lib/brain/live-vault";
 import Image from "next/image";
 import Link from "next/link";
 import { BrainPage as Shell, Empty } from "@/components/brain/shell";
-import { getVault, noteHref, thumbFor, Note } from "@/lib/brain/vault";
+import { noteHref, thumbFor, Note } from "@/lib/brain/vault";
 export const dynamic = "force-dynamic";
 type Ev = { date: string; note: Note; kind: "reel" | "idea" };
 const MONTH = (d: string) => new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -9,7 +10,7 @@ const DAY = (d: string) => new Date(d + "T00:00:00Z").toLocaleDateString("en-GB"
 
 export default async function Timeline({ searchParams }: { searchParams: Promise<{ show?: string }> }) {
   const { show = "all" } = await searchParams;
-  const v = getVault();
+  const v = (await getLiveVault());
   const evs: Ev[] = [];
   for (const n of v.notes) {
     if (n.kind === "reel" && n.data.date_posted && show !== "ideas") evs.push({ date: String(n.data.date_posted), note: n, kind: "reel" });

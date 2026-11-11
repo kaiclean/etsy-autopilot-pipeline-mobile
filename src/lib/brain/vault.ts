@@ -18,6 +18,7 @@ const WIKILINK = /\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
 
 function parseScalar(value: string): string | number {
   const v = value.trim();
+  if (v.startsWith('"')) { try { return JSON.parse(v) as string; } catch { /* legacy scalar */ } }
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
   if (v !== "" && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
   return v;
@@ -126,9 +127,15 @@ export function parseVault(dir: string): Vault {
 }
 
 let cache: Vault | null = null;
+let fingerprint = "";
 export function getVault(): Vault {
-  // Vault ships with the deploy, so it only changes on redeploy; cache for the process lifetime.
-  if (!cache) cache = parseVault(vaultDir());
+  // The local worker can receive vault syncs without restarting. Check at most
+  // every five seconds; hosted snapshots still require a deployment to change.
+  if (cache && Date.now() - cache.loadedAt < 5000) return cache;
+  const dir = vaultDir();
+  const version = walk(dir).map(file => { const s = fs.statSync(path.join(dir, file)); return `${file}:${s.mtimeMs}:${s.size}`; }).join("|");
+  if (!cache || version !== fingerprint) { cache = parseVault(dir); fingerprint = version; }
+  else cache.loadedAt = Date.now();
   return cache;
 }
 

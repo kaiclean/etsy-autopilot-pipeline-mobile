@@ -34,6 +34,7 @@ async function runDailyChain(ctx: StageContext) {
   const parts: string[] = [];
   let warned = false;
   for (const stage of CHAIN_STAGES) {
+    if (ctx.keywordId && stage === "research") continue;
     if (stageSettings[stage]?.paused) {
       parts.push(`${stage}: paused`);
       ctx.log(`${stage} is paused; daily chain skipped it`);
@@ -48,7 +49,7 @@ async function runDailyChain(ctx: StageContext) {
     await emit(ctx.db, {
       type: "job.progress", title: `Daily chain: starting ${stage}`, href: "/pipeline/live", shopId: ctx.shopId,
     }, ctx.demo, { push: false });
-    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force, shopId: ctx.shopId, signal: ctx.signal });
+    const run = await runStage(stage, "chain", { db: ctx.db, random: ctx.random, now: ctx.now, force: ctx.force, shopId: ctx.shopId, keywordId: ctx.keywordId, signal: ctx.signal });
     parts.push(`${stage}: ${run.summary ?? run.status}`);
     ctx.log(`${stage} ${run.status}: ${run.summary ?? ""}`);
     if (run.status === "failed") throw new Error(run.summary ?? `${stage} failed`);
@@ -86,7 +87,7 @@ const STAGE_FNS: Record<StageName, StageFn> = {
   health: runHealth,
 };
 
-export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal; shopId?: string };
+export type RunOptions = { db?: DB; random?: () => number; now?: Date; force?: boolean; signal?: AbortSignal; shopId?: string; keywordId?: number };
 
 export class StageCancelled extends Error {
   constructor() { super("Cancelled by the dashboard"); this.name = "StageCancelled"; }
@@ -148,7 +149,7 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
     .where(and(eq(jobRuns.shopId, shop.id), eq(jobRuns.stage, stage), eq(jobRuns.status, "running"), gte(jobRuns.startedAt, new Date(Date.now() - 5 * 60_000))));
   if (running) return recordSkip(db, stage, trigger, "Already running", shop.id, demo);
 
-  const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, status: "running", trigger, isDemo: demo }).returning();
+  const [run] = await db.insert(jobRuns).values({ shopId: shop.id, stage, keywordId: opts.keywordId ?? null, status: "running", trigger, isDemo: demo }).returning();
   const logs: LogLine[] = [];
   let pendingLogs = Promise.resolve();
   const ctx: StageContext = {
@@ -159,6 +160,7 @@ async function executeStage(stage: StageName, trigger: StageContext["trigger"], 
     random: opts.random ?? Math.random,
     now: opts.now ?? new Date(),
     force: opts.force === true,
+    keywordId: opts.keywordId,
     signal: opts.signal,
     log: (msg, level = "info") => {
       // Cooperative cancel: the next step boundary after Cancel throws and ends the stage.
