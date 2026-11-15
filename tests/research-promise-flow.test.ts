@@ -79,6 +79,28 @@ describe("research outcomes", () => {
     }
   });
 
+  it("recognizes Etsy API competition candidates when Insights is empty", async () => {
+    vi.stubEnv("ETSY_INSIGHTS_CSV", "");
+    vi.stubEnv("ETSY_INSIGHTS_PATH", "");
+    vi.stubEnv("ETSY_DEMAND_SOURCE", "");
+    vi.stubEnv("ETSY_API_COMPETITION", "true");
+    vi.stubEnv("ETSY_API_KEY", "test-key");
+    const fetch = vi.fn(async () => Response.json({ count: 0 }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new PGlite("memory://");
+    try {
+      const db = drizzle(client, { schema }) as DB;
+      await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+      await setSetting(db, "automation", { ...await getSetting(db, "automation"), designsPerRun: 0 });
+      const run = await runStage("research", "manual", { db });
+      expect(fetch).toHaveBeenCalled();
+      expect(run.status).toBe("warning");
+      expect(run.summary).toMatch(/designs per run.*0/i);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("retains the selection limit, score ordering and existing status eligibility", async () => {
     vi.stubEnv("ETSY_INSIGHTS_CSV", "keyword,search_volume,competition,niche\nswiss unique high print,100000,0,alpine\nswiss unique low print,0,1,alpine");
     vi.stubEnv("ETSY_API_COMPETITION", "false");
@@ -95,8 +117,14 @@ describe("research outcomes", () => {
       const low = (await db.select().from(keywords).where(eq(keywords.phrase, "swiss unique low print")))[0];
       expect(high).toMatchObject({ status: "used", score: 0.9 });
       expect(low).toMatchObject({ status: "new", score: 0.15 });
-      expect(await db.select().from(keywords).where(eq(keywords.status, "selected"))).toHaveLength(1);
+      expect(await db.select().from(keywords).where(eq(keywords.status, "selected")))
+        .toMatchObject([{ phrase: "alpine christmas print", score: 0.74 }]);
       await db.update(keywords).set({ status: "used" }).where(eq(keywords.status, "new"));
+      await db.update(keywords).set({ status: "new" }).where(eq(keywords.id, low.id));
+      const lowRun = await runStage("research", "manual", { db, now });
+      expect(lowRun.status).toBe("success");
+      expect((await db.select().from(keywords).where(eq(keywords.id, low.id)))[0])
+        .toMatchObject({ status: "selected", score: 0.15 });
       const empty = await runStage("research", "manual", { db, now });
       expect(empty.status).toBe("warning");
       expect(empty.summary).toMatch(/no .*eligible.*new keywords/i);
