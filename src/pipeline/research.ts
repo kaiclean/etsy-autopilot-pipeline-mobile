@@ -10,13 +10,14 @@ import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import { loadHotSignals, mergeHotKeywords } from "./hot-signals";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 import { themeCandidates } from "@/lib/themes";
 import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
 
 const TRENDS_LOOKUPS_PER_RUN = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PERFORMANCE_ANALYTICS_FRESHNESS_DAYS = 30;
+const RESEARCH_ETSY_SOURCES = ["etsy-insights", "etsy-api-v3"] as const;
 
 export const runResearch: StageFn = async (ctx) => {
   const { db, log } = ctx;
@@ -26,14 +27,20 @@ export const runResearch: StageFn = async (ctx) => {
     hotBoost.set(signal.phrase, Math.max(hotBoost.get(signal.phrase) ?? 0, signal.score * 0.15));
   }
   const candidates: KeywordCandidate[] = [];
+  const sourceEligible = new Map<string, number>();
+  const sourceErrors = new Map<string, string>();
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect({ demo: ctx.demo });
       const eligible = found.filter((candidate) => !keywordHasUndeliverablePromise(candidate.phrase));
+      sourceEligible.set(source.name, eligible.length);
       log(`Source ${source.name}: ${eligible.length} eligible of ${found.length} candidates`);
       candidates.push(...eligible);
     } catch (e) {
-      log(`Source ${source.name} failed: ${(e as Error).message}`, "warn");
+      const message = (e as Error).message;
+      sourceEligible.set(source.name, 0);
+      sourceErrors.set(source.name, message);
+      log(`Source ${source.name} failed: ${message}`, "warn");
     }
   }
 
@@ -259,5 +266,25 @@ export const runResearch: StageFn = async (ctx) => {
   } catch (e) {
     log(`Idea feed failed: ${(e as Error).message}`, "warn");
   }
-  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  const summary = `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  const etsyEligible = RESEARCH_ETSY_SOURCES.reduce((sum, source) => sum + (sourceEligible.get(source) ?? 0), 0);
+  if (!ctx.demo && etsyEligible === 0) {
+    const etsyFailures = RESEARCH_ETSY_SOURCES
+      .map((source) => {
+        const error = sourceErrors.get(source);
+        return error ? `${source}: ${error}` : null;
+      })
+      .filter((item): item is string => item != null);
+    const reason = etsyFailures.length
+      ? `Etsy demand data is missing (${etsyFailures.join("; ")}). Reconnect Etsy and rerun research.`
+      : "Etsy demand data is missing (etsy-insights and etsy-api-v3 returned 0 eligible candidates). Reconnect Etsy and rerun research.";
+    return stageResult(`${summary}. ${reason}`, "failed");
+  }
+  if (top.length === 0) {
+    const reason = designsPerRun <= 0
+      ? "automation.designsPerRun is 0"
+      : "no keywords remained selectable under the existing threshold";
+    return stageResult(`${summary}. Selected 0 keywords: ${reason}.`, "warning");
+  }
+  return summary;
 };
