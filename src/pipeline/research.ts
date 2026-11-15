@@ -10,7 +10,7 @@ import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import { loadHotSignals, mergeHotKeywords } from "./hot-signals";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 import { themeCandidates } from "@/lib/themes";
 import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
 
@@ -26,12 +26,15 @@ export const runResearch: StageFn = async (ctx) => {
     hotBoost.set(signal.phrase, Math.max(hotBoost.get(signal.phrase) ?? 0, signal.score * 0.15));
   }
   const candidates: KeywordCandidate[] = [];
+  const etsyDemandSourceNames = new Set([etsyInsightsSource.name, etsyApiCompetitionSource.name]);
+  let etsyDemandCandidates = 0;
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect({ demo: ctx.demo });
       const eligible = found.filter((candidate) => !keywordHasUndeliverablePromise(candidate.phrase));
       log(`Source ${source.name}: ${eligible.length} eligible of ${found.length} candidates`);
       candidates.push(...eligible);
+      if (etsyDemandSourceNames.has(source.name)) etsyDemandCandidates += found.length;
     } catch (e) {
       log(`Source ${source.name} failed: ${(e as Error).message}`, "warn");
     }
@@ -259,5 +262,20 @@ export const runResearch: StageFn = async (ctx) => {
   } catch (e) {
     log(`Idea feed failed: ${(e as Error).message}`, "warn");
   }
-  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  const summary = `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  // A live run depends on Etsy demand. If the Etsy sources contributed nothing, the demand read
+  // failed (same auth failure family as hot's HTTP 403): fail loudly instead of reporting success
+  // with nothing selected. Do not loosen selection to paper over missing demand.
+  if (!ctx.demo && etsyDemandCandidates === 0) {
+    const reason = "Etsy demand data is missing; reconnect Etsy so research can read demand.";
+    log(reason, "error");
+    return stageResult(`${summary}. ${reason}`, "failed");
+  }
+  // Etsy demand was present but selection still came up empty: record a warning, not success.
+  if (top.length === 0) {
+    const reason = "0 keywords selected under the existing threshold.";
+    log(reason, "warn");
+    return stageResult(`${summary}. ${reason}`, "warning");
+  }
+  return summary;
 };
