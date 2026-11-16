@@ -456,12 +456,14 @@ describe("publish retry and dashboard", () => {
 describe("daily chain force", () => {
   const trends = process.env.RESEARCH_GOOGLE_TRENDS;
   afterEach(() => {
+    vi.unstubAllEnvs();
     if (trends === undefined) delete process.env.RESEARCH_GOOGLE_TRENDS;
     else process.env.RESEARCH_GOOGLE_TRENDS = trends;
   });
 
   it("?force=1 bypasses a success already recorded today", async () => {
     process.env.RESEARCH_GOOGLE_TRENDS = "false";
+    vi.stubEnv("ETSY_DEMAND_SOURCE", "fixture");
     const db = await memoryDb();
     const [shop] = await db.select().from(shops).where(eq(shops.slug, "omnishop-ch"));
     const now = new Date();
