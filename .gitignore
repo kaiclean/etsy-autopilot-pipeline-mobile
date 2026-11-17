@@ -44,3 +44,10 @@ next-env.d.ts
 
 !.env.free.example
 .netlify/
+
+# logs and scratch output
+*.log
+logs/
+tmp/
+scratch/
+.env.box
