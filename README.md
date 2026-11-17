@@ -16,6 +16,8 @@ Etsy Autopilot is the back office for Kai's Etsy shop "Designed by Kai" (Switzer
 
 **Status and limits:** single-operator tool, no license file yet. Live Etsy writes stay off until armed under Connections, Go live. Several steps cannot be automated through Etsy's APIs and stay manual; see [What still needs a human](#what-still-needs-a-human).
 
+More: [architecture overview](docs/ARCHITECTURE.md) and [security policy](SECURITY.md).
+
 ---
 
 **Free hybrid deployment:** run the dashboard on Netlify and the scheduled pipeline on an existing Mac with `AUTOPILOT_EXECUTION=box` and `FREE_ONLY_MODE=true`. See [the complete setup and migration guide](docs/FREE_HOSTING.md). Jobs are persisted before the web request returns; the Mac executes them without an inbound home port. Free-tier quotas and provider subscriptions must be checked separately.
