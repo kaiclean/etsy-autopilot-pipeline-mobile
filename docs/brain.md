@@ -17,7 +17,23 @@ The OmniGram second-brain dashboard, merged into Autopilot. It used to be the st
 - **Themes** (`/brain/themes`, table `themes`, migration 0025): editable registry on top of the production niches. Only active themes with no blocker, an unpaused niche and an image-pipeline product (wall art, poster, POD apparel/mug) feed research. Planners, templates and prompt packs stay blocked until a hand-built file exists.
 - **Idea mapper** (`src/lib/brain/mapper.ts`): each vault idea is classed product / software / content. Products get a proposed theme, buyer phrase and product type. Software and content get an honest Etsy derivative (marked as needing a hand-built file). Nothing enters the pipeline until Kai ticks the confirm box.
 - **Daily idea feed** (`src/lib/brain/idea-feed.ts`): runs at the end of the research cron with no AI calls and no spend. It adds up to 8 pending candidates per day (seasonal seeds, hot signals) and proposes themes for unmatched artwork ideas.
-- **OmniGram hook**: `process.py` runs `/workspace/ap-sync/scripts/brain/sync-vault.sh --push` after each batch. Opt out with `OMNIBRAIN_AUTOSYNC=0`.
+- **Legacy external hook** (not the new daily worker): `process.py` runs `/workspace/ap-sync/scripts/brain/sync-vault.sh --push` after each batch. Opt out with `OMNIBRAIN_AUTOSYNC=0`.
 - **Road to the first sale**: the card on `/brain` shows the funnel.
 - **Status API**: `GET /api/brain/status` with bearer `OMNIGRAM_API_TOKEN` returns the publish mode, the image provider name, AI caps/spend and the funnel counts. It returns no secrets.
 - **Skill rules** in `listing-validator.ts`: titles must be 6–14 words with the primary phrase in the first 40 characters; empty praise in a title or tag is an error; using one phrase in more than 2 tags gets a warning.
+
+## Reel-backed original products
+
+Open a reel note to define an original visual direction, active theme, supported product and buyer phrase. Confirming creates a scoped design brief with immutable source note/reel hashes. In box mode it queues one idempotent keyword-scoped `daily` job (Design → Listing only); Research and Publish are excluded. Scoped runs do not mark the shop-wide daily schedule complete. The explicit approved product overrides the niche's random product mix, and Listing only makes that product type.
+
+Research also imports runnable **product ideas linked to resolved saved reels** into the candidate queue before seasonal suggestions. Operational/software reels are not blindly turned into merchandise. Missing reel links and unsupported planners/templates remain blocked. Use **Refresh reel ideas** on Ideas; approve the product and edit its original direction. Existing phrases with different approved briefs cannot be silently reused or overwrite old products.
+
+`/brain/products` shows source evidence, artwork provider and measured pixels, actual listing state, and buyer-file links. These are generation/provenance records, not certificates of originality. Review source rights, visual originality and downloaded bytes before the existing approval/publish actions. Demo artwork is labeled and existing pixel/quality/manifest gates remain enforced.
+
+Migration `0034_brain_product_origins` adds provenance on briefs/candidates and keyword scope on jobs/runs. The Mac worker refreshes its vault cache after local syncs. Historical file-only syncs still require a release deploy; the daily worker now persists fresh notes in Postgres so they appear without one. No additional AI calls run during candidate extraction. Keep the existing free-only provider policy and Mac setup from `FREE_HOSTING.md`.
+
+Validation uses a synthetic provider fixture returning real PNG bytes through the real Design/Listing stages, including read-back SHA-256 and isolation from unrelated keywords. This is not evidence of live provider generation. A live smoke test requires the configured real image/text/vision providers, permanent storage and Mac worker; missing credentials must fail visibly and cannot fall back to demo products.
+
+## Daily saved-Reel analyser (Mac)
+
+See [BRAIN_DAILY.md](BRAIN_DAILY.md). `/brain/setup` offers an authenticated private worker-config download. The daily LaunchAgent reads the latest saved videos with a local Instagram session, extracts real frames/audio, transcribes locally and generates original Etsy/SaaS/project proposals with local Ollama. The bearer-authenticated `/api/brain/ingest` stores notes in `brain_vault_notes`; deployed Brain readers combine those live records with the bundled historical snapshot without a deploy. The UI shows actual last-run status and stale/failed workers. Software stays out of the artwork queue; approval and publish gates are preserved. Installing the code is not proof that the Mac is connected or the schedule is running.

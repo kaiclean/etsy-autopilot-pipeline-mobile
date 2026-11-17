@@ -23,7 +23,7 @@ const words = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9
 
 export function ideaKind(n: Pick<Note, "data">): IdeaKind {
   const t = String(n.data.type ?? "").toLowerCase();
-  if (t.includes("software") || t.includes("feature") || t.includes("app")) return "software";
+  if (t.includes("saas") || t.includes("project") || t.includes("software") || t.includes("feature") || t.includes("app")) return "software";
   if (t.includes("content")) return "content";
   return "product";
 }

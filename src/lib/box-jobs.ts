@@ -13,19 +13,19 @@ export function boxExecutionEnabled() { return process.env.AUTOPILOT_EXECUTION =
 
 export async function enqueueBoxJob(db: DB, opts: {
   shopId: string; stage: StageName | "all"; trigger: "manual" | "cron";
-  force?: boolean; idempotencyKey?: string; sessionId?: number;
+  force?: boolean; idempotencyKey?: string; sessionId?: number; keywordId?: number;
 }): Promise<BoxJob> {
   if (opts.stage !== "all" && !isStage(opts.stage)) throw new Error("Unknown pipeline stage");
   const key = opts.idempotencyKey ?? `manual:${randomUUID()}`;
   if (!key || key.length > 200) throw new Error("Invalid job idempotency key");
   const [created] = await db.insert(boxJobs).values({
     shopId: opts.shopId, stage: opts.stage, trigger: opts.trigger, force: opts.force ?? false,
-    sessionId: opts.sessionId ?? null, idempotencyKey: key,
+    sessionId: opts.sessionId ?? null, keywordId: opts.keywordId ?? null, idempotencyKey: key,
     summary: "Queued for the local box. Publish approvals remain required.",
   }).onConflictDoNothing({ target: [boxJobs.shopId, boxJobs.idempotencyKey] }).returning();
   if (created) return created;
   const [existing] = await db.select().from(boxJobs).where(and(eq(boxJobs.shopId, opts.shopId), eq(boxJobs.idempotencyKey, key)));
-  if (!existing || existing.stage !== opts.stage || existing.trigger !== opts.trigger || existing.force !== (opts.force ?? false) || existing.sessionId !== (opts.sessionId ?? null)) {
+  if (!existing || existing.stage !== opts.stage || existing.trigger !== opts.trigger || existing.force !== (opts.force ?? false) || existing.sessionId !== (opts.sessionId ?? null) || existing.keywordId !== (opts.keywordId ?? null)) {
     throw new Error("Idempotency key was already used for a different job");
   }
   return existing;

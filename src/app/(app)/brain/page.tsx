@@ -1,7 +1,9 @@
+import IngestionStatus from "@/components/brain/ingestion-status";
+import { getLiveVault } from "@/lib/brain/live-vault";
 import { clip } from "@/lib/brain/quicksearch";
 import Link from "next/link";
 import { BrainPage as Shell, Empty } from "@/components/brain/shell";
-import { getVault, noteHref, searchIndex } from "@/lib/brain/vault";
+import { noteHref, searchIndex } from "@/lib/brain/vault";
 import ReelCard from "@/components/brain/ReelCard";
 import CountUp from "@/components/brain/CountUp";
 import { latestByIdea } from "@/lib/brain/decisions";
@@ -25,7 +27,7 @@ function Stat({ label, value, color, sub, href }: { label: string; value: number
 }
 
 export default async function Overview() {
-  const v = getVault();
+  const v = (await getLiveVault());
   const reels = v.notes.filter((n) => n.kind === "reel");
   const ideas = v.notes.filter((n) => n.kind === "idea");
   const dec = await latestByIdea();
@@ -50,6 +52,7 @@ export default async function Overview() {
   const recent = [...dec.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 6);
   return (
     <Shell>
+      <IngestionStatus />
       <div className="page-head"><div><h2>Command center</h2><p>{reels.length} reels distilled into {ideas.length} ideas for Designed by Kai.</p></div></div>
       {tracker && <FirstSaleTracker f={tracker.f} publishMode={tracker.mode} />}
       <div className="stats">
