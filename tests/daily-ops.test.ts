@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import { designBriefs, events, jobRuns, listings, orders, saleAlerts, shops } from "@/db/schema";
@@ -376,12 +376,14 @@ describe("fulfillment watch and sale alerts", () => {
 describe("daily chain", () => {
   const trends = process.env.RESEARCH_GOOGLE_TRENDS;
   afterEach(() => {
+    vi.unstubAllEnvs();
     if (trends === undefined) delete process.env.RESEARCH_GOOGLE_TRENDS;
     else process.env.RESEARCH_GOOGLE_TRENDS = trends;
   });
 
   it("drafts pending listings once and does not publish or change go-live", async () => {
     process.env.RESEARCH_GOOGLE_TRENDS = "false";
+    vi.stubEnv("ETSY_DEMAND_SOURCE", "fixture");
     const db = await memoryDb();
     const before = await getSetting(db, "automation");
     expect(before.publishMode).toBe("dry-run");

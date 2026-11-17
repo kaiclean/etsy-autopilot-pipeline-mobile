@@ -1,5 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { getDb, type DB } from "@/db";
 import { designs, events, keywords, listings, orders } from "@/db/schema";
 import { validateListing } from "@/lib/listing-validator";
@@ -28,12 +28,17 @@ describe("mock pipeline end to end (PGlite in-memory, dry-run adapters)", () => 
     db = await getDb();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("seeds labeled demo data", async () => {
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(listings).where(eq(listings.isDemo, true));
     expect(n).toBeGreaterThan(20);
   });
 
   it("research → design → listing produces new items awaiting approval", async () => {
+    vi.stubEnv("ETSY_DEMAND_SOURCE", "fixture");
     const pendingBefore = await count(db, listings, eq(listings.status, "pending_approval"));
 
     const r = await runStage("research", "manual", { db, random });

@@ -10,7 +10,7 @@ import { etsyApiCompetitionSource } from "./etsy-api";
 import { etsyInsightsSource, preferMeasuredDemand } from "./etsy-demand";
 import { googleTrendScore, KEYWORD_SOURCES, type KeywordCandidate } from "./sources";
 import { loadHotSignals, mergeHotKeywords } from "./hot-signals";
-import type { StageFn } from "./types";
+import { stageResult, type StageFn } from "./types";
 import { themeCandidates } from "@/lib/themes";
 import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
 
@@ -26,9 +26,11 @@ export const runResearch: StageFn = async (ctx) => {
     hotBoost.set(signal.phrase, Math.max(hotBoost.get(signal.phrase) ?? 0, signal.score * 0.15));
   }
   const candidates: KeywordCandidate[] = [];
+  let hasEtsyData = false;
   for (const source of [etsyInsightsSource, etsyApiCompetitionSource, ...KEYWORD_SOURCES]) {
     try {
       const found = await source.collect({ demo: ctx.demo });
+      if ((source === etsyInsightsSource || source === etsyApiCompetitionSource) && found.length > 0) hasEtsyData = true;
       const eligible = found.filter((candidate) => !keywordHasUndeliverablePromise(candidate.phrase));
       log(`Source ${source.name}: ${eligible.length} eligible of ${found.length} candidates`);
       candidates.push(...eligible);
@@ -259,5 +261,17 @@ export const runResearch: StageFn = async (ctx) => {
   } catch (e) {
     log(`Idea feed failed: ${(e as Error).message}`, "warn");
   }
-  return `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  const summary = `Scored ${upserted} keywords, selected ${top.length}, ${n} left in backlog${ideaNote}`;
+  if (!hasEtsyData) {
+    const reason = "Etsy demand data is missing: both Etsy sources returned no candidates. Reconnect Etsy and check the Etsy Insights export.";
+    log(reason, "error");
+    return stageResult(`${summary}. ${reason}`, "failed");
+  }
+  if (!top.length) {
+    const reason = designsPerRun === 0
+      ? "designs per run is 0"
+      : "no eligible new keywords matched the active niches and run mode";
+    return stageResult(`${summary}. No keywords selected: ${reason}.`, "warning");
+  }
+  return summary;
 };
