@@ -47,7 +47,7 @@ describe("auth gate (src/proxy.ts)", () => {
     const open = [
       "/login", "/offline", "/sw.js", "/manifest.webmanifest", "/icons/a.png",
       "/api/cron/daily", "/api/media/x", "/api/webhooks/printify", "/api/webhooks/etsy",
-      "/api/brain/decisions", "/api/brain/status", "/api/health/deep",
+      "/api/brain/decisions", "/api/brain/status", "/api/brain/ingest", "/api/health/deep",
     ];
     for (const path of open) {
       const res = await proxy(request(path));
