@@ -16,7 +16,7 @@ Etsy Autopilot is the back office for Kai's Etsy shop "Designed by Kai" (Switzer
 
 **Status and limits:** single-operator tool, no license file yet. Live Etsy writes stay off until armed under Connections, Go live. Several steps cannot be automated through Etsy's APIs and stay manual; see [What still needs a human](#what-still-needs-a-human).
 
-More: [architecture overview](docs/ARCHITECTURE.md) and [security policy](SECURITY.md).
+More: [architecture overview](docs/ARCHITECTURE.md), [decision records](docs/DECISIONS.md) and [security policy](SECURITY.md).
 
 ---
 
