@@ -13,6 +13,7 @@ const ITEMS = [
   { href: "/brain/timeline", label: "Timeline" },
   { href: "/brain/themes", label: "Themes" },
   { href: "/brain/sessions", label: "Sessions" },
+  { href: "/brain/setup", label: "Daily sync" },
   { href: "/brain/search", label: "Search" },
 ];
 const isActive = (p: string, h: string) => (h === "/brain" ? p === "/brain" : p.startsWith(h));

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { getLLMProvider, type LLMProvider } from "@/adapters/llm";
 import { getPrintifyAdapter } from "@/adapters/printify";
 import type { SupplierProduct } from "@/adapters/supplier/types";
-import { costs, designs, keywords, listings } from "@/db/schema";
+import { costs, designBriefs, designs, keywords, listings } from "@/db/schema";
 import type { Niche, ProductType } from "@/db/schema";
 import { alignDeliveryCopy, defaultDeliverable, leadPhrase, measuredDigitalDeliverable, removeUndeliverablePromises } from "@/lib/delivery";
 import { appendProviderDetails, validProviderDetails, withDisclosures, type ProviderDetails } from "@/lib/disclosures";
@@ -323,7 +323,7 @@ export const runListing: StageFn = async (ctx) => {
     .select({ design: designs, phrase: keywords.phrase })
     .from(designs)
     .leftJoin(keywords, eq(designs.keywordId, keywords.id))
-    .where(and(eq(designs.shopId, ctx.shopId), eq(designs.status, "generated"), ctx.demo ? undefined : eq(designs.isDemo, false)))
+    .where(and(eq(designs.shopId, ctx.shopId), eq(designs.status, "generated"), ctx.keywordId ? eq(designs.keywordId, ctx.keywordId) : undefined, ctx.demo ? undefined : eq(designs.isDemo, false)))
     .limit(10);
   if (pending.length === 0) return "No new designs waiting for listings.";
   const llm = getLLMProvider({ demo: ctx.demo });
@@ -357,9 +357,12 @@ export const runListing: StageFn = async (ctx) => {
     if (isPlaceholderUrl(artworkUrl)) {
       log(`Design #${design.id} is DEMO placeholder art and will be held off the queue`, "warn");
     }
+    const [approvedBrief] = design.keywordId ? await db.select().from(designBriefs).where(eq(designBriefs.keywordId, design.keywordId)).limit(1) : [];
     let listed = 0;
     const siblingTitles: string[] = [];
     for (const rung of quoteLadder(design.niche, podSettings.enabledPresets, quoted.costs, quoted.estimates)) {
+      if (approvedBrief?.brainOrigin && (rung.product.type !== approvedBrief.productType ||
+        (rung.product.type === "pod" && rung.product.pod !== approvedBrief.podPreset))) continue;
       if (rung.id === "digital-mid") {
         const target = PRINT_TARGETS.digitalLarge;
         const largeEnough = hasMinimumPixels(design.imageWidth, design.imageHeight, target);

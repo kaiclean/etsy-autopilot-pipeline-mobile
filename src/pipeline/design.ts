@@ -151,7 +151,7 @@ export const runDesign: StageFn = async (ctx) => {
   let queue = orderDesignQueue(await db
     .select()
     .from(keywords)
-    .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), liveOnly))
+    .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "selected"), ctx.keywordId ? eq(keywords.id, ctx.keywordId) : undefined, liveOnly))
     .orderBy(asc(keywords.designFailures), desc(keywords.score))
     .limit(200), queueDayStart, automation.designsPerRun);
   if (queue.length === 0) {
@@ -160,7 +160,7 @@ export const runDesign: StageFn = async (ctx) => {
     queue = await db
       .select()
       .from(keywords)
-      .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), liveOnly))
+      .where(and(eq(keywords.shopId, ctx.shopId), eq(keywords.status, "new"), ctx.keywordId ? eq(keywords.id, ctx.keywordId) : undefined, liveOnly))
       .orderBy(asc(keywords.designFailures), desc(keywords.score))
       .limit(automation.designsPerRun);
     if (queue.length) log("No selected keywords; falling back to top-scored backlog");

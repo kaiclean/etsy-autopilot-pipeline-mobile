@@ -16,6 +16,7 @@ export async function proxy(request: NextRequest) {
     // Bearer-token API (OMNIGRAM_API_TOKEN) checked inside the route.
     pathname === "/api/brain/decisions" ||
     pathname === "/api/brain/status" ||
+    pathname === "/api/brain/ingest" ||
     pathname === "/api/health/deep"
   ) {
     return NextResponse.next();

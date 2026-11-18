@@ -51,3 +51,7 @@ logs/
 tmp/
 scratch/
 .env.box
+
+!.env.brain.example
+.venv-brain/
+scripts/brain/__pycache__/

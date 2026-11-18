@@ -30,4 +30,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: python3 -m unittest discover -s scripts/brain -p 'test_*.py'
       - run: npm run etsy:contract:check

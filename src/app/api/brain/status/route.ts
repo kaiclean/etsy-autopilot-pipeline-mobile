@@ -8,6 +8,7 @@ import { readPublishMode, liveWritesEnabled } from "@/lib/read-publish-mode";
 import { getSetting } from "@/lib/settings";
 import { resolveActiveShop } from "@/lib/shops";
 import { getFirstSale } from "@/lib/brain/first-sale";
+import { ingestionStatus, ingestionHealth } from "@/lib/brain/ingestion";
 import { aiSpend } from "@/pipeline/design";
 
 // Non-secret operational state for Hermes and agents: publish mode, spend caps, funnel counts.
@@ -34,7 +35,9 @@ async function compute() {
     tally(db.select({ n: count() }).from(orders).where(eq(orders.isDemo, false))),
     tally(db.select({ n: count() }).from(designs).where(eq(designs.isDemo, false))),
   ]);
+  const ingestion = await ingestionStatus(db);
   return {
+    savedReels: { ...ingestion, health: ingestionHealth(ingestion) },
     publishMode: config.publishMode,
     counts: { listings: nListings, drafts: nDrafts, orders: nOrders, designs: nDesigns },
     publish: { dashboardMode, hostMode: config.publishMode, liveWritesEnabled: writes },

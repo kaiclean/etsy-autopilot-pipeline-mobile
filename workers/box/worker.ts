@@ -35,7 +35,7 @@ export async function executeBoxJob(db: DB, job: BoxJob): Promise<"succeeded" | 
   }, 60_000);
   try {
     const { runStage, runFullPipeline } = await import("@/pipeline/runner");
-    const opts = { db, force: job.force, signal: abort.signal, shopId: job.shopId };
+    const opts = { db, force: job.force, signal: abort.signal, shopId: job.shopId, keywordId: job.keywordId ?? undefined };
     if (job.trigger === "cron" && !job.force && ["research", "design", "listing", "daily"].includes(job.stage)) {
       const { stageSucceededToday } = await import("@/pipeline/chain-day");
       if (job.stage !== "all" && await stageSucceededToday(db, job.shopId, job.stage, new Date())) {

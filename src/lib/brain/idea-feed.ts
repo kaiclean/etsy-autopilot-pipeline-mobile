@@ -3,7 +3,9 @@ import type { DB } from "@/db";
 import { hotSignals, ideaCandidates, keywords, themes, type Theme } from "@/db/schema";
 import { PIPELINE_PRODUCTS, ensureThemeSeeds, listThemes, slugify, themeRunnable } from "@/lib/themes";
 import { keywordHasUndeliverablePromise } from "@/lib/delivery";
-import { getVault } from "./vault";
+import { defaultDirection, makeProductOrigin, reelSources } from "./product-origin";
+import { getVault, type Vault } from "./vault";
+import { getLiveVault } from "./live-vault";
 import { mapIdea } from "./mapper";
 
 const MONTH = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -47,9 +49,9 @@ async function trending(db: DB, themesList: Theme[], now: Date): Promise<Draft[]
 }
 
 /** Vault ideas that are artwork products but match no theme become proposed themes for Kai. */
-async function proposedThemes(db: DB, themesList: Theme[]) {
+async function proposedThemes(db: DB, themesList: Theme[], vault: Vault) {
   let added = 0;
-  for (const n of getVault().notes.filter((x) => x.kind === "idea")) {
+  for (const n of vault.notes.filter((x) => x.kind === "idea")) {
     const m = mapIdea(n, themesList);
     if (m.kind !== "product" || m.theme || !m.product || !PIPELINE_PRODUCTS.includes(m.product) || !m.phrase) continue;
     const id = slugify(`idea-${n.title}`);
@@ -62,15 +64,31 @@ async function proposedThemes(db: DB, themesList: Theme[]) {
   return added;
 }
 
+/** Linked reel ideas enter the same approval queue; raw operational reels never become products automatically. */
+export function reelIdeaDrafts(themesList: Theme[], vault = getVault()): Draft[] {
+  return vault.notes.filter(n => n.kind === "idea").flatMap(note => {
+    const mapping = mapIdea(note, themesList);
+    const sources = reelSources(note, vault);
+    if (!mapping.pipelineReady || !mapping.theme || !mapping.product || !mapping.phrase || !sources.reels.length || sources.missing.length) return [];
+    try {
+      const origin = makeProductOrigin(note, vault, mapping.product, defaultDirection(note));
+      return [{ key: `reel-idea:${note.id}`, title: note.title, phrase: mapping.phrase, themeId: mapping.theme.id,
+        niche: mapping.theme.niche, product: mapping.product, brainOrigin: origin,
+        rationale: `Inspired by ${sources.reels.length} saved reel(s). Confirm an original direction; the source is not a licence to copy.`, source: `reel-idea:${note.id}` }];
+    } catch { return []; }
+  });
+}
+
 /**
  * The daily idea step. Rule-based: no AI calls, no image spend. Adds at most
  * DAILY_CANDIDATE_LIMIT pending candidates (skipping phrases that are already keywords or candidates)
  * and proposes themes for unmatched artwork ideas. Nothing reaches the pipeline until Kai approves.
  */
-export async function generateIdeaCandidates(db: DB, now = new Date()) {
+export async function generateIdeaCandidates(db: DB, now = new Date(), vault?: Vault) {
+  vault ??= await getLiveVault(db);
   await ensureThemeSeeds(db);
   const themesList = await listThemes(db);
-  const drafts = [...seasonal(themesList, now), ...(await trending(db, themesList, now))]
+  const drafts = [...reelIdeaDrafts(themesList, vault), ...seasonal(themesList, now), ...(await trending(db, themesList, now))]
     .map((d) => ({ ...d, phrase: d.phrase.trim().toLowerCase() }))
     .filter((d) => d.phrase.split(" ").length >= 2 && !keywordHasUndeliverablePromise(d.phrase));
   const phrases = [...new Set(drafts.map((d) => d.phrase))];
@@ -85,7 +103,7 @@ export async function generateIdeaCandidates(db: DB, now = new Date()) {
     const res = await db.insert(ideaCandidates).values(d).onConflictDoNothing({ target: ideaCandidates.key }).returning({ id: ideaCandidates.id });
     if (res.length) { added++; pendingPhrases.add(d.phrase); }
   }
-  added += await proposedThemes(db, themesList);
+  added += await proposedThemes(db, themesList, vault);
   return added;
 }
 

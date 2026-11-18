@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
   // The web process is forbidden from running ORT. Keep native model binaries on the Mac only.
   ...(boxDashboard ? { outputFileTracingExcludes: { "/*": ["./node_modules/onnxruntime-node/**"] } } : {}),
   outputFileTracingIncludes: {
-    "/**": ["./drizzle/**"],
+    "/**": ["./drizzle/**", "./data/omnibrain/vault/**"],
     "/catalog-draft": ["./docs/omnishop-catalog-diff-2026-10-05.md"],
   },
   async headers() {
