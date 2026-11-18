@@ -2,32 +2,10 @@ import type { ProviderCreditSignal } from "./provider-errors";
 import { upscalerState } from "@/lib/upscaler-status";
 import type { PublishMode } from "./publish-mode";
 import { isPodPreset, type PodPreset } from "./fees";
+import { parsePrintifyPresets, positiveId, type PrintifyPin } from "./config-printify";
 
-export type PrintifyPin = { blueprintId: number; printProviderId: number; variantIds: number[] };
-
-function positiveId(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-
-/** Invalid pins must never silently fall back to a different physical product. */
-export function parsePrintifyPresets(raw: string | undefined): Partial<Record<PodPreset, PrintifyPin>> {
-  if (!raw) return {};
-  let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { throw new Error("PRINTIFY_PRESETS_JSON must be a JSON object of preset pins"); }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("PRINTIFY_PRESETS_JSON must be a JSON object of preset pins");
-  const out: Partial<Record<PodPreset, PrintifyPin>> = {};
-  for (const [preset, value] of Object.entries(parsed)) {
-    if (!isPodPreset(preset)) throw new Error("PRINTIFY_PRESETS_JSON has an unknown preset key");
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid Printify pin for ${preset}`);
-    const pin = value as Record<string, unknown>;
-    if (Object.keys(pin).some((key) => !["blueprintId", "printProviderId", "variantIds"].includes(key))
-      || !positiveId(pin.blueprintId) || !positiveId(pin.printProviderId)
-      || !Array.isArray(pin.variantIds) || !pin.variantIds.length || !pin.variantIds.every(positiveId)
-      || new Set(pin.variantIds).size !== pin.variantIds.length) throw new Error(`Invalid Printify pin for ${preset}: positive blueprintId, printProviderId and unique variantIds required`);
-    out[preset] = { blueprintId: pin.blueprintId, printProviderId: pin.printProviderId, variantIds: [...pin.variantIds] };
-  }
-  return out;
-}
+// Printify pin parsing lives in config-printify; re-exported so imports stay stable.
+export { parsePrintifyPresets, type PrintifyPin } from "./config-printify";
 
 const env = (k: string) => {
   const v = process.env[k];
