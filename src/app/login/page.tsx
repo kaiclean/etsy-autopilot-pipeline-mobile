@@ -13,7 +13,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[420px] w-[620px] -translate-x-1/2 rounded-full bg-primary/15 blur-[120px]" />
       <div className="relative w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- fixed 192px app icon from the /icons route */}
           <img src="/icons/192" alt="" className="size-14 rounded-2xl shadow-lg shadow-primary/20" />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Etsy Autopilot</h1>

@@ -15,7 +15,7 @@ export default function Graph3DInner({ graph, width, height, focusId, neighbors,
   graph: { nodes: N[]; links: L[] }; width: number; height: number; focusId: string | null;
   neighbors: Map<string, Set<string>>; onSelect: (n: N | null) => void; flyTo: string | null;
 }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ref to the imperative handle of a dynamically loaded force-graph component
   const fg = useRef<any>(null);
   const spin = useRef(true);
   const bloomAdded = useRef(false); const dist = useRef(560);

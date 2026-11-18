@@ -54,7 +54,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
   const fullDesc = expandedId != null && expandedId === top?.id;
   const setFullDesc = (fn: (v: boolean) => boolean) => setExpandedId(fn(fullDesc) ? top?.id ?? null : null);
   const setFocusedId = (id: number | null) => setFocus(id == null ? null : { id, index: ids.indexOf(id) });
-  useEffect(() => { if (top) document.getElementById(`q-row-${top.id}`)?.scrollIntoView({ block: "nearest" }); }, [top?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (top) document.getElementById(`q-row-${top.id}`)?.scrollIntoView({ block: "nearest" }); }, [top?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- keyed on the card id so a refreshed row object does not re-scroll
   const selectedVisible = visible.filter((l) => selected.has(l.id));
   const issueMap = useMemo(() => new Map(listings.map((l) => [l.id, currentIssues(l)])), [listings]);
   const issuesOf = useCallback((l: Listing) => issueMap.get(l.id) ?? l.validation, [issueMap]);
@@ -174,7 +174,7 @@ export function QueueStack({ listings, offsiteAds, initialTriage = "all" }: { li
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [top, ids, visible, editing, showHelp, decide, bulk, toggleSelected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [top, ids, visible, editing, showHelp, decide, bulk, toggleSelected]); // eslint-disable-line react-hooks/exhaustive-deps -- hasErrors and setFocusedId are recreated every render; listing them would rebind the key listener each time
 
   if (remaining.length === 0) {
     return (

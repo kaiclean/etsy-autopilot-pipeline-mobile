@@ -59,5 +59,11 @@ Short records of the architecture decisions that shape this repository. Each one
 ## 10. Large modules are split behind facades
 
 - **Context:** Several core modules grew past 500 lines.
-- **Decision:** `config.ts`, `health.ts`, `listing-validator.ts` and `queries.ts` keep their public exports and delegate parts to sibling modules (`config-printify`, `health-providers`, `listing-rules`, `listing-repair`, `queries-runs`, `queries-settings`), so existing imports are unchanged. `src/db/schema.ts` is intentionally not split: `drizzle.config.ts` lists schema files explicitly and the tables reference each other.
-- **Consequences:** Behaviour is unchanged; new code should extend the sibling modules rather than regrow the facades.
+- **Decision:** `config.ts`, `health.ts`, `listing-validator.ts`, `queries.ts` and `db/schema.ts` keep their public exports and delegate parts to sibling modules (`config-printify`, `health-providers`, `listing-rules`, `listing-repair`, `queries-runs`, `queries-settings`, `schema-core`, `schema-ops`, `schema-brain`), so existing imports are unchanged. `drizzle.config.ts` still lists `src/db/schema.ts`, which re-exports the three schema files.
+- **Consequences:** `drizzle-kit generate` yields the same schema snapshot as before the split. New code should extend the sibling modules rather than regrow the facades.
+
+## 11. Layer boundaries are enforced by lint
+
+- **Context:** Adapters, pipeline stages and UI are meant to depend in one direction.
+- **Decision:** `eslint.config.mjs` uses `no-restricted-imports`: adapters may not import `@/app`, `@/components` or `@/pipeline`; pipeline and db code may not import `@/app` or `@/components`; library code may not import `@/app`; `schema-core` is the base layer of the schema files and `schema-ops` may depend only on it.
+- **Consequences:** `npm run lint` fails on a violating import (CI job `checks`). Suppressions in the code carry a reason after `--`.
