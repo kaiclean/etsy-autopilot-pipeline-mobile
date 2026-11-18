@@ -1,4 +1,4 @@
-# Daily saved-Reel analysis on the Mac
+# Twice-daily saved-Reel analysis
 
 The Brain dashboard originally displayed a bundled copy of an external vault. Its old documentation referred to `/workspace/omnigram/process.py` and an automatic Git push, but that analyser and its scheduler were not in this repository. The historical snapshot contains 114 items: 23 summarised, 84 transcribed, six without video and one metadata-only. Its latest `date_processed` is October 19, 2026. These dates establish when the snapshot last changed; they do not establish the cause or status of the old machine.
 
@@ -8,17 +8,47 @@ New notes persist in the application's `brain_vault_notes` table and overlay the
 
 ## Host setup
 
-Deploy this release, including migration `0035_brain_live_vault`, with a permanent shared Postgres database. Set a random, dedicated `BRAIN_SYNC_TOKEN` (32+ random bytes) in the host's **runtime** environment and set `APP_URL` to the final HTTPS origin. Keep this token separate from dashboard, Etsy and cron credentials. The token authorises reading the known-Reel index and importing notes; it cannot publish listings.
+Deploy to Railway service **etsy-autopilot**, environment **production**, backed by Neon project **cold-shape-50670040**. In the Railway service's runtime Variables set:
+
+- `APP_URL=https://etsy-autopilot-production-8b9f.up.railway.app`
+- `BRAIN_SYNC_TOKEN`: a random, dedicated secret (32+ random bytes), set by Kai. Keep it separate from dashboard, Etsy and cron credentials. It authorises reading the known-Reel index and importing notes; it cannot publish listings.
+
+Migrations `0034_brain_product_origins` and `0035_brain_live_vault` were applied manually in production. Startup reports journal entries missing from `drizzle.__drizzle_migrations`; this can include manually applied SQL and is not proof the schema is missing. Verify the schema and migration ledger before reconciling any entries. Drizzle only runs journal entries newer than the latest recorded `created_at`; a new migration's `when` must exceed both the existing journal timestamps and production's `1793410867943` high-water mark.
 
 `GET /api/brain/ingest` and `POST /api/brain/ingest` require that bearer token. POST accepts up to eight bounded notes per request plus a strictly validated run checkpoint. A successful final checkpoint also generates pending product candidates using the existing mapping rules; software stays in the ideas backlog. A job with failed items cannot report success.
 
-Sign in and open `/brain/setup`. The private worker-configuration download is session-protected, non-cacheable, and includes the sync token. Do not share or commit it. Changing `BRAIN_SYNC_TOKEN` invalidates old downloads; download a new copy on the Mac after rotation.
+Sign in and open `/brain/setup`. The private worker configuration is session-protected, non-cacheable and includes the sync token. Do not share or commit it. After token rotation, download a fresh copy. The worker uses `APP_URL` as its ingest origin; older files with only `BRAIN_BASE_URL` still work if they point to the correct host.
 
-**Existing phone demo:** its claimable Neon database expires November 13, 2026 at 23:20 UTC unless replaced or claimed. A successful code deployment does not extend that database. Claiming rotates the database URL; update `DATABASE_URL` through a private secret setting and redeploy before relying on the daily service. Never paste database credentials or Instagram sessions into chat. Do not use an expiring demo database for unattended production.
+Legacy artwork approvals with no linked keyword can be sent from `/brain/ideas` with **Send to pipeline**. Review the search phrase, select the theme and explicitly confirm. Nothing is requeued automatically and this does not change automation or publish settings.
 
-## Install locally
+## Linux (production worker)
 
-Use the repository branch/release containing this file, Python 3.11+, FFmpeg, and Ollama. The service runs as your logged-in macOS user. No sudo or cloud worker subscription is needed.
+On the always-on box, install Python 3.11+ with `venv`, timezone data, FFmpeg (`ffmpeg` and `ffprobe`) and Ollama. Run the worker as the same unprivileged user who owns the session and checkout.
+
+```bash
+python3 -m venv .venv-brain
+.venv-brain/bin/python -m pip install -r scripts/brain/requirements.txt
+# Start the local Ollama service on 127.0.0.1:11434 first.
+ollama pull gemma3:4b
+```
+
+Set `OLLAMA_MODEL` to an installed vision model (default `gemma3:4b`; a smaller local vision model is fine). Remote Ollama hosts or models are refused. Audio uses faster-whisper on CPU with `int8`; `WHISPER_MODEL=base` is the default, or use `small`. The first speech transcription may download the model.
+
+Download `.env.brain` to the box, set `INSTAGRAM_USERNAME`, and follow the session and verification steps below. Then install the schedule:
+
+```bash
+bash deploy/brain/install-linux.sh "$PWD/.env.brain"
+```
+
+The installer preflights the worker and prefers a persistent systemd user timer. For that timer to keep running after logout and start at boot, enable lingering for the service user (`loginctl enable-linger USER`, with administrator approval if required). If systemd user services are unavailable, the installer tries cron, then a `nohup` scheduler with a pidfile. Keep the Brain cron block last so its `CRON_TZ=Europe/Zurich` does not apply to other jobs. The worker's cron trigger uses Zurich time even on cron implementations that ignore `CRON_TZ`. The `nohup` fallback does not survive a host or container restart; rerun the installer after restart.
+
+The default schedule is **07:20 and 19:20 Europe/Zurich**, with hourly catch-up. Change `BRAIN_RUN_TIMES` and reinstall to adjust the schedule. Logs are under `$BRAIN_DATA_DIR/logs` (default `.data/brain-worker/logs`). To remove the schedule without deleting sessions, logs or checkpoints:
+
+```bash
+bash deploy/brain/uninstall-linux.sh
+```
+
+## macOS (optional)
 
 ```bash
 brew install python@3.12 ffmpeg ollama
@@ -28,21 +58,27 @@ python3.12 -m venv .venv-brain
 .venv-brain/bin/python -m pip install -r scripts/brain/requirements.txt
 ```
 
-The selected model must be installed locally and support images. Cloud/forwarding model names, remote Ollama hosts and model metadata declaring a remote host are refused. Model downloads use bandwidth and disk space; processing uses the Mac's RAM and electricity. The first speech transcription downloads the Whisper model. `WHISPER_MODEL=base` is the default; no cloud transcription fallback exists.
+The LaunchAgent has two calendar entries, configurable via `BRAIN_RUN_TIMES`, plus a login and hourly tick. LaunchAgent calendar entries use the Mac's timezone; set the Mac to Europe/Zurich to match exact slot start times. Matching and catch-up in the worker always use Zurich time.
 
-Download the configuration **on the Mac** from `/brain/setup`, save it at the repository root as `.env.brain`, and protect it before running any worker command:
+After session setup and verification, run `bash deploy/brain/install-macos.sh "$PWD/.env.brain"`. The plist contains paths, not tokens. The Mac must be powered, connected and logged in; `caffeinate` only prevents idle sleep during a run. Inspect `launchctl print "gui/$(id -u)/com.kaiclean.omnibrain-daily"` and the two log files in `$HOME/Library/Logs/OmniBrain`. Remove the agent with `bash deploy/brain/uninstall-macos.sh`.
+
+## Set up the private Instagram session
+
+Save the configuration from `/brain/setup` as `.env.brain` at the repository root and protect it:
 
 ```bash
 chmod 600 .env.brain
 ```
 
-Set `INSTAGRAM_USERNAME` inside that local file. Do not put a password there. Sign in interactively on the Mac once:
+Set `INSTAGRAM_USERNAME` in the file; do not put a password there. Sign in interactively once:
 
 ```bash
 .venv-brain/bin/instaloader --login YOUR_INSTAGRAM_USERNAME --login-only
 ```
 
-Instaloader keeps its authenticated session in its standard local session file. Optional `INSTAGRAM_SESSION_FILE` selects an existing private session file; never use a session file supplied by somebody else. Challenges, two-factor login and reauthentication must be handled locally. An expired/challenged session produces a visible failure, not a falsely successful empty import. Instagram's unofficial saved-feed access can change or be rate limited; the worker does not bypass those restrictions or retry aggressively.
+Alternatively set `INSTAGRAM_COOKIES_FROM=chrome` or `chrome:/absolute/path/to/Chrome/profile` to import from a locally signed-in Chrome profile the worker user can access and decrypt. This runs only if the Instaloader session file is missing. The worker checks it belongs to `INSTAGRAM_USERNAME` before saving it with mode `0600`; it never logs cookie values. A headless host without access to the browser's keyring should use Instaloader's interactive setup instead.
+
+`INSTAGRAM_SESSION_FILE` overrides the standard Instaloader session path. If you use it, also pass `--sessionfile /absolute/path/to/session` to the interactive login command. Don't use a session file supplied by someone else. If login expires or is challenged, the worker reports `instagram_session`; reauthenticate locally, or remove the stale session file to explicitly reimport from Chrome. Instagram's unofficial saved-feed access can change or be rate limited; the worker does not bypass those restrictions or retry aggressively.
 
 ## Verify before scheduling
 
@@ -51,33 +87,15 @@ Instaloader keeps its authenticated session in its standard local session file. 
 .venv-brain/bin/python scripts/brain/daily.py --env-file .env.brain --force
 ```
 
-`--check` validates the host token, installed tools, local vision model and current Instagram session. It does not claim that a model download or real analysis has completed. The second command performs a real bounded batch. Verify a fresh source-linked Reel note and its ideas at `/brain/reels` and `/brain/ideas` before calling the integration live.
+`--check` verifies authenticated reachability at `APP_URL`, FFmpeg, the transcription package, the local Ollama vision model and the Instagram session. It does not claim that a model download or real analysis has completed. The second command performs a real bounded batch. Verify a fresh source-linked Reel note and its ideas at `/brain/reels` and `/brain/ideas` before calling the integration live.
 
 The worker checks the latest 200 saved posts by default. Videos already summarised in the shared vault are skipped. Previously transcribed items can be completed when encountered. Up to 12 unsummarised videos are attempted per batch; failed items retry on a future pass. Raising `BRAIN_SCAN_LIMIT` (up to 5000) allows a historical backfill; raising `BRAIN_MAX_REELS` (up to 100) increases bounded batch work. The run reports deferred items and reaching the scan bound rather than claiming it inspected the entire saved library. Removed/non-video saves do not become fabricated analyses.
 
-## Install the daily schedule
+## Catch-up and monitoring
 
-```bash
-bash deploy/brain/install-macos.sh "$PWD/.env.brain"
-```
+An hourly check covers the latest due slot if it was missed or failed. Once that slot succeeds, extra triggers skip before accessing the network. After a longer outage the next check scans the feed once, not once for each elapsed slot. `--force` permits another manual batch. A filesystem lock prevents overlapping local runs. Upload failures retain completed analysis in a durable outbox. Keep `.data/brain-worker` (or `BRAIN_DATA_DIR`) when upgrading. Sampled frames, transcripts and analyses are retained privately under `evidence/<shortcode>`; full videos are temporary. Do not run the legacy analyser alongside this worker.
 
-This runs the preflight, then installs `com.kaiclean.omnibrain-daily` with a `StartCalendarInterval`, default **07:20 in the Mac's timezone**. `BRAIN_DAILY_HOUR` and `BRAIN_DAILY_MINUTE` customise it. Re-run the installer after changing the time, Python environment or checkout location. The plist contains file paths, not tokens.
-
-The agent also checks at login and hourly for interrupted/failed/missed work. The local successful-day checkpoint makes these extra triggers exit before accessing Instagram or the dashboard after one successful daily check. `--force` permits another manual batch. A filesystem lock prevents overlapping local runs. Uploads that fail retain completed analysis in a durable outbox, then retry without re-running the model. Keep `.data/brain-worker` (or the explicit `BRAIN_DATA_DIR`) when upgrading. Four sampled frames, transcript and structured analysis are retained privately under `evidence/<shortcode>` for review; full downloaded videos are temporary and are removed after the item is processed. Do not run the legacy analyser in parallel against the same account until its scheduler has been located and stopped.
-
-Keep the Mac powered, connected and logged in. `caffeinate -i` prevents idle sleep during a run; it cannot turn on a powered-off Mac or keep a closed laptop lid awake. A Mac that is offline cannot fetch saves or analyse them; the dashboard will show the missed run.
-
-```bash
-launchctl print "gui/$(id -u)/com.kaiclean.omnibrain-daily"
-tail -n 80 "$HOME/Library/Logs/OmniBrain/daily.log"
-tail -n 80 "$HOME/Library/Logs/OmniBrain/daily.error.log"
-```
-
-`/brain` and `/brain/reels` show not-connected, running, failed, stalled (>3h) or overdue (>36h), counters and last successful check. This is actual worker telemetry; the UI never claims a scheduler is installed merely because the code exists. `/api/brain/status` includes this telemetry for the existing authenticated operational API. Failure logs contain stage codes, not session cookies, model response bodies or service credentials. Retain a bounded local log history.
-
-```bash
-bash deploy/brain/uninstall-macos.sh
-```
+`/brain` and `/brain/reels` show worker telemetry: not connected, running, failed, stalled (>3h) or overdue (>14h since success), with counters and the latest successful check. The authenticated `/api/brain/status` includes this telemetry. Failure logs contain stage codes, not session cookies, model response bodies or service credentials. Retain a bounded local log history.
 
 Uninstall preserves sessions, outbox, notes, checkpoints and logs. The original `sync-vault.sh` remains available for historical manual file imports; the new daily worker never resets a Git checkout or pushes to `main`.
 

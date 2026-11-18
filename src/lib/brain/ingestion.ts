@@ -8,11 +8,11 @@ export const MAX_INGEST_BYTES = 1_000_000;
 export type IngestRun = {
   id: string; status: "running" | "succeeded" | "failed"; startedAt: string; finishedAt?: string;
   scanned: number; analysed: number; skipped: number; failed: number; pending: number;
-  error?: "instagram_login" | "instagram_fetch" | "media" | "transcription" | "analysis" | "sync" | "configuration" | "partial_failure";
+  error?: "instagram_login" | "instagram_session" | "instagram_fetch" | "media" | "transcription" | "analysis" | "sync" | "configuration" | "partial_failure";
 };
 export type IngestStatus = { lastRun: IngestRun | null; lastSuccessAt: string | null };
 export type NoteImport = { id: string; markdown: string };
-const ERRORS = ["instagram_login", "instagram_fetch", "media", "transcription", "analysis", "sync", "configuration", "partial_failure"];
+const ERRORS = ["instagram_login", "instagram_session", "instagram_fetch", "media", "transcription", "analysis", "sync", "configuration", "partial_failure"];
 
 export function validateIngest(input: unknown): { run: IngestRun; notes: NoteImport[] } {
   if (!input || typeof input !== "object") throw new Error("Expected an import object");
@@ -69,7 +69,7 @@ export function ingestionHealth(status: IngestStatus, now = new Date()) {
   const age = now.getTime() - Date.parse(run.finishedAt ?? run.startedAt);
   if (run.status === "running") return age > 3 * 3600_000 ? "stalled" : "running";
   if (run.status === "failed") return "failed";
-  return age > 36 * 3600_000 ? "overdue" : "healthy";
+  return age > 14 * 3600_000 ? "overdue" : "healthy";
 }
 
 /** One SQL statement per note is safe to retry; checkpoints follow the durable note writes. */

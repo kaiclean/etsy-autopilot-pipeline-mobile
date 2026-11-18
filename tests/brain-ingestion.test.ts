@@ -37,6 +37,7 @@ describe("daily worker → live Brain", () => {
     expect(() => validateIngest({ run, notes: [{ ...notes[0], id: "Reels/../secret" }] })).toThrow();
     expect(() => validateIngest({ run: { ...run, status: "succeeded", finishedAt: run.startedAt, failed: 1 }, notes })).toThrow();
     expect(() => validateIngest({ run, notes: [{ ...notes[0], markdown: notes[0].markdown.replace("instagram.com", "example.com") }] })).toThrow();
+    expect(validateIngest({ run: { ...run, status: "failed", finishedAt: run.startedAt, error: "instagram_session" } }).run.error).toBe("instagram_session");
     expect(() => validateSources([notes[1]], mergeVault(getVault(), []))).toThrow(/missing/);
     expect(() => validateSources(notes, getVault())).not.toThrow();
   });
@@ -74,7 +75,9 @@ describe("daily worker → live Brain", () => {
     await recordIngestRun(db, { ...run, status: "succeeded", finishedAt: "2026-11-11T07:25:00.000Z" });
     await recordIngestRun(db, run); // delayed in-progress delivery cannot erase completion
     expect((await ingestionStatus(db)).lastRun?.status).toBe("succeeded");
-    expect(ingestionHealth(await ingestionStatus(db), new Date("2026-11-13T07:20:00Z"))).toBe("overdue");
+    const status = await ingestionStatus(db);
+    expect(ingestionHealth(status, new Date("2026-11-11T21:25:00.000Z"))).toBe("healthy");
+    expect(ingestionHealth(status, new Date("2026-11-11T21:25:00.001Z"))).toBe("overdue");
     await recordIngestRun(db, { ...run, id: "tomorrow", startedAt: "2026-11-12T07:20:00.000Z", status: "failed", finishedAt: "2026-11-12T07:21:00.000Z", error: "instagram_login" });
     expect((await ingestionStatus(db)).lastSuccessAt).toBe("2026-11-11T07:25:00.000Z");
     expect(ingestionHealth(await ingestionStatus(db))).toBe("failed");

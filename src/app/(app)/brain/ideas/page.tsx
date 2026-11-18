@@ -2,14 +2,14 @@ import { getLiveVault } from "@/lib/brain/live-vault";
 import Link from "next/link";
 import { BrainPage as Shell, Empty } from "@/components/brain/shell";
 import { noteHref, sectionOf, type Note, type Vault } from "@/lib/brain/vault";
-import { latestByIdea, keywordStatuses, type Decision } from "@/lib/brain/decisions";
+import { isBacklogApproval, latestByIdea, keywordStatuses, type Decision } from "@/lib/brain/decisions";
 import { mapIdea, type Mapping } from "@/lib/brain/mapper";
 import { pendingCandidates } from "@/lib/brain/idea-feed";
 import { listThemes, PRODUCT_LABEL } from "@/lib/themes";
 import { getDb } from "@/db";
 import type { IdeaCandidate, Theme } from "@/db/schema";
 import { PipelineFields } from "@/components/brain/product-fields";
-import { defaultDirection } from "@/lib/brain/product-origin";
+import { defaultDirection, isArtProduct } from "@/lib/brain/product-origin";
 import { decideIdea, decideCandidateAction, refreshReelIdeas } from "./actions";
 import { renderMarkdown } from "@/lib/brain/markdown";
 export const dynamic = "force-dynamic";
@@ -31,9 +31,10 @@ function MapLine({ m }: { m: Mapping }) {
   );
 }
 
-function IdeaCard({ i, d, actions, compact, m, themes, kwStatus, vault }: { i: Note; d?: Decision; actions: boolean; compact?: boolean; m: Mapping; themes: Theme[]; kwStatus?: string; vault: Vault }) {
+function IdeaCard({ i, d, actions, reoffer, compact, m, themes, kwStatus, vault }: { i: Note; d?: Decision; actions: boolean; reoffer?: boolean; compact?: boolean; m: Mapping; themes: Theme[]; kwStatus?: string; vault: Vault }) {
   const src = Array.isArray(i.data.source_reels) ? (i.data.source_reels as string[]) : [];
-  const artwork = m.kind === "product" && m.product && ["wall-art", "poster", "pod-apparel", "pod-mug"].includes(m.product);
+  const artwork = m.kind === "product" && isArtProduct(m.product);
+  const backlog = reoffer && d && isBacklogApproval(d) && artwork ? d : undefined;
   return (
     <div className="card idea" id={actions ? i.id : undefined}>
       <div className="row between" style={{ alignItems: "flex-start" }}>
@@ -60,6 +61,14 @@ function IdeaCard({ i, d, actions, compact, m, themes, kwStatus, vault }: { i: N
             <button className="b-res" name="verdict" value="needs_research">? Research</button>
             <button className="b-bad" name="verdict" value="rejected">✕ Reject</button>
           </div>
+        </form>
+      )}
+      {backlog && (
+        <form action={decideIdea} className="decide">
+          <input type="hidden" name="idea" value={i.id} />
+          <input type="hidden" name="backlogDecisionId" value={backlog.id} />
+          <PipelineFields themes={themes} themeId={m.theme?.id} phrase={backlog.phrase ?? m.phrase ?? ""} product={m.product ?? "wall-art"} direction={defaultDirection(i)} legend="Send this backlog approval to the design pipeline" />
+          <button className="b-ok" name="verdict" value="approved">Send to pipeline</button>
         </form>
       )}
     </div>
@@ -95,7 +104,8 @@ const MSG: Record<string, [string, string]> = {
   pipeline: ["ok", "✓ Approved. Keyword and design brief created; the next design run picks it up."],
   existing: ["ok", "✓ Approved. That phrase was already a keyword, so it was linked instead of duplicated."],
   dismissed: ["ok", "✓ Candidate dismissed."],
-  confirm: ["", "Tick the confirm box to send a candidate to the pipeline. Nothing was saved."],
+  confirm: ["", "Tick the confirm box to send this idea to the pipeline. Nothing was saved."],
+  stale: ["", "This backlog approval has already been sent or superseded. No changes were made."],
   phrase: ["", "That buyer phrase needs 2+ words, 4–80 characters. Nothing was saved."],
   theme: ["", "That theme is not active. Activate it under Themes first. Nothing was saved."],
   niche: ["", "That theme is paused or unknown. Nothing was saved."],
@@ -129,7 +139,7 @@ export default async function Ideas({ searchParams }: { searchParams: Promise<{ 
       {candidates.length ? <div className="grid">{candidates.map((c) => <CandidateCard key={c.id} c={c} themes={themes} />)}</div>
         : <Empty icon="✦" title="No candidates waiting">The idea step runs with research each day.</Empty>}
       <div className="page-head" style={{ marginTop: 40 }}><div><h2>Approved</h2><p>{approved.filter((i) => dec.get(i.id)?.keywordId).length} in the pipeline · {approved.filter((i) => !dec.get(i.id)?.keywordId).length} in the backlog</p></div></div>
-      {approved.length ? <div className="grid">{approved.map((i) => { const d = dec.get(i.id)!; return <IdeaCard vault={vault} key={i.id} i={i} d={d} actions={false} compact m={maps.get(i.id)!} themes={themes} kwStatus={d.keywordId ? kw.get(d.keywordId) : undefined} />; })}</div>
+      {approved.length ? <div className="grid">{approved.map((i) => { const d = dec.get(i.id)!; return <IdeaCard vault={vault} key={i.id} i={i} d={d} actions={false} reoffer compact m={maps.get(i.id)!} themes={themes} kwStatus={d.keywordId ? kw.get(d.keywordId) : undefined} />; })}</div>
         : <Empty icon="✦" title="Nothing approved yet" />}
       <div className="page-head" style={{ marginTop: 40 }}><div><h2>Ideas board</h2><p>By pipeline status from the vault frontmatter.</p></div></div>
       <div className="kanban">

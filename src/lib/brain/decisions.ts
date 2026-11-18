@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import type { DB } from "@/db";
+import { withDbTransaction } from "@/db/transaction";
 import { cleanPhrase } from "./fit";
 import { boxExecutionEnabled, enqueueBoxJob } from "@/lib/box-jobs";
 import { listThemes, themeRunnable } from "@/lib/themes";
@@ -27,7 +28,7 @@ function toDecision(r: BrainDecision): Decision {
 
 export async function listDecisions(since?: Date): Promise<Decision[]> {
   const db = await getDb();
-  const rows = await db.select().from(brainDecisions).orderBy(desc(brainDecisions.createdAt)).limit(1000);
+  const rows = await db.select().from(brainDecisions).orderBy(desc(brainDecisions.createdAt), desc(brainDecisions.id)).limit(1000);
   return rows.filter((r) => !since || r.createdAt > since).map(toDecision);
 }
 
@@ -43,12 +44,19 @@ export type DecideInput = {
   ideaId: string; verdict: Verdict; comment: string | null; priority: number | null;
   /** Present only when Kai confirmed a phrase for a pipeline-ready idea. */
   pipeline?: PipelineRequest | null;
+  backlogDecisionId?: number;
 };
+
+export function isBacklogApproval(decision?: Pick<BrainDecision, "verdict" | "keywordId">) {
+  return decision?.verdict === "approved" && decision.keywordId === null;
+}
+
+export class StaleBacklogApproval extends Error {}
 
 /**
  * Creates (or reuses) a `selected` keyword and its design brief, so the next design run picks it up.
  * Never publishes: the listing still lands in the approval queue behind the quality gate.
- * neon-http has no interactive transactions; each step is idempotent (unique phrase, one brief per keyword).
+ * A caller may supply its transaction so the handoff and decision commit together.
  */
 export async function sendToPipeline(req: PipelineRequest, source: string, opts: { db?: DB; shopId?: string } = {}) {
   const db = opts.db ?? await getDb();
@@ -104,15 +112,31 @@ ${originPrompt(req.origin)}` : basePrompt;
 /** Records a decision; with a confirmed pipeline request it also sends the idea to the pipeline. */
 export async function decide(input: DecideInput) {
   const db = await getDb();
-  let keywordId: number | null = null, designBriefId: number | null = null, note = "";
-  if (input.verdict === "approved" && input.pipeline) {
-    ({ keywordId, designBriefId, note } = await sendToPipeline(input.pipeline, `omnibrain:${input.ideaId}`));
-  }
-  const [row] = await db.insert(brainDecisions).values({
-    ideaId: input.ideaId, verdict: input.verdict, comment: input.comment, priority: input.priority,
-    phrase: input.pipeline?.phrase ?? null, niche: input.pipeline?.niche ?? null, keywordId, designBriefId,
-  }).returning();
-  return { decision: toDecision(row), keywordId, designBriefId, note };
+  return withDbTransaction(db, async (tx) => {
+    // Serialize writes per vault idea so even concurrent confirmations with
+    // different phrases cannot consume the same backlog approval twice.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`brain-decision:${input.ideaId}`}, 0))`);
+    const { ideaId, verdict, pipeline, backlogDecisionId } = input;
+    let { comment, priority } = input;
+    if (backlogDecisionId !== undefined) {
+      if (verdict !== "approved" || !pipeline) throw new Error("Confirm the search phrase to send a backlog idea");
+      const [latest] = await tx.select().from(brainDecisions).where(eq(brainDecisions.ideaId, ideaId))
+        .orderBy(desc(brainDecisions.createdAt), desc(brainDecisions.id)).limit(1);
+      if (latest?.id !== backlogDecisionId || !isBacklogApproval(latest)) throw new StaleBacklogApproval();
+      ({ comment, priority } = latest);
+    }
+
+    let keywordId: number | null = null, designBriefId: number | null = null, note = "";
+    if (verdict === "approved" && pipeline) {
+      ({ keywordId, designBriefId, note } = await sendToPipeline(pipeline, `omnibrain:${ideaId}`, { db: tx }));
+      if (!keywordId || !designBriefId) throw new Error("Keyword or design brief was not saved");
+    }
+    const [row] = await tx.insert(brainDecisions).values({
+      ideaId, verdict, comment, priority, createdAt: new Date(),
+      phrase: pipeline?.phrase ?? null, niche: pipeline?.niche ?? null, keywordId, designBriefId,
+    }).returning();
+    return { decision: toDecision(row), keywordId, designBriefId, note };
+  });
 }
 
 /** Approve or reject a daily idea candidate. Approval requires the confirmed phrase (same rule as ideas). */
@@ -138,4 +162,3 @@ export async function keywordStatuses(ids: number[]) {
   const rows = await db.select({ id: keywords.id, status: keywords.status }).from(keywords).where(inArray(keywords.id, ids));
   return new Map(rows.map((r) => [r.id, r.status]));
 }
-

@@ -47,4 +47,4 @@ next-env.d.ts
 
 !.env.brain.example
 .venv-brain/
-scripts/brain/__pycache__/
+__pycache__/

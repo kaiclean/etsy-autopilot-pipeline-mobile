@@ -2,7 +2,7 @@
 set -euo pipefail
 if [[ "${1:-}" == --help ]]; then
   echo 'Usage: bash deploy/brain/install-macos.sh /absolute/path/to/.env.brain'
-  echo 'Installs a daily per-user saved-Reel analyser with hourly failed-run catch-up.'
+  echo 'Installs a twice-daily per-user saved-Reel analyser with hourly catch-up.'
   exit 0
 fi
 if [[ "$(uname -s)" != Darwin || "$(id -u)" == 0 ]]; then

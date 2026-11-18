@@ -1,17 +1,17 @@
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import * as schema from "@/db/schema";
-import { brainDecisions, designBriefs, keywords } from "@/db/schema";
+import { brainDecisions, designBriefs, keywords, settings, shopAutomation } from "@/db/schema";
 import type { DB } from "@/db";
 
 const database = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("@/db", () => ({ getDb: async () => database.db }));
 
-import { decide, latestByIdea } from "@/lib/brain/decisions";
+import { decide, isBacklogApproval, latestByIdea, StaleBacklogApproval } from "@/lib/brain/decisions";
 import { cleanPhrase, themeFit } from "@/lib/brain/fit";
 import type { Note } from "@/lib/brain/vault";
 
@@ -56,6 +56,55 @@ describe("brain decisions", () => {
 
   it("refuses a paused or unknown theme", async () => {
     await expect(decide({ ideaId: "Ideas/x", verdict: "approved", comment: null, priority: null, pipeline: { phrase: "some thing", niche: "nope" as never } })).rejects.toThrow();
+  });
+
+  it("sends a legacy approval exactly once even with two different confirmed phrases", async () => {
+    const db = database.db as DB;
+    const ideaId = "Ideas/Legacy woodland artwork";
+    const [legacy] = await db.insert(brainDecisions).values({
+      ideaId, verdict: "approved", comment: "Preserve the approval", priority: 2,
+    }).returning();
+    expect(isBacklogApproval((await latestByIdea()).get(ideaId))).toBe(true);
+    await db.insert(settings).values({ key: "automation", value: { publishMode: "dry-run", killSwitch: true } })
+      .onConflictDoUpdate({ target: settings.key, set: { value: { publishMode: "dry-run", killSwitch: true } } });
+    const before = await db.select().from(settings);
+    const beforeShop = await db.select().from(shopAutomation);
+    const input = { ideaId, verdict: "approved" as const, comment: null, priority: null, backlogDecisionId: legacy.id };
+    await expect(decide(input)).rejects.toThrow("Confirm the search phrase");
+    const results = await Promise.allSettled(["woodland fox art", "woodland owl art"].map((phrase) =>
+      decide({ ...input, pipeline: { phrase, niche: "gothic" } }),
+    ));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toMatchObject([{ reason: expect.any(StaleBacklogApproval) }]);
+    const [kw] = await db.select().from(keywords).where(eq(keywords.source, `omnibrain:${ideaId}`));
+    expect(kw).toMatchObject({ status: "selected" });
+    expect(await db.select().from(keywords).where(eq(keywords.source, `omnibrain:${ideaId}`))).toHaveLength(1);
+    const [brief] = await db.select().from(designBriefs).where(eq(designBriefs.keywordId, kw.id));
+    const latest = (await latestByIdea()).get(ideaId);
+    expect(latest).toMatchObject({ keywordId: kw.id, designBriefId: brief.id, comment: legacy.comment, priority: legacy.priority });
+    expect(isBacklogApproval(latest)).toBe(false);
+    expect(await db.select().from(brainDecisions).where(eq(brainDecisions.ideaId, ideaId))).toHaveLength(2);
+    expect(await db.select().from(settings)).toEqual(before);
+    expect(await db.select().from(shopAutomation)).toEqual(beforeShop);
+  });
+
+  it("rolls back a backlog handoff when saving the linked decision fails", async () => {
+    const db = database.db as DB;
+    const ideaId = "Ideas/Legacy rollback";
+    const [legacy] = await db.insert(brainDecisions).values({ ideaId, verdict: "approved" }).returning();
+    const input = {
+      ideaId, verdict: "approved" as const, comment: null, priority: null, backlogDecisionId: legacy.id,
+      pipeline: { phrase: "rollback raven print", niche: "gothic" as const },
+    };
+    await db.execute(sql`ALTER TABLE brain_decisions ADD CONSTRAINT test_reject_rollback CHECK (idea_id <> 'Ideas/Legacy rollback' OR keyword_id IS NULL)`);
+    try {
+      await expect(decide(input)).rejects.toThrow(/insert into "brain_decisions"/);
+      expect(await db.select().from(keywords).where(eq(keywords.phrase, input.pipeline.phrase))).toHaveLength(0);
+      expect((await latestByIdea()).get(ideaId)).toMatchObject({ id: legacy.id, keywordId: null, designBriefId: null });
+    } finally {
+      await db.execute(sql`ALTER TABLE brain_decisions DROP CONSTRAINT test_reject_rollback`);
+    }
+    await expect(decide(input)).resolves.toMatchObject({ keywordId: expect.any(Number), designBriefId: expect.any(Number) });
   });
 });
 
