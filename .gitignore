@@ -45,6 +45,13 @@ next-env.d.ts
 !.env.free.example
 .netlify/
 
+# logs and scratch output
+*.log
+logs/
+tmp/
+scratch/
+.env.box
+
 !.env.brain.example
 .venv-brain/
 scripts/brain/__pycache__/

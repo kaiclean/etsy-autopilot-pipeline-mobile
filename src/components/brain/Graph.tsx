@@ -14,7 +14,7 @@ const sid = (x: string | N) => (typeof x === "string" ? x : x.id);
 
 export default function Graph({ data }: { data: { nodes: N[]; links: { source: string; target: string; kind: string }[] } }) {
   const router = useRouter();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ref to the imperative handle of a dynamically loaded force-graph component
   const fg = useRef<any>(null);
   const box = useRef<HTMLDivElement>(null); const fitted = useRef(false);
   const [size, setSize] = useState({ w: 800, h: 600 });

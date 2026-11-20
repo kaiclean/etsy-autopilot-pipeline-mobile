@@ -1,19 +1,14 @@
 import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, type DB } from "@/db";
-import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders, printifyEvents, type JobRun, type StageName } from "@/db/schema";
+import { costs, dailyStats, designs, events, healthReports, hotSignals, jobRuns, keywords, listings, orders } from "@/db/schema";
 import type { HotTodayItem } from "@/components/hot-today-card";
 import { compactImageUrlSql, displayImageUrlSql } from "@/lib/compact-image-url";
 import { STAGES } from "@/pipeline/types";
 import { rankHotSignals } from "@/pipeline/hot-signals";
 import { HOT_PROVIDERS, type HotSignal } from "@/pipeline/hot-signals/types";
-import { config, hasEtsyCredentials, hasPrintifyCredentials, isDemoMode } from "./config";
-import { printifyEventLog } from "./ops-copy";
-import { registeredWebhookCount } from "./printify-webhooks";
-import { connectionHealth } from "./health";
-import { providerCreditSignal } from "./provider-errors";
+import { isDemoMode } from "./config";
 import { dryRunNotice } from "./operator-mode";
 import { effectivePublishMode } from "./publish-mode";
-import { setupPresence } from "./setup-guide";
 import { visible } from "./events";
 import { dashboardOrdersWhere, isRealPublishedListing, notFakeReceiptWhere, revenueEligibleOrderWhere } from "./real-orders";
 import { dayKey } from "./format";
@@ -22,6 +17,11 @@ import { buildCockpitAlerts, countListingsMissingEtsyId, loadCronRunFacts, loadP
 import { buildShopIdentity } from "./shop-identity";
 import { resolveRequestShop } from "./shops";
 import { getSetting } from "./settings";
+import { getLastRuns } from "./queries-runs";
+
+// Connections and settings page data live in queries-settings; re-exported so imports stay stable.
+export { getConnectionsData, getSettingsData } from "./queries-settings";
+export { getLastRuns };
 
 const DAY = 864e5;
 export const ANALYTICS_FRESHNESS_HOURS = 36;
@@ -229,14 +229,6 @@ export async function getHomeData() {
   const automation = await getSetting(db, "automation");
 
   return { kpis, series, lastRuns, feed, pending: pending.slice(0, 3), pendingCount: pending.length, liveListings: liveCount.length, todayKey, killSwitch: automation.killSwitch };
-}
-
-export async function getLastRuns() {
-  const db = await getDb();
-  const runs = await db.select().from(jobRuns).where(visible(jobRuns.isDemo)).orderBy(desc(jobRuns.id)).limit(200);
-  const last: Partial<Record<StageName, JobRun>> = {};
-  for (const r of runs) if (!last[r.stage]) last[r.stage] = r;
-  return STAGES.map((s) => ({ ...s, run: last[s.id] ?? null }));
 }
 
 export async function getPipelineData() {
@@ -490,71 +482,4 @@ export async function getAnalytics(now = new Date()) {
       aov: o.length ? revenue / o.length : 0,
     },
   };
-}
-
-export async function getConnectionsData() {
-  const db = await getDb();
-  const shop = await resolveRequestShop(db).catch(() => null);
-  const [tokens, automation, stages, lastRuns, eventCount, recentEvents] = await Promise.all([
-    getSetting(db, "etsyTokens"),
-    getSetting(db, "automation"),
-    getSetting(db, "stages"),
-    getLastRuns(),
-    db.select({ total: count() }).from(printifyEvents),
-    db
-      .select({
-        id: printifyEvents.id,
-        eventId: printifyEvents.eventId,
-        topic: printifyEvents.topic,
-        createdAt: printifyEvents.createdAt,
-        verified: printifyEvents.verified,
-      })
-      .from(printifyEvents)
-      .orderBy(desc(printifyEvents.id))
-      .limit(8),
-  ]);
-  const etsyConnected = Boolean(tokens?.accessToken);
-  const accessExpired = Boolean(tokens?.expiresAt && Date.now() > tokens.expiresAt);
-  const publishMode = effectivePublishMode(automation.publishMode);
-  const webhooksRegistered = registeredWebhookCount(lastRuns.find((stage) => stage.id === "maintenance")?.run?.summary);
-  const designRun = lastRuns.find((stage) => stage.id === "design")?.run ?? null;
-  const providerCredits = providerCreditSignal(designRun);
-  return {
-    checks: connectionHealth({
-      etsyConnected,
-      publishMode,
-      accessExpired,
-      etsyShopId: shop?.etsyShopId,
-      webhooksRegistered,
-      providerCredits,
-      imageRun: designRun,
-    }),
-    webhooksRegistered,
-    etsyConnected,
-    canConnectEtsy: Boolean(config.etsy.apiKey),
-    etsyKeysReady: hasEtsyCredentials(shop?.etsyShopId),
-    printifyConfigured: hasPrintifyCredentials(),
-    webhookSecretSet: Boolean(config.printify.webhookSecret),
-    printifyEventCount: Number(eventCount[0]?.total ?? 0),
-    printifyEvents: printifyEventLog(recentEvents),
-    stages,
-    lastRuns,
-    killSwitch: automation.killSwitch,
-    publishMode,
-    envPublishMode: config.publishMode,
-    demo: isDemoMode(shop?.etsyShopId),
-    presence: setupPresence(),
-  };
-}
-
-export async function getSettingsData() {
-  const db = await getDb();
-  const [automation, stages, pushPrefs, podProducts, connections] = await Promise.all([
-    getSetting(db, "automation"),
-    getSetting(db, "stages"),
-    getSetting(db, "pushPrefs"),
-    getSetting(db, "podProducts"),
-    getConnectionsData(),
-  ]);
-  return { ...connections, automation, stages, pushPrefs, podProducts };
 }

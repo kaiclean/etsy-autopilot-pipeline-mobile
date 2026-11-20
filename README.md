@@ -1,6 +1,24 @@
 # Etsy Autopilot
 
-Command center for Kai's Etsy shop ("Designed by Kai", Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. It runs a six-stage pipeline (research → design → listing → **your approval** → publish → orders → analytics) on a schedule. You control all of it from a mobile-first, installable dark-mode PWA that also works on desktop.
+> An installable, mobile-first command center that runs an Etsy shop's research, design and listing work on a schedule. A human approves every listing before anything goes out.
+
+Etsy Autopilot is the back office for Kai's Etsy shop "Designed by Kai" (Switzerland, CHF), which sells AI-designed digital downloads and print-on-demand (POD) products. Stages run on a schedule; you steer them from a dark-mode PWA on phone or desktop.
+
+**In 30 seconds**
+
+- **Staged pipeline:** research, design, listing, approval, publish, orders, analytics. Each stage is a plain async function behind an adapter interface (`src/pipeline/`, `src/adapters/`).
+- **Human approval queue:** swipe to approve or reject, edit title, tags and price inline, undo. Nothing is published without it.
+- **Safety controls:** a kill switch that pauses all automation, per-stage pause, daily and monthly AI spend caps, and dry-run publishing by default.
+- **Honest demo mode:** with no keys it runs on seeded demo data flagged `is_demo`, mock image and text generation, and dry-run Etsy and Printify adapters. Each piece switches to the real service when you add its credentials.
+- **Cost-aware and local-first:** embedded Postgres (PGlite) locally, Neon in production; an optional Mac worker runs jobs (`AUTOPILOT_EXECUTION=box`, `FREE_ONLY_MODE=true`) so the dashboard can sit on a free tier. See [docs/FREE_HOSTING.md](docs/FREE_HOSTING.md).
+
+**Quick start:** `npm install && npm run dev`, open http://localhost:4317 and sign in with `autopilot` (dev-only fallback, disabled in production). Details below.
+
+**Status and limits:** single-operator tool, no license file yet. Live Etsy writes stay off until armed under Connections, Go live. Several steps cannot be automated through Etsy's APIs and stay manual; see [What still needs a human](#what-still-needs-a-human).
+
+More: [architecture overview](docs/ARCHITECTURE.md), [decision records](docs/DECISIONS.md) and [security policy](SECURITY.md).
+
+---
 
 **Free hybrid deployment:** run the dashboard on Netlify and the scheduled pipeline on an existing Mac with `AUTOPILOT_EXECUTION=box` and `FREE_ONLY_MODE=true`. See [the complete setup and migration guide](docs/FREE_HOSTING.md). Jobs are persisted before the web request returns; the Mac executes them without an inbound home port. Free-tier quotas and provider subscriptions must be checked separately.
 

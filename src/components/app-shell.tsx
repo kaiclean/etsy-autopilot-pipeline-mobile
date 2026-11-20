@@ -135,7 +135,7 @@ export function AppShell({ children, shell, pollOnly = false }: { children: Reac
       <div className="flex min-h-dvh">
         <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 py-5 md:flex">
           <Link href="/" className="mb-6 flex items-center gap-2.5 px-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- fixed 192px app icon from the /icons route */}
             <img src="/icons/192" alt="" className="size-8 rounded-lg" />
             <div className="leading-tight">
               <div className="text-sm font-semibold">Etsy Autopilot</div>
@@ -185,7 +185,7 @@ export function AppShell({ children, shell, pollOnly = false }: { children: Reac
               <div className="space-y-1 px-4 py-1.5 md:hidden">
                 <div className="flex min-h-12 items-center justify-between gap-2">
                   <Link href="/" className="flex shrink-0 items-center gap-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {/* eslint-disable-next-line @next/next/no-img-element -- fixed 192px app icon from the /icons route */}
                     <img src="/icons/192" alt="" className="size-6 rounded-md" />
                     <span className="text-sm font-semibold">Autopilot</span>
                   </Link>
