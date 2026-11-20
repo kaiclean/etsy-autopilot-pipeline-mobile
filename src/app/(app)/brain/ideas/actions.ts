@@ -15,7 +15,7 @@ import { generateIdeaCandidates } from "@/lib/brain/idea-feed";
 
 import { cleanPhrase } from "@/lib/brain/fit";
 import { mapIdea } from "@/lib/brain/mapper";
-import { decide, decideCandidate, VERDICTS, type PipelineRequest, type Verdict } from "@/lib/brain/decisions";
+import { decide, decideCandidate, StaleBacklogApproval, VERDICTS, type PipelineRequest, type Verdict } from "@/lib/brain/decisions";
 
 async function requireSession(next: string) {
   if (!(await verifySessionToken((await cookies()).get(SESSION_COOKIE)?.value, config.authSecret))) redirect(`/login?next=${next}`);
@@ -40,8 +40,11 @@ export async function decideIdea(form: FormData) {
   await requireSession("/brain/ideas");
   const ideaId = String(form.get("idea") ?? "");
   const verdict = String(form.get("verdict") ?? "") as Verdict;
+  const backlog = form.get("backlogDecisionId");
+  const backlogDecisionId = backlog === null ? undefined : Number(backlog);
   const note = (await getLiveVault()).byId.get(ideaId);
   if (!note || !["idea", "reel"].includes(note.kind) || !VERDICTS.includes(verdict)) redirect("/brain/ideas?msg=bad");
+  if (backlogDecisionId !== undefined && (!Number.isSafeInteger(backlogDecisionId) || backlogDecisionId < 1 || note.kind !== "idea" || verdict !== "approved")) redirect("/brain/ideas?msg=bad");
   const comment = String(form.get("comment") ?? "").trim().slice(0, 2000) || null;
   const p = Number.parseInt(String(form.get("priority") ?? ""), 10);
   const priority = Number.isFinite(p) ? Math.min(Math.max(p, 1), 5) : null;
@@ -49,20 +52,23 @@ export async function decideIdea(form: FormData) {
   let pipeline: PipelineRequest | null = null;
   if (verdict === "approved") {
     const mapping = mapIdea(note, await listThemes(await getDb()));
-    const artwork = note.kind === "reel" || mapping.kind === "product" && mapping.product && ["wall-art", "poster", "pod-apparel", "pod-mug"].includes(mapping.product);
+    const artwork = note.kind === "reel" || mapping.kind === "product" && isArtProduct(mapping.product);
     const req = artwork ? await confirmedPipeline(form, note) : null;
     if (req === "phrase" || req === "theme" || req === "brief") redirect(`/brain/ideas?msg=${req}`);
     pipeline = req;
-    if (note.kind === "reel" && !pipeline) redirect("/brain/ideas?msg=confirm");
+    if ((note.kind === "reel" || backlogDecisionId !== undefined) && !pipeline) redirect("/brain/ideas?msg=confirm");
   }
   let msg = "saved";
   try {
-    const r = await decide({ ideaId, verdict, comment, priority, pipeline });
+    const r = await decide({ ideaId, verdict, comment, priority, pipeline, backlogDecisionId });
     if (r.keywordId) msg = r.note ? "existing" : "pipeline";
     else if (verdict === "approved") msg = "backlog";
   } catch (e) {
-    console.error("brain: decide failed:", (e as Error).message);
-    msg = "error";
+    if (e instanceof StaleBacklogApproval) msg = "stale";
+    else {
+      console.error("brain: decide failed:", (e as Error).message);
+      msg = "error";
+    }
   }
   revalidatePath("/brain", "layout");
   redirect(`/brain/ideas?msg=${msg}`);

@@ -1,5 +1,7 @@
 import hashlib
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -76,6 +78,8 @@ class DailyTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BRAIN_BASE_URL": "http://example.com", "BRAIN_SYNC_TOKEN": "fixture"}):
             with self.assertRaises(daily.WorkerError):
                 daily.Dashboard()
+        with mock.patch.dict(os.environ, {"APP_URL": "https://railway.example", "BRAIN_BASE_URL": "https://old.example", "BRAIN_SYNC_TOKEN": "fixture"}):
+            self.assertEqual(daily.Dashboard().base, "https://railway.example")
         with mock.patch.dict(os.environ, {"OLLAMA_BASE_URL": "http://localhost:11434", "OLLAMA_MODEL": "gemma3:4b"}):
             with mock.patch.object(daily, "json_http", return_value={"remote_host": "https://paid.example", "capabilities": ["vision"]}):
                 with self.assertRaises(daily.WorkerError):
@@ -119,13 +123,83 @@ class DailyTests(unittest.TestCase):
             self.assertEqual(evidence["sha256"], hashlib.sha256(video.read_bytes()).hexdigest())
 
     def test_launchd_schedule_has_no_credential_and_rejects_invalid_time(self):
-        rendered = install_agent.agent("/private/.env.brain", "/venv/python", "/repo with spaces", "/logs", 7, 20)
-        self.assertEqual(rendered["StartCalendarInterval"], {"Hour": 7, "Minute": 20})
+        rendered = install_agent.agent("/private/.env.brain", "/venv/python", "/repo with spaces", "/logs", "07:20,19:20")
+        self.assertEqual(rendered["StartCalendarInterval"], [{"Hour": 7, "Minute": 20}, {"Hour": 19, "Minute": 20}])
         self.assertEqual(rendered["StartInterval"], 3600)
         self.assertNotIn("TOKEN", json.dumps(rendered))
         self.assertIn("/repo with spaces/scripts/brain/daily.py", rendered["ProgramArguments"])
-        with self.assertRaises(ValueError):
-            install_agent.agent("/env", "/python", "/repo", "/logs", 25, 0)
+        for invalid in ("25:00", "07:60", "7:20", "07:20,", "", "07:20,07:20"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                install_agent.agent("/env", "/python", "/repo", "/logs", invalid)
+
+    def test_runs_once_per_slot_and_catches_up_at_next_tick(self):
+        profile = types.SimpleNamespace(get_saved_posts=lambda: iter([]))
+        module = types.SimpleNamespace(Profile=types.SimpleNamespace(from_username=lambda *_: profile))
+        dashboard = FakeDashboard()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(sys.modules, {"instaloader": module}), \
+                mock.patch.dict(os.environ, {"BRAIN_RUN_TIMES": "07:20,19:20"}), \
+                mock.patch.object(daily.importlib.util, "find_spec", return_value=True), \
+                mock.patch.object(daily.shutil, "which", return_value="/bin/fixture"), \
+                mock.patch.object(daily, "check_local_model"), \
+                mock.patch.object(daily, "login_loader", return_value=(types.SimpleNamespace(context=object()), "fixture")):
+            data_dir = Path(directory)
+            daily.atomic_json(data_dir / "state.json", {"last_success_day": "2026-07-12"})
+            for timestamp, runs, slot, force in [
+                ("2026-07-12T05:20Z", 1, "2026-07-12T07:20", False),
+                ("2026-07-12T06:00Z", 1, "2026-07-12T07:20", False),
+                ("2026-07-12T17:20Z", 2, "2026-07-12T19:20", False),
+                ("2026-07-12T21:00Z", 2, "2026-07-12T19:20", False),
+                ("2026-07-13T06:00Z", 3, "2026-07-13T07:20", False),
+                ("2026-07-13T07:00Z", 4, "2026-07-13T07:20", True),
+            ]:
+                daily.run_daily(dashboard, data_dir, force=force, now=daily.dt.datetime.fromisoformat(timestamp))
+                self.assertEqual(sum(d["run"]["status"] == "succeeded" for d in dashboard.deliveries), runs)
+                self.assertEqual(json.loads((data_dir / "state.json").read_text())["last_success_slot"], slot)
+
+    def test_check_imports_chrome_once_and_rejects_expired_session_without_logging_cookies(self):
+        secret_fixture = "private-cookie-fixture"
+        loader = mock.Mock()
+        loader.test_login.return_value = "fixture"
+
+        def fake_cookies(**kwargs):
+            print(secret_fixture)
+            print(secret_fixture, file=sys.stderr)
+            return [types.SimpleNamespace(domain=".instagram.com", name="sessionid", value=secret_fixture)]
+
+        chrome = mock.Mock(side_effect=fake_cookies)
+        loader.save_session_to_file.side_effect = lambda filename: Path(filename).write_text(secret_fixture)
+        output = io.StringIO()
+        dashboard = FakeDashboard()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(sys.modules, {
+            "instaloader": types.SimpleNamespace(Instaloader=lambda **_: loader),
+            "browser_cookie3": types.SimpleNamespace(chrome=chrome),
+        }), mock.patch.object(daily.importlib.util, "find_spec", return_value=True), \
+                mock.patch.object(daily.shutil, "which", return_value="/bin/fixture"), \
+                mock.patch.object(daily, "json_http", return_value={"capabilities": ["vision"]}), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            folder = Path(directory)
+            profile = folder / "Default"
+            profile.mkdir()
+            cookie_db = profile / "Cookies"
+            cookie_db.touch()
+            session = folder / "session"
+            with mock.patch.dict(os.environ, {
+                "INSTAGRAM_USERNAME": "fixture", "INSTAGRAM_SESSION_FILE": str(session),
+                "INSTAGRAM_COOKIES_FROM": f"chrome:{profile}",
+            }, clear=True):
+                daily.run_daily(dashboard, folder, check=True)
+                self.assertEqual(session.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(session.read_text(), secret_fixture)
+                daily.run_daily(dashboard, folder, check=True)
+                chrome.assert_called_once_with(cookie_file=str(cookie_db), domain_name="instagram.com")
+                loader.load_session_from_file.assert_called_once_with("fixture", filename=str(session))
+                loader.test_login.return_value = None
+                with self.assertRaises(daily.WorkerError) as stopped:
+                    daily.run_daily(dashboard, folder, check=True)
+                self.assertEqual(stopped.exception.stage, "instagram_session")
+                self.assertEqual(chrome.call_count, 1)
+        self.assertNotIn(secret_fixture, output.getvalue())
+        self.assertEqual(dashboard.deliveries, [])
 
 
 if __name__ == "__main__":

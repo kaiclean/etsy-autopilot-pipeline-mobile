@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import fcntl
 import hashlib
@@ -20,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from slots import latest_slot, parse_run_times
 
 ROOT = Path(__file__).resolve().parents[2]
 CODE = re.compile(r"^[A-Za-z0-9_-]{3,40}$")
@@ -91,7 +93,7 @@ def json_http(url: str, *, data=None, token=None, timeout=60):
 
 class Dashboard:
     def __init__(self):
-        self.base = os.environ.get("BRAIN_BASE_URL", "").rstrip("/")
+        self.base = (os.environ.get("APP_URL") or os.environ.get("BRAIN_BASE_URL", "")).rstrip("/")
         self.token = os.environ.get("BRAIN_SYNC_TOKEN", "")
         u = urllib.parse.urlsplit(self.base)
         if not self.token or u.username or u.password or u.query or u.fragment or u.path or not u.hostname:
@@ -128,20 +130,62 @@ def check_local_model():
     return base, model
 
 
+SESSION_HINT = "Refresh the private Instaloader session locally; see docs/BRAIN_DAILY.md."
+
+
+def import_chrome_session(loader, user, session: Path, source: str):
+    import browser_cookie3
+
+    browser, separator, profile = source.partition(":")
+    if browser != "chrome" or (separator and not profile):
+        raise ValueError()
+    cookie_file = None
+    if profile:
+        folder = Path(profile).expanduser()
+        cookie_file = next(p for p in (folder / "Network/Cookies", folder / "Cookies") if p.is_file())
+    jar = browser_cookie3.chrome(cookie_file=str(cookie_file) if cookie_file else None, domain_name="instagram.com")
+    cookies = {cookie.name: cookie.value for cookie in jar
+               if cookie.domain.lstrip(".") == "instagram.com" or cookie.domain.endswith(".instagram.com")}
+    if not cookies.get("sessionid"):
+        raise ValueError()
+    loader.load_session(user, cookies)
+    if (loader.test_login() or "").lower() != user.lower():
+        raise ValueError()
+    session.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=session.parent, prefix=".session-") as directory:
+        private_file = Path(directory) / "session"
+        loader.save_session_to_file(filename=str(private_file))
+        private_file.chmod(0o600)
+        private_file.replace(session)
+
+
 def login_loader():
     try:
         import instaloader
         user = os.environ.get("INSTAGRAM_USERNAME", "")
-        session = os.environ.get("INSTAGRAM_SESSION_FILE", "")
+        configured_session = os.environ.get("INSTAGRAM_SESSION_FILE", "")
         if not user or not re.fullmatch(r"[A-Za-z0-9_.]{1,30}", user):
             raise ValueError()
+        if configured_session:
+            session = Path(configured_session).expanduser()
+        else:
+            from instaloader.instaloader import get_default_session_filename
+            session = Path(get_default_session_filename(user))
         loader = instaloader.Instaloader(quiet=True, max_connection_attempts=1, request_timeout=30)
-        loader.load_session_from_file(user, filename=str(Path(session).expanduser()) if session else None)
-        if loader.test_login() != user:
-            raise ValueError()
+        # Instaloader diagnostics may include request details. Report only our stage code.
+        with open(os.devnull, "w") as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            source = os.environ.get("INSTAGRAM_COOKIES_FROM")
+            if source and not session.exists():
+                import_chrome_session(loader, user, session, source)
+            else:
+                if session.stat().st_mode & 0o077:
+                    raise ValueError()
+                loader.load_session_from_file(user, filename=str(session))
+                if (loader.test_login() or "").lower() != user.lower():
+                    raise ValueError()
         return loader, user
     except Exception:
-        raise WorkerError("instagram_login", "Sign in locally with Instaloader using the username in .env.brain.") from None
+        raise WorkerError("instagram_session", SESSION_HINT) from None
 
 
 def tool(args, stage: str, timeout=180):
@@ -272,12 +316,15 @@ def deliver(dashboard, outbox: Path, state: dict, state_file: Path, run: dict):
     outbox.unlink()
 
 
-def run_daily(dashboard, data_dir: Path, force=False, check=False):
+def run_daily(dashboard, data_dir: Path, force=False, check=False, *, now=None):
     state_file = data_dir / "state.json"
     state = json.loads(state_file.read_text()) if state_file.exists() else {"done": {}, "failures": {}}
-    today = dt.datetime.now().astimezone().date().isoformat()
-    if not check and not force and state.get("last_success_day") == today and not list((data_dir / "outbox").glob("*.json")):
-        print("Daily saved-Reel check already completed today; use --force for an extra pass.")
+    try:
+        slot = latest_slot(now or dt.datetime.now(dt.timezone.utc), parse_run_times())
+    except ValueError as error:
+        raise WorkerError("configuration", str(error)) from None
+    if not check and not force and state.get("last_success_slot", "") >= slot and not any((data_dir / "outbox").glob("*.json")):
+        print(f"Saved-Reel check already completed for slot {slot} Europe/Zurich; use --force for an extra pass.")
         return
     status = dashboard.call()
     known = {r["shortcode"]: r for r in status["reels"] if CODE.fullmatch(str(r.get("shortcode", "")))}
@@ -345,7 +392,11 @@ def run_daily(dashboard, data_dir: Path, force=False, check=False):
                 run["pending"] += 1
         except WorkerError:
             raise
-        except Exception:
+        except Exception as error:
+            if type(error).__name__ in {"LoginRequiredException", "LoginException", "BadCredentialsException"} or any(
+                marker in str(error).lower() for marker in ("login_required", "challenge_required", "checkpoint_required")
+            ):
+                raise WorkerError("instagram_session", SESSION_HINT) from None
             raise WorkerError("instagram_fetch") from None
         run["status"] = "failed" if run["failed"] else "succeeded"
         if run["failed"]:
@@ -353,7 +404,8 @@ def run_daily(dashboard, data_dir: Path, force=False, check=False):
         run["finishedAt"] = dt.datetime.now(dt.timezone.utc).isoformat()
         dashboard.call({"run": run, "notes": []})
         if run["status"] == "succeeded":
-            state["last_success_day"] = today
+            state.pop("last_success_day", None)
+            state["last_success_slot"] = max(slot, state.get("last_success_slot", ""))
         atomic_json(state_file, state)
         print(f"Daily result: {run['status']}; {run['analysed']} analysed, {run['failed']} failed, {run['pending']} deferred", flush=True)
         if run["failed"]:
